@@ -303,7 +303,10 @@ describe("start --driver fake (slop)", () => {
   it("the fake PMs logged the rejections the protocol produced", () => {
     expect(run.stderr).toContain("rejected NO_ACK");
     expect(run.stderr).toContain("rejected CHALLENGE_NEEDS_TEST");
-    expect(run.stderr).toContain("rejected TWO_ROUNDS");
+    // The lead's second PROPOSE on D1 loses to TWO_ROUNDS, or to PHASE_GATE when the
+    // challenger's STATUS trips the deadlock first; which one wins is a lock race.
+    expect(run.stderr).toMatch(/rejected (TWO_ROUNDS|PHASE_GATE)/);
+    expect(run.stderr).not.toContain("expected ");
     const accepted = state.messages.map((message) => `${message.from}:${message.type}`);
     expect(accepted).toEqual([
       "human:KICKOFF",

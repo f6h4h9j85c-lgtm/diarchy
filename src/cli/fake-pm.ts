@@ -70,16 +70,17 @@ function log(line: string): void {
   console.log(`${agent}: ${line}`);
 }
 
-async function post(store: VaultStore, draft: MessageDraft, expect?: RuleId): Promise<PostResult> {
+/** Post once; log a rejection as `rejected <RULE>: <message>`. `expect` names the rule(s) a slop post is meant to hit. */
+async function post(store: VaultStore, draft: MessageDraft, expect: RuleId[] = []): Promise<PostResult> {
   const result = await store.post(draft);
   if (!result.ok) {
     console.error(`rejected ${result.rule}: ${result.message}`);
-    if (expect === undefined) throw new UnexpectedRejection(`${draft.type} rejected by ${result.rule}`);
-    if (expect !== result.rule) console.error(`expected ${expect} but got ${result.rule}`);
+    if (expect.length === 0) throw new UnexpectedRejection(`${draft.type} rejected by ${result.rule}`);
+    if (!expect.includes(result.rule)) console.error(`expected ${expect.join(" or ")} but got ${result.rule}`);
     return result;
   }
   log(`posted ${result.id}${result.decision_id === undefined ? "" : ` (${result.decision_id})`} · phase ${result.phase}`);
-  if (expect !== undefined) console.error(`expected ${expect} but the store accepted ${result.id}`);
+  if (expect.length > 0) console.error(`expected ${expect.join(" or ")} but the store accepted ${result.id}`);
   return result;
 }
 
@@ -303,7 +304,7 @@ function slopAction(ctx: Ctx): Action | null {
             claim: "The default limit should be twice the nginx figure to leave headroom.",
             body: "A second proposal on the same open thread, which the two-round rule forbids before a DECIDE.",
           },
-          "TWO_ROUNDS",
+          ["TWO_ROUNDS", "PHASE_GATE"],
         );
       };
     }
@@ -323,7 +324,7 @@ function slopAction(ctx: Ctx): Action | null {
           claim: "The plan is fine as written.",
           body: "Sounds good, agreed.",
         },
-        "NO_ACK",
+        ["NO_ACK"],
       );
       await post(
         store,
@@ -337,7 +338,7 @@ function slopAction(ctx: Ctx): Action | null {
           evidence: [{ kind: "file", path: "docs/deploy.md" }],
           body: "docs/deploy.md says one replica.",
         },
-        "CHALLENGE_NEEDS_TEST",
+        ["CHALLENGE_NEEDS_TEST"],
       );
       await post(store, {
         type: "CHALLENGE",

@@ -30,7 +30,7 @@ Target: Obsidian reading view (mobile and desktop) and GitHub file view, from on
 ### 1.2 Time
 
 - All clock times are UTC, as the protocol gives them. Message headers show `HH:MM:SS` (mandated). The strip, the question callout, and `## Status` add `UTC` after the time when the time stands alone.
-- One local-time hint, in parentheses, follows the most recent timestamp in each file: `16:30:00 UTC (12:30 local)`. Local is the host timezone of the store process at render time, minutes precision. If the local calendar date differs from the UTC date, the hint carries the date: `(23:30 local, 2026-10-24)`.
+- One local-time hint, in parentheses, follows the `last` time in the `chat.md` strip and the `since` time in the `goal.md` BLOCKED callout: `16:30:00 UTC (12:30 local)`. No other time carries one, and `decisions.md` has none. Local is the host timezone of the store process at render time, minutes precision. If the local calendar date differs from the UTC date, the hint carries the date: `(23:30 local, 2026-10-24)`.
 - Dates are `YYYY-MM-DD`. Durations are whole minutes: `150 of 240 min`.
 
 ### 1.3 Message type glyphs
@@ -152,7 +152,7 @@ Example, BLOCKED:
 >
 > 9 of 80 messages (PLAN 5 of 12) · 35 of 240 min
 >
-> 2026-10-25 · last 14:35:01 UTC (10:35 local) · system ASK_HUMAN: codex is BLOCKED (external): staging REDIS_URL missing. The human has been…
+> 2026-10-25 · last 14:35:01 UTC (10:35 local) · system ASK_HUMAN: codex is BLOCKED (external): Integration test needs staging REDIS_URL. Not in…
 >
 > Question and how to answer: [goal](goal.md) · [decisions (2)](decisions.md)
 ```
@@ -213,7 +213,7 @@ A phase change is marked by an H2 placed immediately after the `---` that follow
 
 with that message's time. One heading per transition, in this order of causes: KICKOFF → `## → PLAN`; `plan` DECIDE → `## → EXECUTE`; `BLOCKED kind: external`, deadlock, or budget exhaustion → `## → BLOCKED` (after the last accepted message; the system ASK_HUMAN then follows the heading); human DECIDE → `## → <blocked_from>`, except that a human `plan` ruling, which restores PLAN and closes it in one acceptance, gets only `## → EXECUTE`; DONE → `## → DONE`, which is then the last line of the file.
 
-Headings are the only H2s in the file, so the Obsidian outline reads as the run's timeline: `→ PLAN`, `→ EXECUTE`, `→ BLOCKED`, `→ EXECUTE`, `→ DONE`.
+Phase headings and the day headings of 2.4 are the only H2s in the file, so the Obsidian outline reads as the run's timeline: `→ PLAN`, `→ EXECUTE`, `→ BLOCKED`, `→ EXECUTE`, `→ DONE`.
 
 ### 2.4 Day headings
 

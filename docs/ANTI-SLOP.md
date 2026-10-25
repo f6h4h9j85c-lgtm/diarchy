@@ -75,6 +75,6 @@ Defaults fit a goal of roughly one afternoon with two to four PRs. For larger go
 | messages_total | more than 4 PRs are expected | 160 |
 | talk_work_ratio | builds or test suites take over 20 minutes, so STATUS lands slowly | 5 |
 | wall_clock_minutes | full-day goals | 480 |
-| spend_usd | the launcher can report cost | goal-dependent |
+| spend_usd | never in diarchy 0.1: nothing meters cost, `used.spend_usd` stays 0, and a limit never trips | `null` |
 
 Do not loosen `challenges_per_decision` or `rounds_per_decision`; they are the anti-flip controls, not sizing knobs. If a goal needs more than twice any default, split it into two goals: the roles swap and the second goal starts with a clean budget. For single-PR goals, tighten `plan_messages` to 6 and `messages_total` to 40.

@@ -7,7 +7,12 @@
     {
       "name": "diarchy",
       "source": "./",
-      "description": "Two PM agents, Claude Code and Codex CLI, coordinating on one goal through a protocol-enforced MCP server."
+      "description": "Two PM agents, Claude Code and Codex CLI, coordinating on one goal through a protocol-enforced MCP server.",
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Developer Tools"
     }
   ]
 }

@@ -387,18 +387,30 @@ The `allowed_types` a tool returns (section 10) apply these gates: at the `talk_
     "claude": { "command": "claude",
                 "args": ["-p", "--permission-mode", "acceptEdits", "--permission-prompts", "none",
                          "--allowedTools", "mcp__plugin_diarchy_diarchy__*,Bash(git *),Bash(npm *),Bash(node *),Bash(gh *)"] },
-    "codex": { "command": "codex", "args": ["exec", "--sandbox", "workspace-write"] }
+    "codex": { "command": "codex", "args": ["exec", "--sandbox", "workspace-write", "--dangerously-bypass-hook-trust"] }
   },
   "budgets": { "plan_messages": 12, "messages_total": 80, "challenges_per_decision": 1,
                "rounds_per_decision": 2, "talk_work_ratio": 3, "wall_clock_minutes": 240, "spend_usd": null },
   "worktrees": { "root": ".diarchy/worktrees", "branch_prefix": "diarchy" },
-  "review": { "required": true }
+  "review": { "required": true },
+  "launcher": { "poll_ms": 1000, "max_restarts": 3, "restart_backoff_ms": 5000,
+                "stop_grace_ms": 10000, "wall_clock_grace_ms": 300000 }
 }
 ```
 
+This is the file `diarchy init` writes, with `<project>` standing for the project directory's name.
+
 `vault` is relative to the project root. `kickoff.budgets` overrides config per goal; a human DECIDE `budgets` overrides for the rest of the goal (without it, an exhausted budget re-blocks on the next accepted message). `review.required: false` waives 9.2(c) and (f) only; NO_SELF_REVIEW still applies.
 
-`agents.<id>.command` and `args` are the executable and the flags the launcher puts before the prompt (with `args` absent, a `command` with spaces is split on whitespace). Headless `claude -p` has nobody to answer a permission prompt, so the Claude PM runs with `--permission-prompts none` and an allow list: `mcp__plugin_diarchy_diarchy__*`, the diarchy tools under the server name a plugin install gives them (a server registered with `claude mcp add diarchy` is `mcp__diarchy__*` instead), plus `Bash(git *)`, `Bash(npm *)`, `Bash(node *)`, and `Bash(gh *)`. The list is one comma-joined argument. A project whose checks run through another command adds it (`Bash(make *)`) before the first run; a tool outside the list is denied and the PM stalls at that step.
+`agents.<id>.command` and `args` are the executable and the flags the launcher puts before the prompt (with `args` absent, a `command` with spaces is split on whitespace). Headless `claude -p` has nobody to answer a permission prompt, so the Claude PM runs with `--permission-prompts none` and an allow list: `mcp__plugin_diarchy_diarchy__*`, the diarchy tools under the server name a plugin install gives them (a server registered with `claude mcp add diarchy` is `mcp__diarchy__*` instead), plus `Bash(git *)`, `Bash(npm *)`, `Bash(node *)`, and `Bash(gh *)`. The list is one comma-joined argument. A project whose checks run through another command adds it (`Bash(make *)`) before the first run; a tool outside the list is denied and the PM stalls at that step. The Codex PM runs `codex exec` in the `workspace-write` sandbox with `--dangerously-bypass-hook-trust`: `codex exec` never shows the `/hooks` review prompt and skips untrusted hooks silently, so the flag is what runs the inbox brief, the Stop gate, and the guard headless (INSTALL-CODEX.md section 5, Hook trust); without it they run only once trusted in `/hooks`.
+
+`launcher` tunes the `diarchy start` supervisor; a missing key takes the default shown above.
+
+- `poll_ms`: how often the supervisor re-reads `budget.json`, in ms, at most 1000.
+- `max_restarts`: restarts per agent between two messages. Past it the agent stays dead until the next message lands, which respawns it with a fresh count.
+- `restart_backoff_ms`: the wait before each restart.
+- `stop_grace_ms`: after DONE or a block other than WALL_CLOCK, how long the PMs get to exit on their own before SIGTERM, and again before SIGKILL.
+- `wall_clock_grace_ms`: after a WALL_CLOCK block, how long the CLIs may run on before SIGKILL.
 
 ## 9. Code flow
 

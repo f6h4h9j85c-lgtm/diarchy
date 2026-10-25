@@ -12,7 +12,7 @@ import { createInterface } from "node:readline";
 import { AGENT_HUMAN, type DiarchyConfig, type GoalState, type Phase } from "../protocol/index.js";
 import { VaultStore, loadConfig, type GoalRef } from "../vault/index.js";
 import { blockReason, blockSummary, replyHint } from "./brief.js";
-import { CliError, EXIT_BLOCKED, EXIT_ERROR, EXIT_OK, nowHms, sleep } from "./common.js";
+import { CliError, EXIT_BLOCKED, EXIT_ERROR, EXIT_OK, nowHms, onBrokenPipe, sleep } from "./common.js";
 import {
   clearSession,
   defaultFakeScript,
@@ -174,12 +174,16 @@ class Supervisor {
     const finished = new Promise<number>((resolve) => {
       this.resolveRun = resolve;
     });
-    const onSignal = (signal: NodeJS.Signals): void => {
+    const interrupt = (reason: string): void => {
       const phase = this.readState()?.phase;
-      void this.finish(phase === "BLOCKED" ? EXIT_BLOCKED : EXIT_ERROR, `received ${signal}`);
+      void this.finish(phase === "BLOCKED" ? EXIT_BLOCKED : EXIT_ERROR, reason);
     };
+    const onSignal = (signal: NodeJS.Signals): void => interrupt(`received ${signal}`);
     process.on("SIGINT", onSignal);
     process.on("SIGTERM", onSignal);
+    // `diarchy start | head`: once the reader goes away, stop the PMs as a signal would instead of crashing and orphaning them.
+    // It stays in place after the run, so a late EPIPE cannot exit with the wrong code.
+    onBrokenPipe(() => interrupt("output closed"));
     try {
       for (const agent of this.input.agents) this.spawnChild(this.child(agent));
       void this.loop();

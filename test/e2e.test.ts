@@ -363,6 +363,50 @@ describe("start --driver fake (slop)", () => {
 });
 
 // ---------------------------------------------------------------------------
+// start with its output closed early (`diarchy start | head -1`)
+// ---------------------------------------------------------------------------
+
+/** Live processes whose environment names this project: the PMs a diarchy start spawned. Reads /proc, so it finds none off Linux. */
+function pmPids(dir: string): number[] {
+  if (!existsSync("/proc")) return [];
+  const pids: number[] = [];
+  for (const entry of readdirSync("/proc").filter((name) => /^\d+$/.test(name))) {
+    try {
+      if (readFileSync(`/proc/${entry}/environ`, "utf8").split("\0").includes(`DIARCHY_PROJECT=${dir}`)) pids.push(Number(entry));
+    } catch {
+      // exited, or not ours to read
+    }
+  }
+  return pids;
+}
+
+describe("start with its stdout closed", () => {
+  it("stops both PMs and exits 1 instead of crashing on EPIPE and orphaning them", async () => {
+    const dir = await initProject("piped", false);
+    const env: NodeJS.ProcessEnv = { ...process.env, ...GIT_ENV };
+    delete env.DIARCHY_PROJECT;
+    delete env.DIARCHY_FAKE_MODE;
+    const args = ["start", "Ship the piped widget", "--ac", "The widget renders.", "--driver", "fake", "--no-worktrees", "--project", dir];
+    const child = spawn(process.execPath, ["--import", "tsx", CLI, ...args], { cwd: ROOT, env, stdio: ["ignore", "pipe", "pipe"] });
+    let stdout = "";
+    let stderr = "";
+    child.stderr.on("data", (chunk: Buffer) => (stderr += chunk.toString()));
+    // Like `| head`: read until both PMs run, then close the read end of the pipe.
+    child.stdout.on("data", (chunk: Buffer) => {
+      stdout += chunk.toString();
+      if (stdout.includes("codex started")) child.stdout.destroy();
+    });
+    const code = await new Promise<number>((resolve) => child.on("close", (exit) => resolve(exit ?? -1)));
+    const orphans = pmPids(dir);
+    for (const pid of orphans) process.kill(pid, "SIGKILL");
+    expect(stderr).not.toContain("EPIPE");
+    expect(code, stderr).toBe(1);
+    expect(orphans).toEqual([]);
+    expect(existsSync(join(dir, ".diarchy", "start.pid"))).toBe(false);
+  }, RUN_TIMEOUT);
+});
+
+// ---------------------------------------------------------------------------
 // Hooks: guard (PreToolUse)
 // ---------------------------------------------------------------------------
 

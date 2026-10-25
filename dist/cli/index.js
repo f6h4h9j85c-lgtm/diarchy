@@ -5,7 +5,7 @@
  */
 import { Command, Option } from "commander";
 import { VERSION } from "../index.js";
-import { CliError, EXIT_ERROR, EXIT_OK, resolveProjectDir } from "./common.js";
+import { CliError, EXIT_ERROR, EXIT_OK, handleBrokenPipes, resolveProjectDir } from "./common.js";
 import { runGate, runGuard, runInboxSkim } from "./hooks.js";
 import { runReply, runStop } from "./human.js";
 import { runInit } from "./init.js";
@@ -187,6 +187,7 @@ program
     await startMcpServer({ projectDir: projectDir(), agent: options.agent });
     return EXIT_OK;
 }));
+handleBrokenPipes();
 program.parseAsync(process.argv).catch((error) => {
     console.error(`diarchy: ${error instanceof Error ? error.message : String(error)}`);
     process.exit(EXIT_ERROR);

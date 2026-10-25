@@ -6,7 +6,7 @@
 import { Command, Option } from "commander";
 
 import { VERSION } from "../index.js";
-import { CliError, EXIT_ERROR, EXIT_OK, resolveProjectDir } from "./common.js";
+import { CliError, EXIT_ERROR, EXIT_OK, handleBrokenPipes, resolveProjectDir } from "./common.js";
 import { runGate, runGuard, runInboxSkim } from "./hooks.js";
 import { runReply, runStop } from "./human.js";
 import { runInit } from "./init.js";
@@ -222,6 +222,7 @@ program
     }),
   );
 
+handleBrokenPipes();
 program.parseAsync(process.argv).catch((error: unknown) => {
   console.error(`diarchy: ${error instanceof Error ? error.message : String(error)}`);
   process.exit(EXIT_ERROR);

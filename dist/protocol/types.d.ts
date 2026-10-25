@@ -9,6 +9,8 @@ export declare const AGENT_HUMAN: AgentId;
 export declare const AGENT_SYSTEM: AgentId;
 /** PROTOCOL.md section 11: agent ids are `[a-z][a-z0-9-]{1,15}`. */
 export declare const AGENT_ID_PATTERN: RegExp;
+/** PROTOCOL.md section 11: protocol_version 1 runs exactly two agents, one lead and one challenger. */
+export declare const MAX_AGENTS = 2;
 export declare const MESSAGE_TYPES: readonly ["KICKOFF", "PROPOSE", "CHALLENGE", "DECIDE", "ASSIGN", "STATUS", "DONE", "BLOCKED", "ASK_HUMAN"];
 export type MessageType = (typeof MESSAGE_TYPES)[number];
 export declare const PHASES: readonly ["PLAN", "EXECUTE", "BLOCKED", "DONE"];

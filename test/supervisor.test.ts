@@ -406,6 +406,8 @@ describe("a PM out of restarts", () => {
     });
     expect(propose.ok).toBe(true);
     await until("codex respawned", () => pids(standin, "codex").length > 4);
+    // The new pid file can be seen before this process has read the supervisor's pipe, though the line was written first.
+    await until("the respawn logged", () => run.out().includes("codex respawning: a message landed"));
     expect(run.out()).toContain("codex respawning: a message landed");
 
     await cli(["stop", "--project", dir]);

@@ -219,34 +219,6 @@ describe("start --driver fake (good)", () => {
     expect(git(dir, "rev-parse", "--abbrev-ref", "HEAD")).not.toMatch(/^diarchy\//);
   });
 
-  it("the review skill's detached checkout works from the reviewer's worktree, where a plain checkout is refused", () => {
-    const skill = readFileSync(join(ROOT, "skills", "diarchy-review", "SKILL.md"), "utf8");
-    const checkouts = [...skill.matchAll(/`(cd \.diarchy\/worktrees\/<you> && [^`]+)`/g)].map((match) => match[1]);
-    const back = /`(git checkout diarchy\/<goal-id>\/<you>)`/.exec(skill)?.[1] ?? "";
-    expect(checkouts).toHaveLength(2);
-    expect(back).not.toBe("");
-    const author = `diarchy/${paths.goalId}/claude`;
-    const reviewer = join(dir, ".diarchy", "worktrees", "codex");
-    const fill = (command: string): string =>
-      command.replaceAll("<you>", "codex").replaceAll("<branch>", author).replaceAll("<goal-id>", paths.goalId);
-    const sh = (command: string, cwd: string) => spawnSync("sh", ["-c", command], { cwd, encoding: "utf8", env: { ...process.env, ...GIT_ENV } });
-
-    expect(sh(`git checkout ${author}`, reviewer).status).not.toBe(0);
-    // A remote holding the author's pushed branch, as an open PR implies; the second command needs none.
-    const origin = join(dir, "..", "origin.git");
-    git(dir, "init", "-q", "--bare", origin);
-    git(dir, "remote", "add", "origin", origin);
-    git(dir, "push", "-q", "origin", author);
-    for (const command of checkouts) {
-      const checkout = sh(fill(command), dir);
-      expect(checkout.status, `${command}: ${checkout.stderr}`).toBe(0);
-      expect(git(reviewer, "rev-parse", "HEAD")).toBe(git(dir, "rev-parse", author));
-      const restore = sh(fill(back), reviewer);
-      expect(restore.status, restore.stderr).toBe(0);
-      expect(git(reviewer, "rev-parse", "--abbrev-ref", "HEAD")).toBe(`diarchy/${paths.goalId}/codex`);
-    }
-  });
-
   it("rendered chat.md, decisions.md, and goal.md with the right first lines", () => {
     expect(readFileSync(paths.chatMd, "utf8").split("\n").slice(0, 2)).toEqual([GENERATED, `# Chat: ${paths.goalId}`]);
     expect(readFileSync(paths.decisionsMd, "utf8").split("\n").slice(0, 2)).toEqual([GENERATED, `# Decisions: ${paths.goalId}`]);
@@ -281,6 +253,61 @@ describe("start --driver fake (good)", () => {
     const result = await cli(["start", "--driver", "fake", "--project", dir]);
     expect(result.code).toBe(1);
     expect(result.stderr).toContain("goal is required");
+  });
+
+  it("the review skill's detached checkout works from the reviewer's worktree, where a plain checkout is refused", () => {
+    const skill = readFileSync(join(ROOT, "skills", "diarchy-review", "SKILL.md"), "utf8");
+    const checkouts = [...skill.matchAll(/`(cd \.diarchy\/worktrees\/<you> && [^`]+)`/g)].map((match) => match[1]);
+    const back = /`(git checkout diarchy\/<goal-id>\/<you>)`/.exec(skill)?.[1] ?? "";
+    expect(checkouts).toHaveLength(2);
+    expect(back).not.toBe("");
+    const author = `diarchy/${paths.goalId}/claude`;
+    const reviewer = join(dir, ".diarchy", "worktrees", "codex");
+    const fill = (command: string): string =>
+      command.replaceAll("<you>", "codex").replaceAll("<branch>", author).replaceAll("<goal-id>", paths.goalId);
+    const sh = (command: string, cwd: string) => spawnSync("sh", ["-c", command], { cwd, encoding: "utf8", env: { ...process.env, ...GIT_ENV } });
+
+    expect(sh(`git checkout ${author}`, reviewer).status).not.toBe(0);
+    // A remote holding the author's pushed branch, as an open PR implies; the second command needs none.
+    const origin = join(dir, "..", "origin.git");
+    git(dir, "init", "-q", "--bare", origin);
+    git(dir, "remote", "add", "origin", origin);
+    git(dir, "push", "-q", "origin", author);
+    for (const command of checkouts) {
+      const checkout = sh(fill(command), dir);
+      expect(checkout.status, `${command}: ${checkout.stderr}`).toBe(0);
+      expect(git(reviewer, "rev-parse", "HEAD")).toBe(git(dir, "rev-parse", author));
+      const restore = sh(fill(back), reviewer);
+      expect(restore.status, restore.stderr).toBe(0);
+      expect(git(reviewer, "rev-parse", "--abbrev-ref", "HEAD")).toBe(`diarchy/${paths.goalId}/codex`);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// start while a goal is already active
+// ---------------------------------------------------------------------------
+
+describe("start with a goal already active", () => {
+  it("refuses a new goal text or kickoff option instead of running the old goal, in PLAN too", async () => {
+    const dir = await initProject("sleeper", false);
+    const kick = await cli(["kickoff", "Old goal about caching", "--ac", "old criterion", "--lead", "claude", "--project", dir]);
+    expect(kick.code, kick.stderr).toBe(0);
+    const goalId = goalPaths(dir).goalId;
+    expect(goalState(dir).phase).toBe("PLAN");
+
+    for (const args of [["Totally different goal", "--ac", "new criterion"], ["--lead", "codex"]]) {
+      const run = await cli(["start", ...args, "--driver", "fake", "--no-worktrees", "--project", dir]);
+      expect(run.code, run.stdout).toBe(1);
+      expect(run.stderr).toContain(`${goalId} is already active (phase PLAN)`);
+      expect(run.stderr).toContain("run diarchy start with no goal text or kickoff options to attach");
+      expect(run.stdout).not.toContain("attached to");
+      expect(run.stdout).not.toContain("started");
+    }
+    const after = goalState(dir);
+    expect(after.messages.map((message) => message.type)).toEqual(["KICKOFF"]);
+    expect(after.lead).toBe("claude");
+    expect(existsSync(join(dir, ".diarchy", "start.pid"))).toBe(false);
   });
 });
 
@@ -371,33 +398,6 @@ describe("start --driver fake (slop)", () => {
     const result = await cli(["reply", "Carry on.", "--budget", "bogus=3", "--project", dir]);
     expect(result.code).toBe(1);
     expect(result.stderr).toContain("invalid --budget");
-  });
-});
-
-// ---------------------------------------------------------------------------
-// start while a goal is already active
-// ---------------------------------------------------------------------------
-
-describe("start with a goal already active", () => {
-  it("refuses a new goal text or kickoff option instead of running the old goal, in PLAN too", async () => {
-    const dir = await initProject("sleeper", false);
-    const kick = await cli(["kickoff", "Old goal about caching", "--ac", "old criterion", "--lead", "claude", "--project", dir]);
-    expect(kick.code, kick.stderr).toBe(0);
-    const goalId = goalPaths(dir).goalId;
-    expect(goalState(dir).phase).toBe("PLAN");
-
-    for (const args of [["Totally different goal", "--ac", "new criterion"], ["--lead", "codex"]]) {
-      const run = await cli(["start", ...args, "--driver", "fake", "--no-worktrees", "--project", dir]);
-      expect(run.code, run.stdout).toBe(1);
-      expect(run.stderr).toContain(`${goalId} is already active (phase PLAN)`);
-      expect(run.stderr).toContain("run diarchy start with no goal text or kickoff options to attach");
-      expect(run.stdout).not.toContain("attached to");
-      expect(run.stdout).not.toContain("started");
-    }
-    const after = goalState(dir);
-    expect(after.messages.map((message) => message.type)).toEqual(["KICKOFF"]);
-    expect(after.lead).toBe("claude");
-    expect(existsSync(join(dir, ".diarchy", "start.pid"))).toBe(false);
   });
 });
 

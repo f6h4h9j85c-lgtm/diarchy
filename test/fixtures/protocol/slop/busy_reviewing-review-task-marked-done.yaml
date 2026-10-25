@@ -1,0 +1,45 @@
+description: "BUSY_REVIEWING: claude marks its review task for PR 412 done with a STATUS that carries no review evidence; it still owes the review, so it cannot be assigned implementation."
+state:
+  base: execute-review-assigned
+prior:
+  - message:
+      protocol_version: 1
+      id: 20261025T151330Z-0004-claude-STATUS
+      goal: 20261025-rate-limit
+      from: claude
+      to: all
+      type: STATUS
+      re:
+        - AC1
+      task: T4
+      task_status: done
+      evidence:
+        - kind: file
+          path: notes/review-412.md
+      phase: EXECUTE
+      ts: 2026-10-25T15:13:30Z
+      body: Review of 412 finished.
+message:
+  protocol_version: 1
+  id: 20261025T151400Z-0005-claude-ASSIGN
+  goal: 20261025-rate-limit
+  from: claude
+  to: claude
+  type: ASSIGN
+  re:
+    - AC1
+  task: T2
+  kind: implement
+  worktree: .diarchy/worktrees/claude
+  branch: diarchy/20261025-rate-limit/claude
+  phase: EXECUTE
+  ts: 2026-10-25T15:14:00Z
+  body: ""
+expect:
+  ok: false
+  rule: BUSY_REVIEWING
+  message: claude is reviewing https://github.com/acme/api/pull/412. Assign implementation to another agent or wait for the review evidence.
+  state:
+    tasks:
+      T4:
+        status: done

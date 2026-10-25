@@ -274,7 +274,7 @@ const talkWorkRatio = ({ message, state }) => {
         return null;
     if (TALK_EXEMPT.includes(message.type) || repliesToOpenChallenge(state, message))
         return null;
-    return reject("TALK_WORK_RATIO", `${state.used.talk_since_work} messages since the last STATUS with evidence. Post STATUS with evidence, BLOCKED, or DONE before anything else.`);
+    return reject("TALK_WORK_RATIO", `${state.used.talk_since_work} messages since the last STATUS with work evidence. Post STATUS with a commit, pr, review, or a passing or failing test, or post BLOCKED or DONE, before anything else.`);
 };
 const citeAc = ({ message, state }) => {
     const known = Object.keys(state.acs);
@@ -373,7 +373,8 @@ const busyReviewing = ({ message, state }) => {
 /**
  * PROTOCOL.md 9.2 (a) to (f), as a list of what is missing. Only recorded
  * state counts: the DONE's own evidence is an attestation and cannot set an
- * AC passing, register a PR, or close a task.
+ * AC passing, register a PR, or close a task, so a PR it cites must already
+ * be registered and approved (c).
  */
 export function doneMissing(message, state) {
     const missing = [];
@@ -392,6 +393,11 @@ export function doneMissing(message, state) {
             const approved = pr.reviews.some((review) => review.verdict === "approve" && review.by !== pr.author);
             if (!approved)
                 missing.push(`PR ${url} has no approve review from the other agent`);
+        }
+        const cited = new Set((message.evidence ?? []).flatMap((item) => (item.kind === "pr" ? [item.url] : [])));
+        for (const url of cited) {
+            if (!(url in state.prs))
+                missing.push(`PR ${url} was never posted in a STATUS or reviewed`);
         }
     }
     for (const id of openThreads(state))

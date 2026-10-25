@@ -73,8 +73,9 @@ const decisionId = z.string().regex(DECISION_ID_PATTERN, "must be plan or D<n>")
 const isoTs = z.string().regex(ISO_TS_PATTERN, "must be an ISO 8601 UTC timestamp");
 const url = z.url();
 
+/** Free text of 1 to `max` whitespace-split words; blank or whitespace-only text fails. */
 const wordsMax = (max: number) =>
-  z.string().min(1).refine((text) => wordCount(text) <= max, `at most ${max} words`);
+  z.string().refine((text) => wordCount(text) >= 1 && wordCount(text) <= max, `must be 1 to ${max} words`);
 
 const ONE_LINE = "must be one line with no control characters";
 

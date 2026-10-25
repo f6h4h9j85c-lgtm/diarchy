@@ -10,7 +10,6 @@
 import { RULES, RULES_IN_ORDER } from "./rules.js";
 import { checkMessageShape, compactTs, isoSeconds } from "./schema.js";
 import { deadlinePassed, evidenceKey, isPm, limitHit, messageRef, minutesSince, newEvidenceKeys, nextDecisionId, nextTaskId, repliesToOpenChallenge, totalBudgetReached, } from "./state.js";
-import { truncateWords } from "./text.js";
 import { AGENT_HUMAN, AGENT_SYSTEM, DEFAULT_LIMITS, } from "./types.js";
 export { allowedTypes } from "./state.js";
 const DEADLOCK_MINUTES = 10;
@@ -63,6 +62,12 @@ function accept(ctx) {
     return { ok: true, message, state, effects };
 }
 const TALK_EXEMPT = ["STATUS", "BLOCKED", "DONE"];
+/** PROTOCOL.md 3.1 work evidence: a commit, pr, or review, or a test that passed or failed. */
+function isWorkEvidence(item) {
+    if (item.kind === "test")
+        return item.result !== "pending";
+    return item.kind === "commit" || item.kind === "pr" || item.kind === "review";
+}
 function applyCounters(state, message) {
     if (!isPm(state, message.from))
         return;
@@ -70,7 +75,9 @@ function applyCounters(state, message) {
     if (state.phase === "PLAN" && message.type !== "KICKOFF")
         state.used.plan_messages += 1;
     if (message.type === "STATUS") {
-        state.used.talk_since_work = 0;
+        // A STATUS without work evidence is accepted but neither counts nor resets (section 8).
+        if ((message.evidence ?? []).some(isWorkEvidence))
+            state.used.talk_since_work = 0;
     }
     else if (state.phase === "EXECUTE" && !TALK_EXEMPT.includes(message.type) && !repliesToOpenChallenge(state, message)) {
         state.used.talk_since_work += 1;
@@ -271,13 +278,18 @@ function applyTest(state, re, result, effects) {
         effects.push({ kind: "ac_status", ac, status });
     }
 }
+/** The BLOCKED body as one sentence: its first 100 words, ending in `.`, or in `...` when cut. */
+function blockedSummary(body) {
+    const words = body.trim().split(/\s+/).filter((word) => word !== "");
+    const text = words.slice(0, ASK_HUMAN_BODY_WORDS).join(" ").replace(/[.!?]+$/, "");
+    return words.length > ASK_HUMAN_BODY_WORDS ? `${text} ...` : `${text}.`;
+}
 function applyBlocked(state, message, effects) {
     if (message.kind !== "external")
         return;
-    const summary = truncateWords(message.body, ASK_HUMAN_BODY_WORDS).replace(/[.!?]+$/, "");
     block(state, effects, "BLOCKED", {
         re: message.re,
-        body: `${message.from} is BLOCKED (external): ${summary}. ${HUMAN_PAGED}`,
+        body: `${message.from} is BLOCKED (external): ${blockedSummary(message.body)} ${HUMAN_PAGED}`,
         reply_to: message.id,
         decision_id: null,
     });

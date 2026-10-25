@@ -248,7 +248,7 @@ export function createMcpServer(options: McpServerOptions): McpServer {
     {
       title: "Report work",
       description:
-        "Post a STATUS with evidence: the only message that counts as work. Use it when a commit lands, a PR opens, tests run, or a review is done; it resets the talk budget that otherwise blocks further discussion in EXECUTE. In EXECUTE a test item with result pass or fail sets the status of every AC in re (DONE needs every AC passing this way), so cite exactly the criteria the test covers. A review item is the only thing that counts as a review and must come from a non-author. Name task and task_status when the work belongs to a task.",
+        "Post a STATUS with evidence: the only message that counts as work. Use it when a commit lands, a PR opens, tests run, or a review is done; with a commit, pr, review, or a passing or failing test it resets the talk budget that otherwise blocks further discussion in EXECUTE (a pending test, file, or link alone does not). In EXECUTE a test item with result pass or fail sets the status of every AC in re (DONE needs every AC passing this way), so cite exactly the criteria the test covers. A review item is the only thing that counts as a review and must come from a non-author. Name task and task_status when the work belongs to a task.",
       inputSchema: {
         re,
         task: z.string().optional().describe("Task id T<n> this reports on."),

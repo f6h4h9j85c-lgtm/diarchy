@@ -124,7 +124,7 @@ function applyByType(state: GoalState, message: Message, effects: Effect[]): voi
     case "STATUS":
       return applyWork(state, message, effects);
     case "DONE":
-      applyWork(state, message, effects);
+      // DONE attests to recorded state (9.2); its evidence changes no AC, PR, or task.
       return setPhase(state, effects, "DONE");
     case "BLOCKED":
       return applyBlocked(state, message, effects);
@@ -267,7 +267,7 @@ function applyAssign(state: GoalState, message: Message, effects: Effect[]): voi
   effects.push(taskEffect(task));
 }
 
-/** STATUS and DONE: PR registry, reviews, AC statuses, task status. */
+/** STATUS: PR registry, reviews, task status, and in EXECUTE the AC statuses (PROTOCOL.md 2.3). */
 function applyWork(state: GoalState, message: Message, effects: Effect[]): void {
   const items = message.evidence ?? [];
   for (const item of items) {
@@ -275,7 +275,9 @@ function applyWork(state: GoalState, message: Message, effects: Effect[]): void 
   }
   for (const item of items) {
     if (item.kind === "review") applyReview(state, message.from, item.url, item.verdict, effects);
-    if (item.kind === "test" && item.result !== "pending") applyTest(state, message.re, item.result, effects);
+    if (item.kind === "test" && item.result !== "pending" && state.phase === "EXECUTE") {
+      applyTest(state, message.re, item.result, effects);
+    }
   }
   if (message.task !== undefined && message.task_status !== undefined) {
     const task = state.tasks[message.task];

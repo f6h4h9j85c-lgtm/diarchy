@@ -1,0 +1,34 @@
+description: "A PLAN STATUS with a passing test is accepted but is a probe: AC status changes only in EXECUTE."
+state:
+  base: plan-proposed
+message:
+  protocol_version: 1
+  id: 20261025T140300Z-0001-codex-STATUS
+  goal: 20261025-rate-limit
+  from: codex
+  to: all
+  type: STATUS
+  re:
+    - AC1
+    - AC2
+    - AC3
+  evidence:
+    - kind: test
+      test: npm test
+      result: pass
+  phase: PLAN
+  ts: 2026-10-25T14:03:00Z
+  body: Baseline suite is green on main before any change.
+expect:
+  ok: true
+  phase_after: PLAN
+  state:
+    acs:
+      AC1:
+        status: open
+      AC2:
+        status: open
+      AC3:
+        status: open
+    used:
+      talk_since_work: 0

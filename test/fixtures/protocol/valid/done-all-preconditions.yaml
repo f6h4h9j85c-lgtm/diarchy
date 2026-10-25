@@ -1,6 +1,6 @@
-description: "PROTOCOL.md example DONE with every 9.2 precondition met: EXECUTE -> DONE."
+description: "PROTOCOL.md example DONE with every 9.2 precondition met by earlier STATUS messages (ACs passing, tasks done, PRs cross-approved): EXECUTE -> DONE."
 state:
-  base: execute-reviewed
+  base: execute-ready
 message:
   protocol_version: 1
   id: 20261025T163000Z-0009-claude-DONE
@@ -26,12 +26,14 @@ expect:
   ok: true
   phase_after: DONE
   effects:
-    - kind: ac_status
-      ac: AC2
-      status: passing
-    - kind: ac_status
-      ac: AC3
-      status: passing
     - kind: phase
       from: EXECUTE
       to: DONE
+  state:
+    acs:
+      AC1:
+        status: passing
+      AC2:
+        status: passing
+      AC3:
+        status: passing

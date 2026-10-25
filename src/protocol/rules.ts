@@ -14,6 +14,7 @@ import {
 } from "./schema.js";
 import {
   allowedTypes,
+  authoredPr,
   challengeCount,
   challengers,
   isKnownSender,
@@ -26,7 +27,6 @@ import {
   phaseAllows,
   planBudgetSpent,
   prAuthor,
-  projectAcStatuses,
   repliesToOpenChallenge,
   roleOf,
   talkRatioReached,
@@ -451,12 +451,16 @@ const busyReviewing: Rule = ({ message, state }) => {
   );
 };
 
-/** PROTOCOL.md 9.2 (a) to (d), as a list of what is missing. */
+/**
+ * PROTOCOL.md 9.2 (a) to (f), as a list of what is missing. Only recorded
+ * state counts: the DONE's own evidence is an attestation and cannot set an
+ * AC passing, register a PR, or close a task.
+ */
 export function doneMissing(message: Message, state: GoalState): string[] {
   const missing: string[] = [];
   if (state.phase !== "EXECUTE") missing.push(`phase is ${state.phase}`);
   if (message.from !== state.lead) missing.push(`sender ${message.from} is not the lead`);
-  for (const [ac, status] of Object.entries(projectAcStatuses(state, message))) {
+  for (const [ac, { status }] of Object.entries(state.acs)) {
     if (status === "failing") missing.push(`${ac} latest test failed`);
     else if (status !== "passing") missing.push(`${ac} has no passing test`);
   }
@@ -468,6 +472,13 @@ export function doneMissing(message: Message, state: GoalState): string[] {
   }
   for (const id of openThreads(state)) missing.push(`decision ${id} is open`);
   if (state.deadlock_watch !== null) missing.push(`deadlock watch on ${state.deadlock_watch.decision_id} is active`);
+  for (const task of Object.values(state.tasks)) {
+    if (task.status !== "done") missing.push(`task ${task.id} is ${task.status}`);
+    else if (state.review_required && task.kind !== "review" && !authoredPr(state, task.assignee)) {
+      missing.push(`task ${task.id} has no pr evidence from ${task.assignee ?? "an assignee"}`);
+    }
+  }
+  if (state.review_required && Object.keys(state.prs).length === 0) missing.push("no PR is registered");
   return missing;
 }
 
@@ -477,7 +488,7 @@ const donePrecondition: Rule = ({ message, state }) => {
   if (missing.length === 0) return null;
   return reject(
     "DONE_PRECONDITION",
-    `Not done: ${missing.join("; ")}. Post STATUS with passing tests for each AC and get the other agent's approve review on each PR.`,
+    `Not done: ${missing.join("; ")}. Finish every task, post STATUS with passing tests for each AC, and get the other agent's approve review on each PR.`,
   );
 };
 

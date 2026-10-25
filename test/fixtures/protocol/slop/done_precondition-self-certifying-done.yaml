@@ -1,0 +1,25 @@
+description: "DONE_PRECONDITION: a DONE right after the plan DECIDE, with no STATUS, no PR, and no assigned task, cannot certify itself with its own test item."
+state:
+  base: execute
+message:
+  protocol_version: 1
+  id: 20261025T141000Z-0003-claude-DONE
+  goal: 20261025-rate-limit
+  from: claude
+  to: all
+  type: DONE
+  re:
+    - AC1
+    - AC2
+    - AC3
+  evidence:
+    - kind: test
+      test: npm test
+      result: pass
+  phase: EXECUTE
+  ts: 2026-10-25T14:10:00Z
+  body: Everything passes locally.
+expect:
+  ok: false
+  rule: DONE_PRECONDITION
+  message: "Not done: AC1 has no passing test; AC2 has no passing test; AC3 has no passing test; task T1 is todo; task T2 is todo; task T3 is todo; no PR is registered. Finish every task, post STATUS with passing tests for each AC, and get the other agent's approve review on each PR."

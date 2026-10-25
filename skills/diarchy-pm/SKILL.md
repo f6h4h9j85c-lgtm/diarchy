@@ -43,7 +43,7 @@ Challenger:
 2. Find the cheapest fact that would change the plan: a failing test, a replica count, a missing dependency, an uncovered AC. Run it if you can.
 3. Post at most one CHALLENGE with a `test` evidence item (`result: pending` is allowed in PLAN), or post nothing. Silence is legal and common.
 
-Plan budget is 12 messages. At the cap only the lead's DECIDE is accepted.
+At the 12-message cap only the lead's DECIDE is accepted.
 
 ## EXECUTE phase
 
@@ -51,7 +51,7 @@ Lead:
 
 1. ASSIGN each task by availability: `kind: implement`, `worktree: .diarchy/worktrees/<agent>`, `branch: diarchy/<goal-id>/<agent>`. You may assign yourself. Never assign implementation to an agent holding an open review.
 2. When a STATUS arrives with `pr` evidence, ASSIGN `kind: review` with that `pr` to the other agent, never the author.
-3. Post DONE only when every AC has a passing `test` item, every PR has an `approve` review from a non-author, and no thread is open.
+3. Post DONE only when every task is done, every AC was set passing by a STATUS, every PR has a non-author `approve`, and no thread is open.
 
 Both:
 

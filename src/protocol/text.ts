@@ -97,10 +97,3 @@ export function oneLine(text: string, maxChars = ONE_LINE_MAX_CHARS): string {
   const flat = Array.from(chars.join("").replace(/\s+/g, " ").trim());
   return flat.length <= maxChars ? flat.join("") : `${flat.slice(0, maxChars - 1).join("").trimEnd()}…`;
 }
-
-/** First `max` whitespace-split tokens, with an ellipsis when cut. */
-export function truncateWords(text: string, max: number): string {
-  const words = text.trim().split(/\s+/).filter((word) => word !== "");
-  if (words.length <= max) return words.join(" ");
-  return `${words.slice(0, max).join(" ")} ...`;
-}

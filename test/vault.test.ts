@@ -918,6 +918,111 @@ describe("read and waitForReply", () => {
 });
 
 // ---------------------------------------------------------------------------
+// The deadlock question callout variants (RENDERING.md 4.1)
+// ---------------------------------------------------------------------------
+
+describe("deadlock question callout variants", () => {
+  const RL_GOAL = "20261025-rl";
+
+  it("a plan deadlock while D1 is open shows the reply without --decision, and that reply unblocks PLAN", async () => {
+    const h = harness();
+    ok(await h.human.kickoff({ goal: "Rate limit the API.", acceptance_criteria: ["Over-limit requests get 429.", "The limit is configurable."], lead: "claude", slug: "rl" }));
+    h.clock.advance(60_000);
+    const propose = await h.claude.post({ type: "PROPOSE", to: "all", re: ["AC1", "AC2"], decision_id: "plan", claim: "One task per AC.", body: "Two tasks: middleware and config." });
+    ok(propose);
+    h.clock.advance(60_000);
+    ok(
+      await h.codex.post({
+        type: "CHALLENGE",
+        to: "claude",
+        re: ["AC1"],
+        reply_to: propose.id,
+        decision_id: "plan",
+        claim: "An in-process bucket suffices on one replica.",
+        evidence: [{ kind: "test", test: "kubectl get deploy api prints 1", result: "pending" }],
+      }),
+    );
+    h.clock.advance(60_000);
+    const d1 = await h.claude.post({ type: "PROPOSE", to: "all", re: ["AC2"], claim: "The default should match nginx.", body: "Ops has one number to reason about." });
+    ok(d1);
+    expect(d1.decision_id).toBe("D1");
+    h.clock.advance(60_000);
+    const late = await h.codex.post({ type: "STATUS", to: "all", re: ["AC1"], evidence: [{ kind: "file", path: "notes/probe.md" }], body: "Probe queued; results in notes/probe.md." });
+    ok(late);
+    expect(late.phase).toBe("BLOCKED");
+    expect(h.human.state()).toMatchObject({ blocked_from: "PLAN", decisions: { plan: { status: "open" }, D1: { status: "open" } } });
+
+    expect(h.file("goal.md", RL_GOAL)).toContain(
+      [
+        "> **Deadlock on plan, re AC1.** claude did not DECIDE within 2 messages or 10 minutes. The two positions:",
+        ">",
+        "> 1. claude PROPOSE 14:01:00: *One task per AC.*",
+        "> 2. codex CHALLENGE 14:02:00: *An in-process bucket suffices on one replica.* (test `kubectl get deploy api prints 1` · pending)",
+        ">",
+        '> **To answer:** run `diarchy reply "<ruling>"`. Your ruling is recorded as a new DECIDE with basis human, PLAN resumes, and claude must then DECIDE plan. `diarchy stop` ends the run.',
+        "",
+      ].join("\n"),
+    );
+    // Why the callout drops --decision: a ruling on plan is refused while D1 is open.
+    expect(await h.human.reply("Use the in-process bucket.", { decision: "plan" })).toMatchObject({ ok: false, rule: "PHASE_GATE" });
+    const ruling = await h.human.reply("Use the in-process bucket.");
+    ok(ruling);
+    expect(ruling).toMatchObject({ decision_id: "D2", phase: "PLAN" });
+    expect(h.human.state()?.decisions.plan.status).toBe("open");
+  });
+
+  it("a reopened plan thread lists the DECIDE it reopens and answers with the general line, keeping EXECUTE's tasks", async () => {
+    const h = harness();
+    ok(await h.human.kickoff({ goal: "Rate limit the API.", acceptance_criteria: ["Over-limit requests get 429."], lead: "claude", slug: "rl" }));
+    h.clock.advance(60_000);
+    ok(await h.claude.post({ type: "PROPOSE", to: "all", re: ["AC1"], decision_id: "plan", claim: "One task does it.", body: "A single middleware task." }));
+    h.clock.advance(60_000);
+    const decide = await h.claude.post({
+      type: "DECIDE",
+      to: "all",
+      re: ["AC1"],
+      decision_id: "plan",
+      basis: "authority",
+      claim: "One task does it.",
+      tasks: ["Middleware"],
+      body: "Nothing to test before the work exists.",
+    });
+    ok(decide);
+    h.clock.advance(60_000);
+    ok(
+      await h.codex.post({
+        type: "CHALLENGE",
+        to: "claude",
+        re: ["AC1"],
+        reply_to: decide.id,
+        decision_id: "plan",
+        claim: "The task list misses the config step.",
+        evidence: [{ kind: "test", test: "grep RATE_LIMIT src prints nothing", result: "fail" }],
+      }),
+    );
+    h.clock.advance(11 * 60_000);
+    await h.claude.waitForReply({ timeoutMs: 1_000 });
+    expect(h.human.state()).toMatchObject({ phase: "BLOCKED", blocked_from: "EXECUTE", decisions: { plan: { status: "decided" } } });
+
+    expect(h.file("goal.md", RL_GOAL)).toContain(
+      [
+        "> **Deadlock on plan, re AC1.** claude did not DECIDE within 2 messages or 10 minutes. The two positions:",
+        ">",
+        "> 1. claude DECIDE 14:02:00: *One task does it.*",
+        "> 2. codex CHALLENGE 14:03:00: *The task list misses the config step.* (test `grep RATE_LIMIT src prints nothing` · **fail**)",
+        ">",
+        '> **To answer:** run `diarchy reply "<ruling>" --decision plan`. Your ruling closes plan as a DECIDE with basis human and EXECUTE resumes. `diarchy stop` ends the run.',
+        "",
+      ].join("\n"),
+    );
+    const ruling = await h.human.reply("Add the config step.", { decision: "plan" });
+    ok(ruling);
+    expect(ruling.phase).toBe("EXECUTE");
+    expect(h.human.state()).toMatchObject({ decisions: { plan: { status: "superseded", superseded_by: ruling.decision_id } }, tasks: { T1: { task: "Middleware" } } });
+  });
+});
+
+// ---------------------------------------------------------------------------
 // reply and stop as human
 // ---------------------------------------------------------------------------
 

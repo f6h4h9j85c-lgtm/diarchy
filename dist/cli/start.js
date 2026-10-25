@@ -37,6 +37,21 @@ export function runningSupervisor(projectDir) {
         return null;
     }
 }
+/** The kickoff inputs given on the command line; they only mean something when no goal is active. */
+function newGoalArgs(goalText, options) {
+    const given = [];
+    if (goalText !== undefined)
+        given.push("the goal text");
+    if (options.ac.length > 0)
+        given.push("--ac");
+    if (options.lead !== undefined)
+        given.push("--lead");
+    if (options.budget.length > 0)
+        given.push("--budget");
+    if (options.slug !== undefined)
+        given.push("--slug");
+    return given;
+}
 function parseDriver(value) {
     if (value === "real" || value === "fake")
         return value;
@@ -63,6 +78,10 @@ export async function runStart(projectDir, goalText, options) {
         console.log(`${nowHms()} kickoff ${result.goal_id} · lead ${result.lead} · challenger ${result.challenger}`);
     }
     else {
+        const kickoffArgs = newGoalArgs(goalText, options);
+        if (kickoffArgs.length > 0) {
+            throw new CliError(`${goal.goalId} is already active (phase ${goal.phase}), so ${kickoffArgs.join(", ")} would be ignored; run diarchy start with no goal text or kickoff options to attach to it`);
+        }
         console.log(`${nowHms()} attached to ${goal.goalId} (phase ${goal.phase}, lead ${goal.lead})`);
         if (goal.phase === "BLOCKED") {
             const state = human.state();
@@ -71,9 +90,6 @@ export async function runStart(projectDir, goalText, options) {
                 console.log(`${nowHms()} human needed: ${blockSummary(state, messages)}. Run: ${replyHint(state, messages) ?? "diarchy reply"}`);
             return EXIT_BLOCKED;
         }
-    }
-    if (goalText !== undefined && goal.phase !== "PLAN" && options.ac.length > 0) {
-        console.log(`${nowHms()} note: goal text and --ac ignored; ${goal.goalId} is already active`);
     }
     const worktrees = prepareWorktrees(projectDir, config, goal.goalId, agents, options.worktrees);
     if (driver === "real") {

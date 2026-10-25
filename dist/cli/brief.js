@@ -139,7 +139,11 @@ export function nextStep(state, messages, agent, unread) {
         if (plan !== undefined && plan.status === "open") {
             if (plan.messages === 0)
                 return { text: "post PROPOSE with decision_id plan (call post)", owes: true };
-            return { text: "wait_for_reply for a CHALLENGE, then call decide with decision_id plan", owes: false };
+            // Silence is legal (PROPOSE -> DECIDE, PROTOCOL.md section 7); diarchy-pm bounds the wait the same way.
+            return {
+                text: "wait_for_reply for a CHALLENGE; after two timeouts with none, or once the challenger posts something else, call decide with decision_id plan (basis authority, body: no CHALLENGE came)",
+                owes: false,
+            };
         }
     }
     if (lead && state.phase === "EXECUTE") {

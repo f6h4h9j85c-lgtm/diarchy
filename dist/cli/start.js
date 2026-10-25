@@ -15,7 +15,7 @@ import { CliError, EXIT_BLOCKED, EXIT_ERROR, EXIT_OK, nowHms, sleep } from "./co
 import { clearSession, defaultFakeScript, detectSessionId, fakePlan, loadSession, realPlan, saveSession, sandboxNotice, } from "./drivers.js";
 import { kickoffInput } from "./kickoff.js";
 import { loadLauncherConfig } from "./launcher-config.js";
-import { ensureWorktrees, hasCommits, isGitRepo } from "./worktrees.js";
+import { ensureWorktrees, hasCommits, isGitRepo, missingFromWorktrees } from "./worktrees.js";
 /** A resumed child that dies this fast is treated as a failed resume, not a crash. */
 const FAST_FAIL_MS = 5_000;
 export function pidPath(projectDir) {
@@ -104,6 +104,10 @@ function prepareWorktrees(projectDir, config, goalId, agents, wanted) {
         const note = result.note === null ? "" : ` (${result.note})`;
         console.log(`${nowHms()} worktree ${result.outcome} ${result.path} on ${result.branch}${note}`);
         map.set(result.agent, result.path);
+    }
+    const missing = missingFromWorktrees(projectDir, [...map.values()]);
+    if (missing.length > 0) {
+        console.log(`${nowHms()} note: ${missing.join(" and ")} not in the worktrees (uncommitted?); Codex reads them only from its worktree. Commit them before the next diarchy start.`);
     }
     return map;
 }

@@ -13,6 +13,16 @@ export default defineConfig(
         ...globals.node,
       },
     },
+    rules: {
+      // URL.pathname stays percent-encoded ("dir%20with%20space"), so fs calls on it miss.
+      "no-restricted-syntax": [
+        "error",
+        {
+          selector: "MemberExpression[object.type='NewExpression'][object.callee.name='URL'][property.name='pathname']",
+          message: "Use fileURLToPath(new URL(...)) for a filesystem path; URL.pathname is percent-encoded.",
+        },
+      ],
+    },
   },
   {
     files: ["**/*.ts"],

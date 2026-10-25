@@ -175,7 +175,7 @@ export function createMcpServer(options: McpServerOptions): McpServer {
         decision_id: z.string().optional().describe("The open thread: plan or D<n>. Omit when supersedes is set."),
         supersedes: z.string().optional().describe("Decided thread to reopen; the store assigns the next D<n>."),
         reply_to: replyTo,
-        tasks: z.array(z.string()).optional().describe("plan only: tasks, numbered T1.. in goal.md."),
+        tasks: z.array(z.string()).optional().describe("plan only: tasks, one line and 40 words max each, numbered T1.. in goal.md."),
         ac_add: z.array(z.string()).optional().describe("plan only: criteria appended as AC<n+1>.., 40 words each."),
         evidence: evidence.optional().describe("basis test: a test item with result pass or fail. supersedes: the new evidence."),
         body,
@@ -193,7 +193,7 @@ export function createMcpServer(options: McpServerOptions): McpServer {
       inputSchema: {
         to: z.string().describe("Assignee agent id."),
         task: z.string().optional().describe("Existing task id T<n>. Exactly one of task or new_task."),
-        new_task: z.string().optional().describe("Text of a task not in goal.md yet; the store numbers it."),
+        new_task: z.string().optional().describe("Text of a task not in goal.md yet, one line and 40 words max; the store numbers it."),
         kind: z.enum(ASSIGN_KINDS).describe("implement or review."),
         worktree: z.string().optional().describe("implement: default <worktrees.root>/<to>."),
         branch: z.string().optional().describe("implement: default <branch_prefix>/<goal-id>/<to>."),

@@ -8,7 +8,14 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import type { RequestOptions } from "@modelcontextprotocol/sdk/shared/protocol.js";
-import { CallToolResultSchema, LoggingMessageNotificationSchema, type Progress, type ReadResourceResult } from "@modelcontextprotocol/sdk/types.js";
+import {
+  CallToolResultSchema,
+  ErrorCode,
+  LoggingMessageNotificationSchema,
+  type JSONRPCMessage,
+  type Progress,
+  type ReadResourceResult,
+} from "@modelcontextprotocol/sdk/types.js";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { TOOL_NAMES, createMcpServer } from "../src/mcp/index.js";
@@ -406,6 +413,46 @@ describe("wait_for_reply", () => {
     h.clock.advance(MAX_WAIT_MS - 2 * PROGRESS_MS);
     expect((await waiting).body).toEqual({ timeout: true });
     expect(progress).toHaveLength(2);
+  });
+
+  it("a wait the client cancels (request timeout) leaves the cursor alone, so the next read delivers the reply", async () => {
+    const h = await harness();
+    await h.kickoff();
+    await accepted<ReadResult>(h.codex, "read");
+    await expect(call(h.codex, "wait_for_reply", { timeout_ms: 5_000 }, { timeout: 50 })).rejects.toMatchObject({ code: ErrorCode.RequestTimeout });
+    await realSleep(50);
+    const posted = await accepted<PostOk>(h.claude, "post", PROPOSE);
+    await realSleep(50);
+    const read = await accepted<ReadResult>(h.codex, "read");
+    expect(read.messages.map((message) => message.id)).toEqual([posted.id]);
+    expect(read.cursor).toBe(posted.id);
+  });
+
+  it("a wait whose client gave up without cancelling is ended by the agent's next call and does not consume the reply", async () => {
+    const h = await harness();
+    await h.kickoff();
+    await accepted<ReadResult>(h.codex, "read");
+    // A raw tools/call outside the Client's bookkeeping: no timeout, no notifications/cancelled, nobody awaiting the result.
+    const transport = h.codex.transport;
+    if (transport === undefined) throw new Error("codex client has no transport");
+    const replies: JSONRPCMessage[] = [];
+    const deliver = transport.onmessage;
+    transport.onmessage = (message, extra) => {
+      replies.push(message);
+      deliver?.(message, extra);
+    };
+    await transport.send({ jsonrpc: "2.0", id: "orphan", method: "tools/call", params: { name: "wait_for_reply", arguments: { timeout_ms: 5_000 } } });
+    await realSleep(50);
+    const waiting = call<ReadResult>(h.codex, "wait_for_reply", { timeout_ms: 5_000 });
+    await realSleep(50);
+    const posted = await accepted<PostOk>(h.claude, "post", PROPOSE);
+    const { isError, body } = await waiting;
+    expect(isError).toBe(false);
+    expect(body.messages.map((message) => message.id)).toEqual([posted.id]);
+    expect(body.cursor).toBe(posted.id);
+    const orphan = replies.find((message) => "id" in message && message.id === "orphan");
+    expect(orphan).toMatchObject({ result: { structuredContent: { timeout: true } } });
+    expect((await accepted<ReadResult>(h.codex, "read")).messages).toEqual([]);
   });
 });
 

@@ -53,27 +53,39 @@ const pathText = z
     .refine((text) => !hasControlChars(text), ONE_LINE);
 /** Git-ref-safe: letters, digits, `. _ / -`; no `..`; no leading `-`. */
 const BRANCH_PATTERN = /^(?!-)(?!.*\.\.)[A-Za-z0-9._/-]+$/;
+const BRANCH_CHARS = 'letters, digits, and . _ / - with no ".." and no leading "-"';
 const branchName = z
     .string()
     .max(FIELD_MAX_CHARS, `at most ${FIELD_MAX_CHARS} characters`)
-    .regex(BRANCH_PATTERN, 'must be a branch name of letters, digits, and . _ / - with no ".." and no leading "-"');
+    .regex(BRANCH_PATTERN, `must be a branch name of ${BRANCH_CHARS}`);
+const POST_RULES = { task: oneLineWords(40), words: wordsMax, path: pathText, branch: branchName };
+/** v0.1.0: any non-empty string, and word-limited text of at least one character. */
+const STORED_RULES = {
+    task: z.string().min(1),
+    words: (max) => z.string().min(1).refine((text) => wordCount(text) <= max, `at most ${max} words`),
+    path: z.string().min(1),
+    branch: z.string().min(1),
+};
 // ---------------------------------------------------------------------------
 // Evidence (PROTOCOL.md 3.1)
 // ---------------------------------------------------------------------------
-export const evidenceItemSchema = z.discriminatedUnion("kind", [
-    z.strictObject({ kind: z.literal("commit"), sha: z.string().regex(/^[0-9a-f]{7,40}$/, "7 to 40 hex") }),
-    z.strictObject({ kind: z.literal("pr"), url }),
-    z.strictObject({
-        kind: z.literal("test"),
-        test: wordsMax(40),
-        result: z.enum(TEST_RESULTS),
-        log: pathText.optional(),
-    }),
-    z.strictObject({ kind: z.literal("file"), path: pathText }),
-    z.strictObject({ kind: z.literal("review"), url, verdict: z.enum(REVIEW_VERDICTS) }),
-    z.strictObject({ kind: z.literal("human"), id: messageId }),
-    z.strictObject({ kind: z.literal("external"), url, note: wordsMax(20).optional() }),
-]);
+function evidenceItem(rules) {
+    return z.discriminatedUnion("kind", [
+        z.strictObject({ kind: z.literal("commit"), sha: z.string().regex(/^[0-9a-f]{7,40}$/, "7 to 40 hex") }),
+        z.strictObject({ kind: z.literal("pr"), url }),
+        z.strictObject({
+            kind: z.literal("test"),
+            test: rules.words(40),
+            result: z.enum(TEST_RESULTS),
+            log: rules.path.optional(),
+        }),
+        z.strictObject({ kind: z.literal("file"), path: rules.path }),
+        z.strictObject({ kind: z.literal("review"), url, verdict: z.enum(REVIEW_VERDICTS) }),
+        z.strictObject({ kind: z.literal("human"), id: messageId }),
+        z.strictObject({ kind: z.literal("external"), url, note: rules.words(20).optional() }),
+    ]);
+}
+export const evidenceItemSchema = evidenceItem(POST_RULES);
 // ---------------------------------------------------------------------------
 // Budgets
 // ---------------------------------------------------------------------------
@@ -105,52 +117,58 @@ const base = {
 /** Common fields only; `type` is any string here so TYPED_ONLY can judge it. */
 const commonSchema = z.looseObject({ ...base, type: z.string() });
 const claim = z.string().min(1);
-const evidenceList = z.array(evidenceItemSchema);
-export const messageSchemas = {
-    KICKOFF: z.strictObject({ ...base, type: z.literal("KICKOFF") }),
-    PROPOSE: z.strictObject({ ...base, type: z.literal("PROPOSE"), claim, decision_id: decisionId.optional() }),
-    CHALLENGE: z.strictObject({
-        ...base,
-        type: z.literal("CHALLENGE"),
-        reply_to: messageId,
-        claim,
-        decision_id: decisionId,
-        evidence: evidenceList.optional(),
-    }),
-    DECIDE: z.strictObject({
-        ...base,
-        type: z.literal("DECIDE"),
-        claim,
-        basis: z.enum(DECISION_BASES),
-        decision_id: decisionId.optional(),
-        supersedes: decisionId.optional(),
-        evidence: evidenceList.optional(),
-        tasks: z.array(oneLineWords(40)).optional(),
-        ac_add: z.array(wordsMax(40)).optional(),
-        budgets: partialBudgetsSchema.optional(),
-    }),
-    ASSIGN: z.strictObject({
-        ...base,
-        type: z.literal("ASSIGN"),
-        task: taskId.optional(),
-        new_task: oneLineWords(40).optional(),
-        kind: z.enum(ASSIGN_KINDS),
-        worktree: pathText.optional(),
-        branch: branchName.optional(),
-        pr: url.optional(),
-        reason: z.string().optional(),
-    }),
-    STATUS: z.strictObject({
-        ...base,
-        type: z.literal("STATUS"),
-        task: taskId.optional(),
-        task_status: z.enum(STATUS_TASK_STATUSES).optional(),
-        evidence: evidenceList.optional(),
-    }),
-    DONE: z.strictObject({ ...base, type: z.literal("DONE"), evidence: evidenceList.min(1) }),
-    BLOCKED: z.strictObject({ ...base, type: z.literal("BLOCKED"), kind: z.enum(BLOCKED_KINDS) }),
-    ASK_HUMAN: z.strictObject({ ...base, type: z.literal("ASK_HUMAN"), decision_id: decisionId.optional() }),
-};
+function messageSchemasFor(rules) {
+    const evidenceList = z.array(evidenceItem(rules));
+    return {
+        KICKOFF: z.strictObject({ ...base, type: z.literal("KICKOFF") }),
+        PROPOSE: z.strictObject({ ...base, type: z.literal("PROPOSE"), claim, decision_id: decisionId.optional() }),
+        CHALLENGE: z.strictObject({
+            ...base,
+            type: z.literal("CHALLENGE"),
+            reply_to: messageId,
+            claim,
+            decision_id: decisionId,
+            evidence: evidenceList.optional(),
+        }),
+        DECIDE: z.strictObject({
+            ...base,
+            type: z.literal("DECIDE"),
+            claim,
+            basis: z.enum(DECISION_BASES),
+            decision_id: decisionId.optional(),
+            supersedes: decisionId.optional(),
+            evidence: evidenceList.optional(),
+            tasks: z.array(rules.task).optional(),
+            ac_add: z.array(rules.words(40)).optional(),
+            budgets: partialBudgetsSchema.optional(),
+        }),
+        ASSIGN: z.strictObject({
+            ...base,
+            type: z.literal("ASSIGN"),
+            task: taskId.optional(),
+            new_task: rules.task.optional(),
+            kind: z.enum(ASSIGN_KINDS),
+            worktree: rules.path.optional(),
+            branch: rules.branch.optional(),
+            pr: url.optional(),
+            reason: z.string().optional(),
+        }),
+        STATUS: z.strictObject({
+            ...base,
+            type: z.literal("STATUS"),
+            task: taskId.optional(),
+            task_status: z.enum(STATUS_TASK_STATUSES).optional(),
+            evidence: evidenceList.optional(),
+        }),
+        DONE: z.strictObject({ ...base, type: z.literal("DONE"), evidence: evidenceList.min(1) }),
+        BLOCKED: z.strictObject({ ...base, type: z.literal("BLOCKED"), kind: z.enum(BLOCKED_KINDS) }),
+        ASK_HUMAN: z.strictObject({ ...base, type: z.literal("ASK_HUMAN"), decision_id: decisionId.optional() }),
+    };
+}
+/** The shape of a post. */
+export const messageSchemas = messageSchemasFor(POST_RULES);
+/** The shape of a stored chat/ file: v0.1.0's field rules (PROTOCOL.md 12). */
+const storedMessageSchemas = messageSchemasFor(STORED_RULES);
 export const messageSchema = z.discriminatedUnion("type", [
     messageSchemas.KICKOFF,
     messageSchemas.PROPOSE,
@@ -255,6 +273,9 @@ function schemaFail(field, problem) {
  * (SCHEMA), matching the ANTI-SLOP.md evaluation order.
  */
 export function checkMessageShape(input) {
+    return checkShape(input, messageSchemas);
+}
+function checkShape(input, schemas) {
     if (!isRecord(input))
         return schemaFail("frontmatter", "must be a mapping");
     const common = commonSchema.safeParse(input);
@@ -265,7 +286,7 @@ export function checkMessageShape(input) {
     if (!isMessageType(input.type)) {
         return { ok: false, rule: "TYPED_ONLY", message: typedOnlyMessage(input.type), field: "type", problem: unknownType(input.type) };
     }
-    const typed = messageSchemas[input.type].safeParse(input);
+    const typed = schemas[input.type].safeParse(input);
     if (!typed.success) {
         const { field, problem } = describeIssue(typed.error.issues[0], input);
         return schemaFail(field, problem);
@@ -326,10 +347,14 @@ function coerceTimestamps(frontmatter) {
     }
     return out;
 }
-/** Parse a `chat/<id>.md` file; throws `SchemaError` (SCHEMA or TYPED_ONLY). */
+/**
+ * Parse a `chat/<id>.md` file with the field rules v0.1.0 wrote it under
+ * (PROTOCOL.md 12), not the tighter ones a post gets; throws `SchemaError`
+ * (SCHEMA or TYPED_ONLY).
+ */
 export function parseMessageFile(text) {
     const { frontmatter, body } = splitFrontmatter(text);
-    const result = checkMessageShape({ ...frontmatter, body });
+    const result = checkShape({ ...frontmatter, body }, storedMessageSchemas);
     if (!result.ok)
         throw new SchemaError(result.rule, result.message, result.field, result.problem);
     return result.message;
@@ -427,7 +452,9 @@ export const LINE_TERMINATOR = /[\r\n\v\f\u0085\u2028\u2029]/;
  * Parse kickoff.md: frontmatter, goal text, and the `- AC<n>: <criterion>` lines.
  * The criteria are the unbroken run of AC lines that ends the body; everything
  * above it is goal text, so an AC-shaped line inside the goal (a hand-edited
- * file) stays goal text instead of shifting the numbering.
+ * file) stays goal text instead of shifting the numbering. A body that does
+ * not parse that way is read as v0.1.0 wrote a criterion holding a line break
+ * (PROTOCOL.md 12) before it counts as corrupt.
  */
 export function parseKickoffFile(text) {
     const { frontmatter, body } = splitFrontmatter(text);
@@ -439,6 +466,17 @@ export function parseKickoffFile(text) {
     const lines = body.split(/\r?\n/);
     while (lines.length > 0 && lines[lines.length - 1].trim() === "")
         lines.pop();
+    const criteria = trailingCriteria(lines);
+    if (criteria instanceof SchemaError) {
+        const continued = continuedCriteria(lines);
+        if (continued === null)
+            throw criteria;
+        return { ...parsed.data, ...continued };
+    }
+    return { ...parsed.data, ...criteria };
+}
+/** The unbroken run of AC lines that ends the body, numbered from 1, under the goal text. */
+function trailingCriteria(lines) {
     const acLines = [];
     for (let index = lines.length - 1; index >= 0; index -= 1) {
         const match = AC_LINE_PATTERN.exec(lines[index]);
@@ -446,21 +484,61 @@ export function parseKickoffFile(text) {
             break;
         acLines.unshift(match);
     }
-    if (acLines.length === 0) {
-        throw schemaError("body", "needs at least one `- AC<n>: <criterion>` line");
+    if (acLines.length === 0)
+        return schemaError("body", "needs at least one `- AC<n>: <criterion>` line");
+    const outOfOrder = acLines.find((match, index) => Number(match[1]) !== index + 1);
+    if (outOfOrder !== undefined)
+        return schemaError("body", `AC${outOfOrder[1]} is out of order`);
+    return {
+        goal_text: lines.slice(0, lines.length - acLines.length).join("\n").trim(),
+        acceptance_criteria: acLines.map((match) => match[2].trim()),
+    };
+}
+/**
+ * kickoff.md as v0.1.0 wrote a criterion holding a line break: the criteria
+ * start at the first AC line, and a line that is not an AC line continues the
+ * criterion above it. Null unless the AC lines are AC1 to ACn in order.
+ */
+function continuedCriteria(lines) {
+    const first = lines.findIndex((line) => AC_LINE_PATTERN.test(line));
+    if (first === -1)
+        return null;
+    const criteria = [];
+    for (const line of lines.slice(first)) {
+        const match = AC_LINE_PATTERN.exec(line);
+        if (match === null)
+            criteria[criteria.length - 1].push(line);
+        else if (Number(match[1]) === criteria.length + 1)
+            criteria.push([match[2]]);
+        else
+            return null;
     }
-    const acceptance_criteria = acLines.map((match, index) => {
-        if (Number(match[1]) !== index + 1) {
-            throw schemaError("body", `AC${match[1]} is out of order`);
-        }
-        return match[2].trim();
-    });
-    const goal_text = lines.slice(0, lines.length - acLines.length).join("\n").trim();
-    return { ...parsed.data, goal_text, acceptance_criteria };
+    return {
+        goal_text: lines.slice(0, first).join("\n").trim(),
+        acceptance_criteria: criteria.map((parts) => parts.join("\n").trim()),
+    };
 }
 // ---------------------------------------------------------------------------
 // diarchy.config.json
 // ---------------------------------------------------------------------------
+/** The longest `/<goal-id>/<agent>`: 49-character goal id (`YYYYMMDD-` and a 40-character slug), 16-character agent id. */
+const BRANCH_SUFFIX_MAX_CHARS = "/".length + 49 + "/".length + 16;
+/** Longest `worktrees.branch_prefix`: the default ASSIGN branch `<branch_prefix>/<goal-id>/<agent>` stays within FIELD_MAX_CHARS. */
+export const BRANCH_PREFIX_MAX_CHARS = FIELD_MAX_CHARS - BRANCH_SUFFIX_MAX_CHARS;
+/** Longest `worktrees.root`: the default ASSIGN worktree `<worktrees.root>/<agent>` stays within FIELD_MAX_CHARS. */
+export const WORKTREE_ROOT_MAX_CHARS = FIELD_MAX_CHARS - "/".length - 16;
+/** The config keys the assign tool builds the default ASSIGN worktree and branch from must pass PROTOCOL.md 3. */
+const worktreesSchema = z.object({
+    root: z
+        .string()
+        .min(1)
+        .max(WORKTREE_ROOT_MAX_CHARS, `at most ${WORKTREE_ROOT_MAX_CHARS} characters`)
+        .refine((text) => !hasControlChars(text), ONE_LINE),
+    branch_prefix: z
+        .string()
+        .max(BRANCH_PREFIX_MAX_CHARS, `at most ${BRANCH_PREFIX_MAX_CHARS} characters`)
+        .regex(BRANCH_PATTERN, `must be ${BRANCH_CHARS}`),
+});
 export const configSchema = z.object({
     protocol_version: z.literal(1),
     vault: z.string().min(1),
@@ -470,9 +548,7 @@ export const configSchema = z.object({
         message: `protocol_version 1 runs exactly ${MAX_AGENTS} agents, one lead and one challenger (PROTOCOL.md section 11)`,
     }),
     budgets: partialBudgetsSchema.default({}),
-    worktrees: z
-        .object({ root: z.string().min(1), branch_prefix: z.string().min(1) })
-        .default({ root: ".diarchy/worktrees", branch_prefix: "diarchy" }),
+    worktrees: worktreesSchema.default({ root: ".diarchy/worktrees", branch_prefix: "diarchy" }),
     review: z.object({ required: z.boolean() }).default({ required: true }),
 });
 export function parseConfig(input) {

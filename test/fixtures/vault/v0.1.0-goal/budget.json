@@ -1,0 +1,158 @@
+{
+  "protocol_version": 1,
+  "goal": "20261025-rate-limit",
+  "created": "2026-10-25T14:00:00Z",
+  "lead": "claude",
+  "challenger": "codex",
+  "agents": [
+    "claude",
+    "codex"
+  ],
+  "kickoff_id": "20261025T140000Z-0001-claude-KICKOFF",
+  "phase": "EXECUTE",
+  "blocked_from": null,
+  "limits": {
+    "plan_messages": 12,
+    "messages_total": 80,
+    "challenges_per_decision": 1,
+    "rounds_per_decision": 2,
+    "talk_work_ratio": 3,
+    "wall_clock_minutes": 240,
+    "spend_usd": null
+  },
+  "used": {
+    "plan_messages": 2,
+    "messages_total": 6,
+    "talk_since_work": 0,
+    "wall_clock_minutes": 5,
+    "spend_usd": 0
+  },
+  "seq": {
+    "claude": 5,
+    "codex": 1,
+    "human": 0,
+    "system": 0
+  },
+  "last_ts": "2026-10-25T14:05:00Z",
+  "decisions": {
+    "plan": {
+      "status": "decided",
+      "proposer": "claude",
+      "messages": 1,
+      "challenges": 0,
+      "supersedes": null,
+      "superseded_by": null,
+      "evidence": [],
+      "challenge": null
+    }
+  },
+  "prs": {},
+  "deadlock_watch": null,
+  "acs": {
+    "AC1": {
+      "criterion": "Requests over the per-key limit get HTTP 429\nwith a Retry-After header",
+      "status": "failing"
+    },
+    "AC2": {
+      "criterion": "Full test suite stays green",
+      "status": "open"
+    },
+    "AC3": {
+      "criterion": "   ",
+      "status": "open"
+    }
+  },
+  "tasks": {
+    "T1": {
+      "id": "T1",
+      "task": "Implement the token bucket\nand wire it into the router",
+      "kind": "implement",
+      "assignee": "codex",
+      "branch": "feature/rate limit",
+      "worktree": ".diarchy/worktrees/codex-codex-codex-codex-codex-codex-codex-codex-codex-codex-codex-codex-codex-codex-codex-codex-codex-codex-codex-codex-codex-codex-codex-codex-codex-codex-codex-codex-codex-codex-codex-codex-codex-codex-codex-codex-codex-codex-codex-codex-codex",
+      "pr": null,
+      "status": "in_progress"
+    },
+    "T2": {
+      "id": "T2",
+      "task": "step1 step2 step3 step4 step5 step6 step7 step8 step9 step10 step11 step12 step13 step14 step15 step16 step17 step18 step19 step20 step21 step22 step23 step24 step25 step26 step27 step28 step29 step30 step31 step32 step33 step34 step35 step36 step37 step38 step39 step40 step41",
+      "kind": null,
+      "assignee": null,
+      "branch": null,
+      "worktree": null,
+      "pr": null,
+      "status": "todo"
+    },
+    "T3": {
+      "id": "T3",
+      "task": "Document the limit\nin the README",
+      "kind": "implement",
+      "assignee": "claude",
+      "branch": "diarchy/20261025-rate-limit/claude",
+      "worktree": ".diarchy/worktrees/claude",
+      "pr": null,
+      "status": "assigned"
+    }
+  },
+  "messages": [
+    {
+      "id": "20261025T140000Z-0001-claude-KICKOFF",
+      "from": "claude",
+      "type": "KICKOFF",
+      "decision_id": null,
+      "re": [
+        "AC1",
+        "AC2"
+      ]
+    },
+    {
+      "id": "20261025T140100Z-0002-claude-PROPOSE",
+      "from": "claude",
+      "type": "PROPOSE",
+      "decision_id": "plan",
+      "re": [
+        "AC1",
+        "AC2"
+      ]
+    },
+    {
+      "id": "20261025T140200Z-0003-claude-DECIDE",
+      "from": "claude",
+      "type": "DECIDE",
+      "decision_id": "plan",
+      "re": [
+        "AC1",
+        "AC2"
+      ]
+    },
+    {
+      "id": "20261025T140300Z-0004-claude-ASSIGN",
+      "from": "claude",
+      "type": "ASSIGN",
+      "decision_id": null,
+      "re": [
+        "AC1"
+      ]
+    },
+    {
+      "id": "20261025T140400Z-0005-claude-ASSIGN",
+      "from": "claude",
+      "type": "ASSIGN",
+      "decision_id": null,
+      "re": [
+        "AC2"
+      ]
+    },
+    {
+      "id": "20261025T140500Z-0001-codex-STATUS",
+      "from": "codex",
+      "type": "STATUS",
+      "decision_id": null,
+      "re": [
+        "AC1"
+      ]
+    }
+  ],
+  "review_required": true,
+  "updated": "2026-10-25T14:05:00Z"
+}

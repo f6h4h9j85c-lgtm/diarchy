@@ -25,16 +25,16 @@ export declare const evidenceItemSchema: z.ZodDiscriminatedUnion<[z.ZodObject<{
     url: z.ZodURL;
 }, z.core.$strict>, z.ZodObject<{
     kind: z.ZodLiteral<"test">;
-    test: z.ZodString;
+    test: z.ZodType<string, unknown, z.core.$ZodTypeInternals<string, unknown>>;
     result: z.ZodEnum<{
         pass: "pass";
         fail: "fail";
         pending: "pending";
     }>;
-    log: z.ZodOptional<z.ZodString>;
+    log: z.ZodOptional<z.ZodType<string, unknown, z.core.$ZodTypeInternals<string, unknown>>>;
 }, z.core.$strict>, z.ZodObject<{
     kind: z.ZodLiteral<"file">;
-    path: z.ZodString;
+    path: z.ZodType<string, unknown, z.core.$ZodTypeInternals<string, unknown>>;
 }, z.core.$strict>, z.ZodObject<{
     kind: z.ZodLiteral<"review">;
     url: z.ZodURL;
@@ -48,7 +48,7 @@ export declare const evidenceItemSchema: z.ZodDiscriminatedUnion<[z.ZodObject<{
 }, z.core.$strict>, z.ZodObject<{
     kind: z.ZodLiteral<"external">;
     url: z.ZodURL;
-    note: z.ZodOptional<z.ZodString>;
+    note: z.ZodOptional<z.ZodType<string, unknown, z.core.$ZodTypeInternals<string, unknown>>>;
 }, z.core.$strict>], "kind">;
 export declare const budgetLimitsSchema: z.ZodObject<{
     plan_messages: z.ZodNumber;
@@ -68,6 +68,7 @@ export declare const partialBudgetsSchema: z.ZodObject<{
     wall_clock_minutes: z.ZodOptional<z.ZodNumber>;
     spend_usd: z.ZodOptional<z.ZodNullable<z.ZodNumber>>;
 }, z.core.$strict>;
+/** The shape of a post. */
 export declare const messageSchemas: {
     KICKOFF: z.ZodObject<{
         type: z.ZodLiteral<"KICKOFF">;
@@ -120,16 +121,16 @@ export declare const messageSchemas: {
             url: z.ZodURL;
         }, z.core.$strict>, z.ZodObject<{
             kind: z.ZodLiteral<"test">;
-            test: z.ZodString;
+            test: z.ZodType<string, unknown, z.core.$ZodTypeInternals<string, unknown>>;
             result: z.ZodEnum<{
                 pass: "pass";
                 fail: "fail";
                 pending: "pending";
             }>;
-            log: z.ZodOptional<z.ZodString>;
+            log: z.ZodOptional<z.ZodType<string, unknown, z.core.$ZodTypeInternals<string, unknown>>>;
         }, z.core.$strict>, z.ZodObject<{
             kind: z.ZodLiteral<"file">;
-            path: z.ZodString;
+            path: z.ZodType<string, unknown, z.core.$ZodTypeInternals<string, unknown>>;
         }, z.core.$strict>, z.ZodObject<{
             kind: z.ZodLiteral<"review">;
             url: z.ZodURL;
@@ -143,7 +144,7 @@ export declare const messageSchemas: {
         }, z.core.$strict>, z.ZodObject<{
             kind: z.ZodLiteral<"external">;
             url: z.ZodURL;
-            note: z.ZodOptional<z.ZodString>;
+            note: z.ZodOptional<z.ZodType<string, unknown, z.core.$ZodTypeInternals<string, unknown>>>;
         }, z.core.$strict>], "kind">>>;
         protocol_version: z.ZodLiteral<1>;
         id: z.ZodString;
@@ -179,16 +180,16 @@ export declare const messageSchemas: {
             url: z.ZodURL;
         }, z.core.$strict>, z.ZodObject<{
             kind: z.ZodLiteral<"test">;
-            test: z.ZodString;
+            test: z.ZodType<string, unknown, z.core.$ZodTypeInternals<string, unknown>>;
             result: z.ZodEnum<{
                 pass: "pass";
                 fail: "fail";
                 pending: "pending";
             }>;
-            log: z.ZodOptional<z.ZodString>;
+            log: z.ZodOptional<z.ZodType<string, unknown, z.core.$ZodTypeInternals<string, unknown>>>;
         }, z.core.$strict>, z.ZodObject<{
             kind: z.ZodLiteral<"file">;
-            path: z.ZodString;
+            path: z.ZodType<string, unknown, z.core.$ZodTypeInternals<string, unknown>>;
         }, z.core.$strict>, z.ZodObject<{
             kind: z.ZodLiteral<"review">;
             url: z.ZodURL;
@@ -202,10 +203,10 @@ export declare const messageSchemas: {
         }, z.core.$strict>, z.ZodObject<{
             kind: z.ZodLiteral<"external">;
             url: z.ZodURL;
-            note: z.ZodOptional<z.ZodString>;
+            note: z.ZodOptional<z.ZodType<string, unknown, z.core.$ZodTypeInternals<string, unknown>>>;
         }, z.core.$strict>], "kind">>>;
-        tasks: z.ZodOptional<z.ZodArray<z.ZodString>>;
-        ac_add: z.ZodOptional<z.ZodArray<z.ZodString>>;
+        tasks: z.ZodOptional<z.ZodArray<z.ZodType<string, unknown, z.core.$ZodTypeInternals<string, unknown>>>>;
+        ac_add: z.ZodOptional<z.ZodArray<z.ZodType<string, unknown, z.core.$ZodTypeInternals<string, unknown>>>>;
         budgets: z.ZodOptional<z.ZodObject<{
             plan_messages: z.ZodOptional<z.ZodNumber>;
             messages_total: z.ZodOptional<z.ZodNumber>;
@@ -234,13 +235,13 @@ export declare const messageSchemas: {
     ASSIGN: z.ZodObject<{
         type: z.ZodLiteral<"ASSIGN">;
         task: z.ZodOptional<z.ZodString>;
-        new_task: z.ZodOptional<z.ZodString>;
+        new_task: z.ZodOptional<z.ZodType<string, unknown, z.core.$ZodTypeInternals<string, unknown>>>;
         kind: z.ZodEnum<{
             implement: "implement";
             review: "review";
         }>;
-        worktree: z.ZodOptional<z.ZodString>;
-        branch: z.ZodOptional<z.ZodString>;
+        worktree: z.ZodOptional<z.ZodType<string, unknown, z.core.$ZodTypeInternals<string, unknown>>>;
+        branch: z.ZodOptional<z.ZodType<string, unknown, z.core.$ZodTypeInternals<string, unknown>>>;
         pr: z.ZodOptional<z.ZodURL>;
         reason: z.ZodOptional<z.ZodString>;
         protocol_version: z.ZodLiteral<1>;
@@ -274,16 +275,16 @@ export declare const messageSchemas: {
             url: z.ZodURL;
         }, z.core.$strict>, z.ZodObject<{
             kind: z.ZodLiteral<"test">;
-            test: z.ZodString;
+            test: z.ZodType<string, unknown, z.core.$ZodTypeInternals<string, unknown>>;
             result: z.ZodEnum<{
                 pass: "pass";
                 fail: "fail";
                 pending: "pending";
             }>;
-            log: z.ZodOptional<z.ZodString>;
+            log: z.ZodOptional<z.ZodType<string, unknown, z.core.$ZodTypeInternals<string, unknown>>>;
         }, z.core.$strict>, z.ZodObject<{
             kind: z.ZodLiteral<"file">;
-            path: z.ZodString;
+            path: z.ZodType<string, unknown, z.core.$ZodTypeInternals<string, unknown>>;
         }, z.core.$strict>, z.ZodObject<{
             kind: z.ZodLiteral<"review">;
             url: z.ZodURL;
@@ -297,7 +298,7 @@ export declare const messageSchemas: {
         }, z.core.$strict>, z.ZodObject<{
             kind: z.ZodLiteral<"external">;
             url: z.ZodURL;
-            note: z.ZodOptional<z.ZodString>;
+            note: z.ZodOptional<z.ZodType<string, unknown, z.core.$ZodTypeInternals<string, unknown>>>;
         }, z.core.$strict>], "kind">>>;
         protocol_version: z.ZodLiteral<1>;
         id: z.ZodString;
@@ -325,16 +326,16 @@ export declare const messageSchemas: {
             url: z.ZodURL;
         }, z.core.$strict>, z.ZodObject<{
             kind: z.ZodLiteral<"test">;
-            test: z.ZodString;
+            test: z.ZodType<string, unknown, z.core.$ZodTypeInternals<string, unknown>>;
             result: z.ZodEnum<{
                 pass: "pass";
                 fail: "fail";
                 pending: "pending";
             }>;
-            log: z.ZodOptional<z.ZodString>;
+            log: z.ZodOptional<z.ZodType<string, unknown, z.core.$ZodTypeInternals<string, unknown>>>;
         }, z.core.$strict>, z.ZodObject<{
             kind: z.ZodLiteral<"file">;
-            path: z.ZodString;
+            path: z.ZodType<string, unknown, z.core.$ZodTypeInternals<string, unknown>>;
         }, z.core.$strict>, z.ZodObject<{
             kind: z.ZodLiteral<"review">;
             url: z.ZodURL;
@@ -348,7 +349,7 @@ export declare const messageSchemas: {
         }, z.core.$strict>, z.ZodObject<{
             kind: z.ZodLiteral<"external">;
             url: z.ZodURL;
-            note: z.ZodOptional<z.ZodString>;
+            note: z.ZodOptional<z.ZodType<string, unknown, z.core.$ZodTypeInternals<string, unknown>>>;
         }, z.core.$strict>], "kind">>;
         protocol_version: z.ZodLiteral<1>;
         id: z.ZodString;
@@ -457,16 +458,16 @@ export declare const messageSchema: z.ZodDiscriminatedUnion<[z.ZodObject<{
         url: z.ZodURL;
     }, z.core.$strict>, z.ZodObject<{
         kind: z.ZodLiteral<"test">;
-        test: z.ZodString;
+        test: z.ZodType<string, unknown, z.core.$ZodTypeInternals<string, unknown>>;
         result: z.ZodEnum<{
             pass: "pass";
             fail: "fail";
             pending: "pending";
         }>;
-        log: z.ZodOptional<z.ZodString>;
+        log: z.ZodOptional<z.ZodType<string, unknown, z.core.$ZodTypeInternals<string, unknown>>>;
     }, z.core.$strict>, z.ZodObject<{
         kind: z.ZodLiteral<"file">;
-        path: z.ZodString;
+        path: z.ZodType<string, unknown, z.core.$ZodTypeInternals<string, unknown>>;
     }, z.core.$strict>, z.ZodObject<{
         kind: z.ZodLiteral<"review">;
         url: z.ZodURL;
@@ -480,7 +481,7 @@ export declare const messageSchema: z.ZodDiscriminatedUnion<[z.ZodObject<{
     }, z.core.$strict>, z.ZodObject<{
         kind: z.ZodLiteral<"external">;
         url: z.ZodURL;
-        note: z.ZodOptional<z.ZodString>;
+        note: z.ZodOptional<z.ZodType<string, unknown, z.core.$ZodTypeInternals<string, unknown>>>;
     }, z.core.$strict>], "kind">>>;
     protocol_version: z.ZodLiteral<1>;
     id: z.ZodString;
@@ -515,16 +516,16 @@ export declare const messageSchema: z.ZodDiscriminatedUnion<[z.ZodObject<{
         url: z.ZodURL;
     }, z.core.$strict>, z.ZodObject<{
         kind: z.ZodLiteral<"test">;
-        test: z.ZodString;
+        test: z.ZodType<string, unknown, z.core.$ZodTypeInternals<string, unknown>>;
         result: z.ZodEnum<{
             pass: "pass";
             fail: "fail";
             pending: "pending";
         }>;
-        log: z.ZodOptional<z.ZodString>;
+        log: z.ZodOptional<z.ZodType<string, unknown, z.core.$ZodTypeInternals<string, unknown>>>;
     }, z.core.$strict>, z.ZodObject<{
         kind: z.ZodLiteral<"file">;
-        path: z.ZodString;
+        path: z.ZodType<string, unknown, z.core.$ZodTypeInternals<string, unknown>>;
     }, z.core.$strict>, z.ZodObject<{
         kind: z.ZodLiteral<"review">;
         url: z.ZodURL;
@@ -538,10 +539,10 @@ export declare const messageSchema: z.ZodDiscriminatedUnion<[z.ZodObject<{
     }, z.core.$strict>, z.ZodObject<{
         kind: z.ZodLiteral<"external">;
         url: z.ZodURL;
-        note: z.ZodOptional<z.ZodString>;
+        note: z.ZodOptional<z.ZodType<string, unknown, z.core.$ZodTypeInternals<string, unknown>>>;
     }, z.core.$strict>], "kind">>>;
-    tasks: z.ZodOptional<z.ZodArray<z.ZodString>>;
-    ac_add: z.ZodOptional<z.ZodArray<z.ZodString>>;
+    tasks: z.ZodOptional<z.ZodArray<z.ZodType<string, unknown, z.core.$ZodTypeInternals<string, unknown>>>>;
+    ac_add: z.ZodOptional<z.ZodArray<z.ZodType<string, unknown, z.core.$ZodTypeInternals<string, unknown>>>>;
     budgets: z.ZodOptional<z.ZodObject<{
         plan_messages: z.ZodOptional<z.ZodNumber>;
         messages_total: z.ZodOptional<z.ZodNumber>;
@@ -569,13 +570,13 @@ export declare const messageSchema: z.ZodDiscriminatedUnion<[z.ZodObject<{
 }, z.core.$strict>, z.ZodObject<{
     type: z.ZodLiteral<"ASSIGN">;
     task: z.ZodOptional<z.ZodString>;
-    new_task: z.ZodOptional<z.ZodString>;
+    new_task: z.ZodOptional<z.ZodType<string, unknown, z.core.$ZodTypeInternals<string, unknown>>>;
     kind: z.ZodEnum<{
         implement: "implement";
         review: "review";
     }>;
-    worktree: z.ZodOptional<z.ZodString>;
-    branch: z.ZodOptional<z.ZodString>;
+    worktree: z.ZodOptional<z.ZodType<string, unknown, z.core.$ZodTypeInternals<string, unknown>>>;
+    branch: z.ZodOptional<z.ZodType<string, unknown, z.core.$ZodTypeInternals<string, unknown>>>;
     pr: z.ZodOptional<z.ZodURL>;
     reason: z.ZodOptional<z.ZodString>;
     protocol_version: z.ZodLiteral<1>;
@@ -608,16 +609,16 @@ export declare const messageSchema: z.ZodDiscriminatedUnion<[z.ZodObject<{
         url: z.ZodURL;
     }, z.core.$strict>, z.ZodObject<{
         kind: z.ZodLiteral<"test">;
-        test: z.ZodString;
+        test: z.ZodType<string, unknown, z.core.$ZodTypeInternals<string, unknown>>;
         result: z.ZodEnum<{
             pass: "pass";
             fail: "fail";
             pending: "pending";
         }>;
-        log: z.ZodOptional<z.ZodString>;
+        log: z.ZodOptional<z.ZodType<string, unknown, z.core.$ZodTypeInternals<string, unknown>>>;
     }, z.core.$strict>, z.ZodObject<{
         kind: z.ZodLiteral<"file">;
-        path: z.ZodString;
+        path: z.ZodType<string, unknown, z.core.$ZodTypeInternals<string, unknown>>;
     }, z.core.$strict>, z.ZodObject<{
         kind: z.ZodLiteral<"review">;
         url: z.ZodURL;
@@ -631,7 +632,7 @@ export declare const messageSchema: z.ZodDiscriminatedUnion<[z.ZodObject<{
     }, z.core.$strict>, z.ZodObject<{
         kind: z.ZodLiteral<"external">;
         url: z.ZodURL;
-        note: z.ZodOptional<z.ZodString>;
+        note: z.ZodOptional<z.ZodType<string, unknown, z.core.$ZodTypeInternals<string, unknown>>>;
     }, z.core.$strict>], "kind">>>;
     protocol_version: z.ZodLiteral<1>;
     id: z.ZodString;
@@ -658,16 +659,16 @@ export declare const messageSchema: z.ZodDiscriminatedUnion<[z.ZodObject<{
         url: z.ZodURL;
     }, z.core.$strict>, z.ZodObject<{
         kind: z.ZodLiteral<"test">;
-        test: z.ZodString;
+        test: z.ZodType<string, unknown, z.core.$ZodTypeInternals<string, unknown>>;
         result: z.ZodEnum<{
             pass: "pass";
             fail: "fail";
             pending: "pending";
         }>;
-        log: z.ZodOptional<z.ZodString>;
+        log: z.ZodOptional<z.ZodType<string, unknown, z.core.$ZodTypeInternals<string, unknown>>>;
     }, z.core.$strict>, z.ZodObject<{
         kind: z.ZodLiteral<"file">;
-        path: z.ZodString;
+        path: z.ZodType<string, unknown, z.core.$ZodTypeInternals<string, unknown>>;
     }, z.core.$strict>, z.ZodObject<{
         kind: z.ZodLiteral<"review">;
         url: z.ZodURL;
@@ -681,7 +682,7 @@ export declare const messageSchema: z.ZodDiscriminatedUnion<[z.ZodObject<{
     }, z.core.$strict>, z.ZodObject<{
         kind: z.ZodLiteral<"external">;
         url: z.ZodURL;
-        note: z.ZodOptional<z.ZodString>;
+        note: z.ZodOptional<z.ZodType<string, unknown, z.core.$ZodTypeInternals<string, unknown>>>;
     }, z.core.$strict>], "kind">>;
     protocol_version: z.ZodLiteral<1>;
     id: z.ZodString;
@@ -781,7 +782,11 @@ export interface SplitFile {
 }
 /** Split a markdown file into its YAML frontmatter mapping and body. */
 export declare function splitFrontmatter(text: string): SplitFile;
-/** Parse a `chat/<id>.md` file; throws `SchemaError` (SCHEMA or TYPED_ONLY). */
+/**
+ * Parse a `chat/<id>.md` file with the field rules v0.1.0 wrote it under
+ * (PROTOCOL.md 12), not the tighter ones a post gets; throws `SchemaError`
+ * (SCHEMA or TYPED_ONLY).
+ */
 export declare function parseMessageFile(text: string): Message;
 /** Canonical key order, taken from the PROTOCOL.md 3.2 examples. */
 export declare const FRONTMATTER_KEY_ORDER: readonly ["protocol_version", "id", "goal", "from", "to", "type", "re", "reply_to", "decision_id", "task", "new_task", "kind", "worktree", "branch", "pr", "reason", "task_status", "phase", "claim", "basis", "supersedes", "evidence", "tasks", "ac_add", "budgets", "ts"];
@@ -820,9 +825,15 @@ export declare const LINE_TERMINATOR: RegExp;
  * Parse kickoff.md: frontmatter, goal text, and the `- AC<n>: <criterion>` lines.
  * The criteria are the unbroken run of AC lines that ends the body; everything
  * above it is goal text, so an AC-shaped line inside the goal (a hand-edited
- * file) stays goal text instead of shifting the numbering.
+ * file) stays goal text instead of shifting the numbering. A body that does
+ * not parse that way is read as v0.1.0 wrote a criterion holding a line break
+ * (PROTOCOL.md 12) before it counts as corrupt.
  */
 export declare function parseKickoffFile(text: string): Kickoff;
+/** Longest `worktrees.branch_prefix`: the default ASSIGN branch `<branch_prefix>/<goal-id>/<agent>` stays within FIELD_MAX_CHARS. */
+export declare const BRANCH_PREFIX_MAX_CHARS: number;
+/** Longest `worktrees.root`: the default ASSIGN worktree `<worktrees.root>/<agent>` stays within FIELD_MAX_CHARS. */
+export declare const WORKTREE_ROOT_MAX_CHARS: number;
 export declare const configSchema: z.ZodObject<{
     protocol_version: z.ZodLiteral<1>;
     vault: z.ZodString;

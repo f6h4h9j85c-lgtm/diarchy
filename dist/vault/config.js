@@ -4,7 +4,8 @@
  */
 import { existsSync, readFileSync } from "node:fs";
 import { basename, join, resolve } from "node:path";
-import { parseConfig } from "../protocol/index.js";
+import { z } from "zod";
+import { describeIssue, parseConfig } from "../protocol/index.js";
 export const CONFIG_FILENAME = "diarchy.config.json";
 /** `<basename(projectDir)> brain/diarchy`, relative to the project root. */
 export function defaultVault(projectDir) {
@@ -16,7 +17,8 @@ const DEFAULT_AGENTS = {
 };
 /**
  * Read `<projectDir>/diarchy.config.json`; a missing file yields the defaults.
- * Keys the file omits fall back to PROTOCOL.md section 8; unknown shapes throw.
+ * Keys the file omits fall back to PROTOCOL.md section 8; an unknown shape
+ * throws an error naming the file and the first key at fault.
  */
 export function loadConfig(projectDir) {
     const path = join(projectDir, CONFIG_FILENAME);
@@ -24,7 +26,16 @@ export function loadConfig(projectDir) {
     if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
         throw new Error(`${path}: expected a JSON object`);
     }
-    return parseConfig({ protocol_version: 1, vault: defaultVault(projectDir), agents: DEFAULT_AGENTS, ...raw });
+    const input = { protocol_version: 1, vault: defaultVault(projectDir), agents: DEFAULT_AGENTS, ...raw };
+    try {
+        return parseConfig(input);
+    }
+    catch (error) {
+        if (!(error instanceof z.ZodError))
+            throw error;
+        const { field, problem } = describeIssue(error.issues[0], input);
+        throw new Error(`${path}: ${field}: ${problem}`, { cause: error });
+    }
 }
 export function vaultPaths(projectDir, config) {
     const vault = resolve(projectDir, config.vault);

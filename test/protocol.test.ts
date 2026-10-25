@@ -1,5 +1,5 @@
 import { readdirSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { join, posix } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { describe, expect, it } from "vitest";
@@ -7,7 +7,9 @@ import { parse as parseYaml } from "yaml";
 
 import {
   AC_LINE_PATTERN,
+  AGENT_ID_PATTERN,
   FIELD_MAX_CHARS,
+  GOAL_ID_PATTERN,
   LINE_TERMINATOR,
   RULE_IDS,
   RULES_IN_ORDER,
@@ -37,7 +39,7 @@ import {
   type Rejection,
   type RuleId,
 } from "../src/protocol/index.js";
-import { goalStateSchema } from "../src/protocol/schema.js";
+import { BRANCH_PREFIX_MAX_CHARS, WORKTREE_ROOT_MAX_CHARS, goalStateSchema } from "../src/protocol/schema.js";
 
 const FIXTURES = fileURLToPath(new URL("./fixtures/protocol/", import.meta.url));
 const DOCS = fileURLToPath(new URL("../docs/", import.meta.url));
@@ -413,6 +415,84 @@ describe("sample run", () => {
 });
 
 // ---------------------------------------------------------------------------
+// A goal written by v0.1.0 stays readable (PROTOCOL.md 12)
+// ---------------------------------------------------------------------------
+
+/** kickoff.md, budget.json, and chat/ as v0.1.0 (b210468) wrote them, holding values a post may no longer carry. */
+const V010_GOAL = fileURLToPath(new URL("./fixtures/vault/v0.1.0-goal/", import.meta.url));
+
+describe("stored files written by v0.1.0", () => {
+  const chatDir = join(V010_GOAL, "chat");
+  const text = (name: string): string => readFileSync(join(chatDir, `${name}.md`), "utf8");
+  const stored = (name: string): Message => parseMessageFile(text(name));
+  const words41 = Array.from({ length: 41 }, (_, index) => `step${index + 1}`).join(" ");
+  /** What a post with these fields is refused for now, or null. */
+  const draftProblem = (message: Message): string | null => {
+    const result = checkMessageShape(message);
+    return result.ok ? null : result.problem;
+  };
+
+  it("parseMessageFile reads and round-trips every chat file, although a post with the same fields is SCHEMA now", () => {
+    for (const file of readdirSync(chatDir)) {
+      const original = readFileSync(join(chatDir, file), "utf8");
+      expect(serializeMessageFile(parseMessageFile(original)), file).toBe(original);
+    }
+    const decide = stored("20261025T140200Z-0003-claude-DECIDE");
+    expect(decide.tasks).toEqual(["Implement the token bucket\nand wire it into the router", words41]);
+    expect(decide.ac_add).toEqual(["   "]);
+    expect(draftProblem(decide)).toBe('Field "tasks.0": must be one line with no control characters');
+    expect(draftProblem({ ...decide, tasks: ["Ship it", words41] })).toBe('Field "tasks.1": must be 1 to 40 words');
+    expect(draftProblem({ ...decide, tasks: ["Ship it"] })).toBe('Field "ac_add.0": must be 1 to 40 words');
+
+    const assign = stored("20261025T140300Z-0004-claude-ASSIGN");
+    expect(assign.branch).toBe("feature/rate limit");
+    expect(assign.worktree?.length).toBeGreaterThan(FIELD_MAX_CHARS);
+    expect(draftProblem(assign)).toBe(`Field "worktree": at most ${FIELD_MAX_CHARS} characters`);
+    expect(draftProblem({ ...assign, worktree: ".diarchy/worktrees/codex" })).toMatch(/^Field "branch": must be a branch name/);
+    const fresh = stored("20261025T140400Z-0005-claude-ASSIGN");
+    expect(fresh.new_task).toBe("Document the limit\nin the README");
+    expect(draftProblem(fresh)).toBe('Field "new_task": must be one line with no control characters');
+
+    const status = stored("20261025T140500Z-0001-codex-STATUS");
+    const [blank, logged, file, external] = status.evidence ?? [];
+    expect([blank, external]).toMatchObject([{ kind: "test", test: "   " }, { kind: "external", note: "  " }]);
+    expect(draftProblem(status)).toBe('Field "evidence.0.test": must be 1 to 40 words');
+    expect(draftProblem({ ...status, evidence: [logged] })).toBe(`Field "evidence.0.log": at most ${FIELD_MAX_CHARS} characters`);
+    expect(draftProblem({ ...status, evidence: [file] })).toBe(`Field "evidence.0.path": at most ${FIELD_MAX_CHARS} characters`);
+    expect(draftProblem({ ...status, evidence: [external] })).toBe('Field "evidence.0.note": must be 1 to 20 words');
+  });
+
+  it("PROTOCOL.md 12 names the fields the test above reads with v0.1.0's rules", () => {
+    const protocol = readFileSync(join(DOCS, "PROTOCOL.md"), "utf8");
+    const versioning = protocol.slice(protocol.indexOf("## 12. Versioning"));
+    const rules = /with the field rules 0\.1\.0 wrote it under: ([^.]*)\./.exec(versioning)?.[1] ?? "";
+    const named = [...rules.matchAll(/`(\w+)`/g)].map((match) => match[1]).sort();
+    expect(named).toEqual(["ac_add", "branch", "log", "new_task", "note", "path", "tasks", "test", "worktree"]);
+  });
+
+  it("a stored file still has to meet the rules v0.1.0 wrote it under", () => {
+    const assign = text("20261025T140300Z-0004-claude-ASSIGN");
+    expect(() => parseMessageFile(assign.replace("branch: feature/rate limit", 'branch: ""'))).toThrowError(/^Field "branch"/);
+    const decide = text("20261025T140200Z-0003-claude-DECIDE");
+    expect(() => parseMessageFile(decide.replace(`  - ${words41}`, '  - ""'))).toThrowError(/^Field "tasks.1"/);
+    const status = text("20261025T140500Z-0001-codex-STATUS");
+    expect(() => parseMessageFile(status.replace('test: "   "', 'test: ""'))).toThrowError(/^Field "evidence.0.test"/);
+    expect(() => parseMessageFile(status.replace('test: "   "', `test: ${words41}`))).toThrowError(/^Field "evidence.0.test": at most 40 words/);
+    expect(() => parseMessageFile(status.replace("kind: file", "kind: folder"))).toThrowError(/^Field "evidence.2.kind"/);
+  });
+
+  it("parseKickoffFile reads a criterion that spans lines as budget.json recorded it", () => {
+    const kickoff = parseKickoffFile(readFileSync(join(V010_GOAL, "kickoff.md"), "utf8"));
+    const state = parseGoalState(JSON.parse(readFileSync(join(V010_GOAL, "budget.json"), "utf8")));
+    expect(kickoff.goal_text).toBe("Add per-API-key rate limiting to the public API.");
+    expect(kickoff.acceptance_criteria).toEqual(["Requests over the per-key limit get HTTP 429\nwith a Retry-After header", "Full test suite stays green"]);
+    expect(kickoff.acceptance_criteria).toEqual([state.acs.AC1.criterion, state.acs.AC2.criterion]);
+    const lastSpans = parseKickoffFile(`${KICKOFF_MD}and the lint stays clean\n`);
+    expect(lastSpans.acceptance_criteria[2]).toBe("Full test suite stays green\nand the lint stays clean");
+  });
+});
+
+// ---------------------------------------------------------------------------
 // ASK_HUMAN bodies: PROTOCOL.md 3.2 parity, and never the human's command
 // ---------------------------------------------------------------------------
 
@@ -775,8 +855,31 @@ describe("one-line field caps", () => {
     expect(badField(withItem({ kind: "test", test: "npm test", result: "fail", log: `a${esc}b` }))).toBe("evidence.0.log");
   });
 
+  it("diarchy.config.json worktrees keys always build a default ASSIGN worktree and branch that pass these caps", () => {
+    const worktrees = (root: string, branch_prefix: string) => ({ ...CONFIG, worktrees: { root, branch_prefix } });
+    for (const prefix of ["team+ai", "équipe", "has space", "-pm", "pm/../main", `pm${esc}`, "", "p".repeat(BRANCH_PREFIX_MAX_CHARS + 1)]) {
+      expect(() => parseConfig(worktrees(".diarchy/worktrees", prefix)), JSON.stringify(prefix)).toThrow(/"branch_prefix"/);
+    }
+    for (const root of ["", "wt\ncodex", "w".repeat(WORKTREE_ROOT_MAX_CHARS + 1)]) {
+      expect(() => parseConfig(worktrees(root, "diarchy")), JSON.stringify(root)).toThrow(/"root"/);
+    }
+    // The longest accepted values, with the longest goal id and agent id, still make a valid ASSIGN, as the assign tool builds it.
+    const config = parseConfig(worktrees("w".repeat(WORKTREE_ROOT_MAX_CHARS), `release/v1.2_rc-3${"p".repeat(BRANCH_PREFIX_MAX_CHARS - 17)}`));
+    const goal = `20261025-${"g".repeat(40)}`;
+    const agent = "a".repeat(16);
+    expect(goal).toMatch(GOAL_ID_PATTERN);
+    expect(agent).toMatch(AGENT_ID_PATTERN);
+    const defaults = { worktree: posix.join(config.worktrees.root, agent), branch: `${config.worktrees.branch_prefix}/${goal}/${agent}` };
+    expect(defaults.branch).toHaveLength(FIELD_MAX_CHARS);
+    expect(defaults.worktree).toHaveLength(FIELD_MAX_CHARS);
+    expect(badField({ ...assign, ...defaults })).toBeNull();
+  });
+
   it("PROTOCOL.md states the same caps", () => {
     const protocol = readFileSync(join(DOCS, "PROTOCOL.md"), "utf8");
+    expect(protocol).toContain(
+      `\`worktrees.branch_prefix\` takes letters, digits, \`.\` \`_\` \`/\` \`-\`, with no \`..\` and no leading \`-\`, ${BRANCH_PREFIX_MAX_CHARS} characters max, and \`worktrees.root\` is one line of ${WORKTREE_ROOT_MAX_CHARS} characters max`,
+    );
     expect(protocol).toContain("`tasks` (list; `plan` only; each one line, 40 words max)");
     expect(protocol).toContain("`new_task` (string; one line, 40 words max)");
     expect(protocol).toContain(`\`worktree\` (one line, ${FIELD_MAX_CHARS} characters max)`);

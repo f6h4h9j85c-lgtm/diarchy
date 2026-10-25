@@ -4,7 +4,8 @@ export declare const CONFIG_FILENAME = "diarchy.config.json";
 export declare function defaultVault(projectDir: string): string;
 /**
  * Read `<projectDir>/diarchy.config.json`; a missing file yields the defaults.
- * Keys the file omits fall back to PROTOCOL.md section 8; unknown shapes throw.
+ * Keys the file omits fall back to PROTOCOL.md section 8; an unknown shape
+ * throws an error naming the file and the first key at fault.
  */
 export declare function loadConfig(projectDir: string): DiarchyConfig;
 export interface VaultPaths {

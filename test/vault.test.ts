@@ -1,5 +1,5 @@
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -42,6 +42,8 @@ import type { KickoffInput, ReplyOptions, WaitOptions } from "../src/vault/types
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const FIXTURES = fileURLToPath(new URL("./fixtures/", import.meta.url));
 const SAMPLE_RUN = join(FIXTURES, "vault", "sample-run");
+/** A goal directory as v0.1.0 (b210468) wrote it, holding values a post may no longer carry. */
+const V010_GOAL = join(FIXTURES, "vault", "v0.1.0-goal");
 const EXAMPLES = join(FIXTURES, "protocol", "examples");
 const WRITER = join(FIXTURES, "vault", "concurrent-writer.ts");
 const SAMPLES = fileURLToPath(new URL("../docs/samples/", import.meta.url));
@@ -1916,6 +1918,31 @@ describe("reply and stop as human", () => {
 });
 
 // ---------------------------------------------------------------------------
+// A goal written by v0.1.0 (PROTOCOL.md 12)
+// ---------------------------------------------------------------------------
+
+describe("a goal written by v0.1.0", () => {
+  it("stays readable after the upgrade: read, wait_for_reply, posts, and the renders all work", async () => {
+    const h = harness("2026-10-25T14:10:00Z");
+    cpSync(V010_GOAL, h.goalDir(), { recursive: true });
+    const ids = readdirSync(join(V010_GOAL, "chat")).map((file) => file.slice(0, -3)).sort();
+    expect(h.human.listMessages().map((message) => message.id)).toEqual(ids);
+    expect(h.human.readKickoff()?.acceptance_criteria[0]).toBe("Requests over the per-key limit get HTTP 429\nwith a Retry-After header");
+    expect(h.codex.read()?.messages.map((message) => message.type)).toEqual(["KICKOFF", "PROPOSE", "DECIDE", "ASSIGN", "ASSIGN"]);
+    const done: MessageDraft = { type: "STATUS", to: "claude", re: ["AC1"], task: "T1", task_status: "done", evidence: [{ kind: "commit", sha: "1234567" }], body: "Middleware landed on the branch." };
+    ok(await h.codex.post(done));
+    const waited = await h.claude.waitForReply({ timeoutMs: 5_000 });
+    expect(waited).toMatchObject({ messages: [{ from: "codex", type: "STATUS" }, { from: "codex", type: "STATUS", task_status: "done" }] });
+    const chat = h.file("chat.md");
+    expect(chat).toContain("- T1: Implement the token bucket and wire it into the router\n");
+    expect(chat).toContain("- T2: step1 step2");
+    expect(chat).toContain("implement T1 on `feature/rate limit`");
+    expect(chat).toContain("new task: Document the limit in the README");
+    expect(h.file("goal.md")).toContain("| AC1 | Requests over the per\\-key limit get HTTP 429 with a Retry\\-After header |");
+  });
+});
+
+// ---------------------------------------------------------------------------
 // config
 // ---------------------------------------------------------------------------
 
@@ -1974,6 +2001,19 @@ describe("config", () => {
     expect(() => loadConfig(root)).toThrow(/exactly 2 agents/);
     expect(() => parseConfig({ ...CONFIG, agents })).toThrow(/exactly 2 agents/);
     expect(parseConfig(CONFIG).agents).toEqual(CONFIG.agents);
+  });
+
+  it("names the file and the key when worktrees.branch_prefix would make every default ASSIGN branch SCHEMA (PROTOCOL.md section 8)", () => {
+    const root = mkdtempSync(join(tmpdir(), "diarchy-config-"));
+    temps.push(root);
+    const path = join(root, "diarchy.config.json");
+    const write = (worktrees: Record<string, string>) => writeFileSync(path, JSON.stringify({ protocol_version: 1, vault: "notes/diarchy", worktrees }));
+    write({ root: ".diarchy/worktrees", branch_prefix: "team+ai" });
+    expect(() => loadConfig(root)).toThrow(`${path}: worktrees.branch_prefix: must be letters, digits, and . _ / - with no ".." and no leading "-"`);
+    write({ root: "wt\ncodex", branch_prefix: "team-ai" });
+    expect(() => loadConfig(root)).toThrow(`${path}: worktrees.root: must be one line with no control characters`);
+    write({ root: ".diarchy/wt", branch_prefix: "team-ai/v1.2_x" });
+    expect(loadConfig(root).worktrees).toEqual({ root: ".diarchy/wt", branch_prefix: "team-ai/v1.2_x" });
   });
 
   it("resolveVaultPaths lays out the goal directory under the vault", () => {

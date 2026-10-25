@@ -83,7 +83,9 @@ YAML frontmatter, then body.
 | decision_id | string | PROPOSE, CHALLENGE, DECIDE; optional on ASK_HUMAN | `plan` or `D<n>`; store-assigned on PROPOSE, on a superseding DECIDE, and on a human DECIDE that names none; a deadlock ASK_HUMAN carries the stalled decision's id |
 | ts | ISO 8601 UTC | all | `2026-10-25T14:30:12Z`; store-assigned; readers MUST treat it as a string (no YAML timestamp coercion) |
 
-Type-specific fields. DECIDE: `basis` (`test|authority|adopted-challenge|human`), `supersedes` (decision_id), `tasks` (list; `plan` only), `ac_add` (list; `plan` only; appended as `AC<n+1>..`, never removed or reworded), `budgets` (partial limits; human only). ASSIGN: exactly one of `task` (task id) or `new_task` (string); `kind` (`implement|review`); `worktree` and `branch` (implement); `pr` (review); `reason` (`availability|continuity|load-balance`, optional). STATUS: `task`, `task_status` (`in_progress|done`), optional. BLOCKED: `kind` (`external|internal`).
+Type-specific fields. DECIDE: `basis` (`test|authority|adopted-challenge|human`), `supersedes` (decision_id), `tasks` (list; `plan` only; each one line, 40 words max), `ac_add` (list; `plan` only; 40 words max each; appended as `AC<n+1>..`, never removed or reworded), `budgets` (partial limits; human only). ASSIGN: exactly one of `task` (task id) or `new_task` (string; one line, 40 words max); `kind` (`implement|review`); `worktree` (one line, 200 characters max) and `branch` (letters, digits, `.` `_` `/` `-`; 200 characters max; no `..`; no leading `-`) (implement); `pr` (review); `reason` (`availability|continuity|load-balance`, optional). STATUS: `task`, `task_status` (`in_progress|done`), optional. BLOCKED: `kind` (`external|internal`).
+
+One line: no line break and no other control character (C0, DEL, C1, U+2028, U+2029). These fields reach goal.md, chat.md, the SessionStart brief, and the Stop-hook reason, so the store rejects a value over its cap or spanning lines with SCHEMA.
 
 Body: free text, at most 120 whitespace-split tokens. MAY be empty except on KICKOFF, BLOCKED, ASK_HUMAN.
 
@@ -93,8 +95,8 @@ Body: free text, at most 120 whitespace-split tokens. MAY be empty except on KIC
 |---|---|---|---|
 | commit | `sha` (7 to 40 hex) | | no |
 | pr | `url` | | no |
-| test | `test` (command or check, 40 words max), `result` (`pass|fail|pending`) | `log` (path) | only when `result: fail` |
-| file | `path` | | no |
+| test | `test` (command or check, 40 words max), `result` (`pass|fail|pending`) | `log` (path; one line, 200 characters max) | only when `result: fail` |
+| file | `path` (one line, 200 characters max) | | no |
 | review | `url` (PR), `verdict` (`approve|request_changes`) | | no |
 | human | `id` (message id with `from: human`) | | yes |
 | external | `url` | `note` (20 words max) | yes |

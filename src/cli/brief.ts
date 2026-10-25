@@ -5,7 +5,15 @@
  */
 import { existsSync, readFileSync } from "node:fs";
 
-import { openThreads, type AgentId, type GoalState, type Message, type TaskStatus } from "../protocol/index.js";
+import {
+  FIELD_MAX_CHARS,
+  oneLine,
+  openThreads,
+  type AgentId,
+  type GoalState,
+  type Message,
+  type TaskStatus,
+} from "../protocol/index.js";
 import type { GoalRef } from "../vault/index.js";
 import { budgetTrigger, hms, lastOfType, sortMessages } from "../vault/render/shared.js";
 
@@ -111,7 +119,7 @@ export function blockReason(state: GoalState, messages: Message[]): "WALL_CLOCK"
 }
 
 export interface NextStep {
-  /** Imperative, names the MCP tool to call. */
+  /** Imperative, names the MCP tool to call. One line: agent-authored parts pass through `oneLine`. */
   text: string;
   /** True when the agent owes the goal something now (the Stop gate blocks on this). */
   owes: boolean;
@@ -126,13 +134,13 @@ export function nextStep(state: GoalState, messages: Message[], agent: AgentId, 
   }
   const review = openAssignments(state, agent).find((assignment) => assignment.kind === "review");
   if (review !== undefined && review.pr !== null) {
-    return { text: `you hold review of PR ${review.pr}: review it, then call status with review evidence`, owes: true };
+    return { text: `you hold review of PR ${oneLine(review.pr, FIELD_MAX_CHARS)}: review it, then call status with review evidence`, owes: true };
   }
   const implement = openAssignments(state, agent).find((assignment) => assignment.kind === "implement");
   if (implement !== undefined) {
-    const where = implement.branch === null ? "" : ` on branch ${implement.branch}`;
+    const where = implement.branch === null ? "" : ` on branch ${oneLine(implement.branch, FIELD_MAX_CHARS)}`;
     return {
-      text: `you hold ${implement.task} (${implement.text})${where}: finish it, then call status with commit and test evidence`,
+      text: `you hold ${implement.task} (${oneLine(implement.text)})${where}: finish it, then call status with commit and test evidence`,
       owes: true,
     };
   }
@@ -160,13 +168,15 @@ export function nextStep(state: GoalState, messages: Message[], agent: AgentId, 
   }
   if (lead && state.phase === "EXECUTE") {
     const todo = Object.values(state.tasks).find((task) => task.status === "todo");
-    if (todo !== undefined) return { text: `assign ${todo.id} (${todo.task}): call assign`, owes: true };
+    if (todo !== undefined) return { text: `assign ${todo.id} (${oneLine(todo.task)}): call assign`, owes: true };
     const unreviewed = Object.entries(state.prs).find(
       ([url, pr]) =>
         !pr.reviews.some((review) => review.verdict === "approve" && review.by !== pr.author) &&
         !Object.values(state.tasks).some((task) => task.kind === "review" && task.pr === url),
     );
-    if (unreviewed !== undefined) return { text: `assign review of PR ${unreviewed[0]} to the other agent: call assign`, owes: true };
+    if (unreviewed !== undefined) {
+      return { text: `assign review of PR ${oneLine(unreviewed[0], FIELD_MAX_CHARS)} to the other agent: call assign`, owes: true };
+    }
   }
   if (state.phase === "PLAN" && !lead) {
     const plan = state.decisions.plan;

@@ -29,7 +29,7 @@ export declare function blockSummary(state: GoalState, messages: Message[]): str
 /** Which store trigger blocked the run: WALL_CLOCK (clock or spend), TOTAL_BUDGET, DEADLOCK, BLOCKED, or STOP. */
 export declare function blockReason(state: GoalState, messages: Message[]): "WALL_CLOCK" | "TOTAL_BUDGET" | "DEADLOCK" | "BLOCKED" | "STOP";
 export interface NextStep {
-    /** Imperative, names the MCP tool to call. */
+    /** Imperative, names the MCP tool to call. One line: agent-authored parts pass through `oneLine`. */
     text: string;
     /** True when the agent owes the goal something now (the Stop gate blocks on this). */
     owes: boolean;

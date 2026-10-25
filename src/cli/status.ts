@@ -1,4 +1,5 @@
 /** `diarchy status [--json]`: phase, roles, budgets, open assignments, last message, and what the human must do. */
+import { FIELD_MAX_CHARS, oneLine } from "../protocol/index.js";
 import { budgetLine, sortMessages } from "../vault/render/shared.js";
 import { blockSummary, openAssignments, replyHint } from "./brief.js";
 import { EXIT_OK, currentGoal, headerLine, humanStore, printJson } from "./common.js";
@@ -47,7 +48,9 @@ export function runStatus(projectDir: string, options: StatusOptions): number {
   else {
     console.log("open assignments:");
     for (const item of assignments) {
-      const where = item.kind === "review" ? `review of ${item.pr ?? "?"}` : `${item.task} implement${item.branch === null ? "" : ` on ${item.branch}`}`;
+      // Agent-authored strings pass through oneLine before they reach the human's terminal.
+      const branch = item.branch === null ? "" : ` on ${oneLine(item.branch, FIELD_MAX_CHARS)}`;
+      const where = item.kind === "review" ? `review of ${oneLine(item.pr ?? "?", FIELD_MAX_CHARS)}` : `${item.task} implement${branch}`;
       console.log(`  ${where} · ${item.assignee} · ${item.status}`);
     }
   }

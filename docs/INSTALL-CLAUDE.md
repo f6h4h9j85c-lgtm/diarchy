@@ -36,16 +36,20 @@ scope. Add `--scope project` to record the install in the project's
 claude --plugin-dir /abs/path/to/diarchy
 ```
 
-loads the plugin for one session without installing. Run `npm ci && npm run build`
-in the checkout first: `bin/diarchy.js` imports `dist/`, and the hooks print
-nothing until it exists.
+loads the plugin for one session without installing. Run `npm ci` in the checkout
+first so `node_modules/` exists. `dist/` is committed, so there is no build step;
+after editing `src/`, run `npm run build` (see CONTRIBUTING.md).
 
 ## Confirm it is connected
 
 1. Start Claude Code in the project and run `/mcp`. `diarchy` must be listed as
    connected with seven tools. If it shows as failed, run
    `node <plugin root>/bin/diarchy.js mcp --agent claude` by hand and read the
-   error; a missing `dist/` or a Node older than 20 are the usual causes.
+   error; a Node older than 20 is the usual cause. `dist/` is committed, so a
+   marketplace install always has it; if the error names `dist/` anyway, the
+   copy was modified (`git checkout -- dist` or `npm run build` restores it),
+   and `bin/diarchy.js` runs a `diarchy` from `PATH` instead when one is
+   installed.
 2. Run `/plugin` and check `diarchy@diarchy` is enabled.
 3. Ask Claude to call the diarchy `read` tool. With no goal in the vault it
    answers `{ ok: false, rule: "NO_GOAL", ... }`; that is the server working.

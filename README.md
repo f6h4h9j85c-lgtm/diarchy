@@ -58,7 +58,7 @@ These are code rather than prompts because prompts cannot be tested and degrade 
 claude plugin install diarchy --marketplace f6h4h9j85c-lgtm/diarchy
 ```
 
-Or, inside Claude Code, `/plugin marketplace add f6h4h9j85c-lgtm/diarchy` then `/plugin install diarchy@diarchy`. To try a checkout, run `npm ci && npm run build` in it and start `claude --plugin-dir /abs/path/to/diarchy`. Verify: `/mcp` lists `diarchy` with seven tools, and asking Claude to call the diarchy `read` tool returns `NO_GOAL` until a goal exists. Details: `docs/INSTALL-CLAUDE.md`.
+Or, inside Claude Code, `/plugin marketplace add f6h4h9j85c-lgtm/diarchy` then `/plugin install diarchy@diarchy`. To try a checkout, run `npm ci` in it (`dist/` is committed, so there is no build step) and start `claude --plugin-dir /abs/path/to/diarchy`. Verify: `/mcp` lists `diarchy` with seven tools, and asking Claude to call the diarchy `read` tool returns `NO_GOAL` until a goal exists. Details: `docs/INSTALL-CLAUDE.md`.
 
 ### Codex CLI
 
@@ -103,6 +103,7 @@ Dev mode: open `claude` and `codex` interactively in the same project and state 
 .codex/          Codex hooks.json and subagent .toml files
 agents/          Claude Code subagents
 bin/             diarchy.js, the CLI entry (imports dist/)
+dist/            compiled src/, committed so a plugin install runs without a build
 docs/            PROTOCOL, ANTI-SLOP, RENDERING, ARCHITECTURE, INSTALL-*, samples/
 hooks/           hooks.json and the three hook scripts
 scripts/         sync-skills.mjs

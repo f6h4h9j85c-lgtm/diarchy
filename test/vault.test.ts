@@ -692,6 +692,49 @@ describe("read and waitForReply", () => {
     expect(await waiting).toEqual({ timeout: true });
   });
 
+  it("an aborted waitForReply returns { timeout: true } at once and leaves the cursor for the next read", async () => {
+    const h = harness();
+    await replay(h, 1);
+    const before = h.codex.read();
+    // A poll too slow to matter: only the abort listener can end this wait quickly.
+    const slow = new VaultStore({ projectDir: h.projectDir, config: CONFIG, agent: "codex", now: h.clock.now, sleep: h.clock.sleep, localTz: TZ, pollIntervalMs: 60_000 });
+    const controller = new AbortController();
+    const waiting = slow.waitForReply({ timeoutMs: 5_000, signal: controller.signal });
+    await realSleep(20);
+    const started = Date.now();
+    controller.abort();
+    expect(await waiting).toEqual({ timeout: true });
+    expect(Date.now() - started).toBeLessThan(1_000);
+    h.clock.set(RUN[1].ts);
+    ok(await h.claude.post(toDraft(RUN[1])));
+    await realSleep(50);
+    expect(JSON.parse(h.file("inbox/codex.json")).cursor).toBe(before?.cursor);
+    const next = h.codex.read();
+    expect(next?.messages.map((message) => message.id)).toEqual([RUN[1].id]);
+    expect(next?.cursor).toBe(RUN[1].id);
+  });
+
+  it("waitForReply moves the cursor only when it delivers: the agent's own post during a wait leaves the inbox file alone", async () => {
+    const h = harness();
+    await replay(h, 4);
+    expect(RUN[4]).toMatchObject({ from: "codex", type: "CHALLENGE" });
+    expect(RUN[5]).toMatchObject({ from: "claude", type: "DECIDE" });
+    const before = h.codex.read();
+    h.clock.set(RUN[4].ts);
+    const waiting = h.codex.waitForReply({ timeoutMs: 5_000 });
+    await realSleep(50);
+    ok(await h.codex.post(toDraft(RUN[4])));
+    await realSleep(50);
+    expect(JSON.parse(h.file("inbox/codex.json")).cursor).toBe(before?.cursor);
+    h.clock.advance(1_000);
+    const decide = await h.claude.post(toDraft(RUN[5]));
+    ok(decide);
+    const result = await waiting;
+    if ("timeout" in result) throw new Error("timed out");
+    expect(result.messages.map((message) => message.id)).toEqual([decide.id]);
+    expect(JSON.parse(h.file("inbox/codex.json")).cursor).toBe(decide.id);
+  });
+
   it("a tick-driven DEADLOCK posts a system ASK_HUMAN and renders the deadlock question", async () => {
     const h = harness();
     await replay(h, 5);

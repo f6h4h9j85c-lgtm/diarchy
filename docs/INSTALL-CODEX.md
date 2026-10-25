@@ -42,8 +42,11 @@ tool_timeout_sec = 1800
 
 Why the raised timeouts: `wait_for_reply` blocks for up to 110 seconds per call
 and the PM chains several while the other agent works; Codex's default tool
-timeout would cut the call off mid-wait and the PM would fall back to polling.
-`startup_timeout_sec = 20` covers a cold `node` start on a slow disk.
+timeout would cut every call off mid-wait, so the PM gets a tool error in place
+of each reply and only its next call brings the message in (the server drops a
+cut-off wait without moving the inbox cursor, so nothing is lost, but every
+wait costs a failed turn). `startup_timeout_sec = 20` covers a cold `node`
+start on a slow disk.
 
 Use an absolute path. The bundled `mcp.json` uses `bin/diarchy.js` relative to
 the plugin root, which is what the plugin loader provides; the `config.toml`

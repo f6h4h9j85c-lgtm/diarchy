@@ -384,12 +384,12 @@ All tools act on the single active goal (`goal_id` optional). Success returns `{
 | kickoff | goal: string (120 words max); acceptance_criteria: string[] (1+, 40 words each); lead?: agent id; budgets?: object; slug?: string | goal_id, lead, challenger, kickoff_id | SINGLE_KICKOFF, SCHEMA, WORD_CAP |
 | post | type; to; re: string[]; body?; claim?; evidence?: item[]; reply_to?; decision_id?; kind?; from? (must match server identity) | id, ts, seq, decision_id | any rule |
 | read | since?: id (default: inbox cursor) | messages: [{frontmatter..., body}] excluding the caller's own; cursor | SCHEMA |
-| wait_for_reply | timeout_ms?: int (default and hard cap 110000) | as `read`, or `{ timeout: true }`; MCP progress notification every 15 s; runs the store tick | SCHEMA |
+| wait_for_reply | timeout_ms?: int (default and hard cap 110000) | as `read`, or `{ timeout: true }` (also when cancelled or overtaken by a later call); MCP progress notification every 15 s; runs the store tick | SCHEMA |
 | decide | claim; basis; re; decision_id?; supersedes?; evidence?; reply_to?; tasks?; ac_add?; body? | as `post` (type DECIDE) | ROLE_GATE, TWO_ROUNDS, DECISION_IMMUTABLE, PHASE_GATE |
 | assign | to; kind; task? or new_task?; worktree?; branch?; pr?; re; reason?; body? | as `post` (type ASSIGN); worktree/branch default from config | ROLE_GATE, NO_DOMAIN_ROUTING, BUSY_REVIEWING, NO_SELF_REVIEW |
 | status | re; evidence; task?; task_status?; body? | as `post` (type STATUS) | NO_ACK, NO_SELF_REVIEW, CITE_AC |
 
-`read` and `wait_for_reply` advance `inbox/<agent>.json.cursor` to the last delivered id; `to` is addressing, not access control. The launcher uses the store library as `human`: `diarchy reply "<text>" [--decision <id>] [--budget key=value]` posts a DECIDE with `basis: human` (without `--decision` the store assigns the next `D<n>`); `diarchy stop` kills both CLIs and leaves the goal BLOCKED.
+`read` and `wait_for_reply` advance `inbox/<agent>.json.cursor` to the last delivered id, `wait_for_reply` only when it hands messages to a live call: a wait cancelled through MCP `notifications/cancelled`, or still running when the same agent's next tool call arrives (a client-side tool timeout that sends no cancel), returns `{ timeout: true }` and leaves the cursor alone, so the reply reaches that agent's next `read` or `wait_for_reply` instead of a call nobody is reading. `to` is addressing, not access control. The launcher uses the store library as `human`: `diarchy reply "<text>" [--decision <id>] [--budget key=value]` posts a DECIDE with `basis: human` (without `--decision` the store assigns the next `D<n>`); `diarchy stop` kills both CLIs and leaves the goal BLOCKED.
 
 ## 11. Extensibility
 

@@ -140,7 +140,7 @@ describe("diarchy init", () => {
         command: "claude",
         args: ["-p", "--permission-mode", "acceptEdits", "--permission-prompts", "none", "--allowedTools", "mcp__plugin_diarchy_diarchy__*,Bash(git *),Bash(npm *),Bash(node *),Bash(gh *)"],
       },
-      codex: { command: "codex", args: ["exec", "--sandbox", "workspace-write"] },
+      codex: { command: "codex", args: ["exec", "--sandbox", "workspace-write", "--dangerously-bypass-hook-trust"] },
     });
     expect(config.budgets).toMatchObject({ plan_messages: 12, messages_total: 80, wall_clock_minutes: 240, spend_usd: null });
     expect(readFileSync(join(dir, ".gitignore"), "utf8")).toContain(".diarchy/\n");
@@ -159,12 +159,69 @@ describe("diarchy init", () => {
     expect(existsSync(join(dir, "notes", "diarchy"))).toBe(true);
   });
 
+  it("--codex-full-access writes the sandbox bypass, warns, and refuses an existing config without --force", async () => {
+    const dir = makeProject("full");
+    const first = await cli(["init", "--project", dir, "--codex-full-access"]);
+    expect(first.code, first.stderr).toBe(0);
+    expect(readConfig(dir).agents).toMatchObject({
+      codex: { command: "codex", args: ["exec", "--dangerously-bypass-approvals-and-sandbox", "--dangerously-bypass-hook-trust"] },
+    });
+    expect(first.stderr).toContain("full OS permissions");
+    expect(first.stderr).toContain("machine or container you are willing to let it change");
+
+    const before = readFileSync(join(dir, "diarchy.config.json"), "utf8");
+    const again = await cli(["init", "--project", dir, "--codex-full-access"]);
+    expect(again.code).toBe(1);
+    expect(again.stderr).toContain("--force");
+    expect(readFileSync(join(dir, "diarchy.config.json"), "utf8")).toBe(before);
+  });
+
   it("rejects fewer than two agents", async () => {
     const dir = makeProject("solo", false);
     const result = await cli(["init", "--project", dir, "--agents", "claude"]);
     expect(result.code).toBe(1);
     expect(result.stderr).toContain("at least two");
   });
+});
+
+// ---------------------------------------------------------------------------
+// start --driver real: the codex sandbox notice (stub CLIs that exit at once)
+// ---------------------------------------------------------------------------
+
+describe("start --driver real: codex sandbox notice", () => {
+  const NOTICE = "codex runs in the Codex workspace-write sandbox";
+
+  /** Point both agents at stub executables named claude and codex, give up after the first exit. */
+  function stubAgents(dir: string, codexArgs: string[]): void {
+    const bin = join(dir, "..", "bin");
+    mkdirSync(bin, { recursive: true });
+    for (const name of ["claude", "codex"]) writeFileSync(join(bin, name), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+    const config = readConfig(dir);
+    config.agents = { claude: { command: join(bin, "claude"), args: [] }, codex: { command: join(bin, "codex"), args: codexArgs } };
+    config.launcher = { ...config.launcher, max_restarts: 0 };
+    writeFileSync(join(dir, "diarchy.config.json"), `${JSON.stringify(config, null, 2)}\n`);
+  }
+
+  it(
+    "prints one line under workspace-write and nothing under full access",
+    async () => {
+      const dir = await initProject("sandbox");
+      stubAgents(dir, ["exec", "--sandbox", "workspace-write", "--dangerously-bypass-hook-trust"]);
+      const sandboxed = await cli(["start", "Ship the sandboxed widget", "--ac", "The widget renders.", "--project", dir]);
+      expect(sandboxed.code, sandboxed.stdout + sandboxed.stderr).toBe(1);
+      const notices = lines(sandboxed.stdout).filter((line) => line.includes(NOTICE));
+      expect(notices).toHaveLength(1);
+      expect(notices[0]).toContain("cannot commit, push, or open a PR");
+      expect(sandboxed.stdout.indexOf(NOTICE)).toBeLessThan(sandboxed.stdout.indexOf("codex started"));
+
+      stubAgents(dir, ["exec", "--dangerously-bypass-approvals-and-sandbox", "--dangerously-bypass-hook-trust"]);
+      const full = await cli(["start", "--project", dir]);
+      expect(full.stdout).toContain("attached to");
+      expect(full.stdout).toContain("codex started");
+      expect(full.stdout).not.toContain(NOTICE);
+    },
+    RUN_TIMEOUT,
+  );
 });
 
 // ---------------------------------------------------------------------------

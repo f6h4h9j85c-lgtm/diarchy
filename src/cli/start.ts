@@ -21,6 +21,7 @@ import {
   loadSession,
   realPlan,
   saveSession,
+  sandboxNotice,
   type DriverName,
   type SpawnPlan,
 } from "./drivers.js";
@@ -93,6 +94,12 @@ export async function runStart(projectDir: string, goalText: string | undefined,
   }
 
   const worktrees = prepareWorktrees(projectDir, config, goal.goalId, agents, options.worktrees);
+  if (driver === "real") {
+    for (const agent of agents) {
+      const notice = sandboxNotice(agent, launcher.agents[agent]);
+      if (notice !== null) console.log(`${nowHms()} ${notice}`);
+    }
+  }
   const supervisor = new Supervisor({ projectDir, config, launcher, human, goal, agents, worktrees, driver, options });
   return supervisor.run();
 }

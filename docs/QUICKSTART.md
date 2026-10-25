@@ -10,7 +10,7 @@ Claude Code, from a shell:
 claude plugin install diarchy --marketplace f6h4h9j85c-lgtm/diarchy
 ```
 
-Codex CLI: `codex plugin marketplace add f6h4h9j85c-lgtm/diarchy`, then enable `diarchy@diarchy` and register the `diarchy` MCP server in `~/.codex/config.toml` as shown in [INSTALL-CODEX.md](INSTALL-CODEX.md). In each CLI, `/mcp` must list `diarchy`, and asking for the diarchy `read` tool must answer `NO_GOAL`: nothing is kicked off yet.
+Codex CLI: `codex plugin marketplace add f6h4h9j85c-lgtm/diarchy`, then enable `diarchy@diarchy` and register the `diarchy` MCP server in `~/.codex/config.toml` as shown in [INSTALL-CODEX.md](INSTALL-CODEX.md); once the project is trusted, approve the two diarchy hooks in `/hooks`, or they are skipped silently. In each CLI, `/mcp` must list `diarchy`, and asking for the diarchy `read` tool must answer `NO_GOAL`: nothing is kicked off yet.
 
 ## 2. Initialise the project
 
@@ -21,7 +21,7 @@ diarchy init
 cp /path/to/diarchy/templates/AGENTS.md AGENTS.md
 ```
 
-`init` writes `diarchy.config.json` (vault path, both agents' launch commands, default budgets), creates `api brain/diarchy/`, and adds `.diarchy/` to `.gitignore`. Open `api brain` as a vault in Obsidian. `AGENTS.md` tells the Codex PM to call `read` and load `diarchy-pm` at session start.
+`init` writes `diarchy.config.json` (vault path, both agents' launch commands, default budgets), creates `api brain/diarchy/`, and adds `.diarchy/` to `.gitignore`. Open `api brain` as a vault in Obsidian. `AGENTS.md` tells the Codex PM to call `read` and load `diarchy-pm` at session start. The Codex PM runs sandboxed and cannot commit, push, or open a PR, so you or the Claude PM commit its work; `diarchy init --codex-full-access` lifts the sandbox and gives it your full OS permissions ([INSTALL-CODEX.md](INSTALL-CODEX.md) section 5).
 
 ## 3. Kick off
 

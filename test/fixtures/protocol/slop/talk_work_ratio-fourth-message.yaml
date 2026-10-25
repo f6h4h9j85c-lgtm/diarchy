@@ -26,4 +26,4 @@ message:
 expect:
   ok: false
   rule: TALK_WORK_RATIO
-  message: 3 messages since the last STATUS with evidence. Post STATUS with evidence, BLOCKED, or DONE before anything else.
+  message: 3 messages since the last STATUS with work evidence. Post STATUS with a commit, pr, review, or a passing or failing test, or post BLOCKED or DONE, before anything else.

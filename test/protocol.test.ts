@@ -390,6 +390,18 @@ describe("ASK_HUMAN bodies", () => {
     ]);
   });
 
+  it("an external body over 100 words is cut with an ellipsis, not a stray period", () => {
+    const blocked = example("20261025T143500Z-0002-codex-BLOCKED");
+    const words = Array.from({ length: 110 }, (_, index) => `w${index + 1}`);
+    const long: Message = { ...blocked, body: `${words.join(" ")}.` };
+    const result = evaluate(long, loadBase("execute-assigned"), { now: new Date(long.ts), callerAgent: "codex" });
+    if (!result.ok) throw new Error(result.message);
+    const [body] = askBodies(result.effects);
+    expect(body).toBe(`codex is BLOCKED (external): ${words.slice(0, 100).join(" ")} ... ${PAGED}`);
+    expect(body).not.toMatch(/ \. /);
+    expect(wordCount(body)).toBeLessThanOrEqual(120);
+  });
+
   it("budget, wall clock, and spend bodies keep the counter sentence the renderer parses and drop the command", () => {
     const base = loadBase("execute-assigned");
     const nearLimit: GoalState = { ...base, used: { ...base.used, messages_total: base.limits.messages_total - 1 } };
@@ -547,7 +559,20 @@ describe("allowedTypes", () => {
     expect(allowedTypes(spent, "codex")).toEqual(["BLOCKED"]);
     const exec = loadBase("execute");
     const talky: GoalState = { ...exec, used: { ...exec.used, talk_since_work: 3 } };
-    expect(allowedTypes(talky, "claude")).toEqual(["STATUS", "BLOCKED", "DONE", "DECIDE"]);
+    expect(allowedTypes(talky, "claude")).toEqual(["STATUS", "BLOCKED", "DONE"]);
+    expect(allowedTypes(talky, "codex")).toEqual(["STATUS", "BLOCKED"]);
+  });
+
+  it("keeps DECIDE for the lead at the talk limit only while a CHALLENGE is open", () => {
+    const exec = loadBase("execute");
+    const challenge = { id: "20261025T141500Z-0004-codex-CHALLENGE", from: "codex", new_evidence: ["test:npm test"] };
+    const challenged: GoalState = {
+      ...exec,
+      used: { ...exec.used, talk_since_work: 3 },
+      decisions: { ...exec.decisions, plan: { ...exec.decisions.plan, challenge } },
+    };
+    expect(allowedTypes(challenged, "claude")).toEqual(["STATUS", "BLOCKED", "DONE", "DECIDE"]);
+    expect(allowedTypes(challenged, "codex")).toEqual(["STATUS", "BLOCKED"]);
   });
 });
 

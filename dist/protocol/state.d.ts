@@ -33,7 +33,10 @@ export declare function newEvidenceKeys(state: GoalState, decisionId: string, it
 export declare function prAuthor(state: GoalState, message: Message, url: string): AgentId | undefined;
 /** Has `agent` introduced a PR on this goal (first `pr` evidence)? DONE 9.2(f). */
 export declare function authoredPr(state: GoalState, agent: AgentId | null): boolean;
-/** The PR an agent still owes a review on, if any (BUSY_REVIEWING). */
+/**
+ * The PR an agent still owes a review on, if any (BUSY_REVIEWING). Only that
+ * agent's `review` evidence settles it: a STATUS marking the task done does not.
+ */
 export declare function pendingReviewUrl(state: GoalState, agent: AgentId): string | undefined;
 /** Is `type` legal in the current phase for any sender? */
 export declare function phaseAllows(state: GoalState, type: MessageType): boolean;

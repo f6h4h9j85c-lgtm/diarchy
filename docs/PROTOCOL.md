@@ -98,6 +98,10 @@ Body: free text, at most 120 whitespace-split tokens. MAY be empty except on KIC
 
 "New evidence" relative to decision D: an item whose kind qualifies above and whose key `(kind, test|url|id)` appears in no accepted message carrying `decision_id` D or any decision D supersedes.
 
+"Work evidence": a `commit`, `pr`, or `review` item, or a `test` item with `result` pass or fail. Only a STATUS carrying work evidence resets `talk_since_work` (section 8); one carrying only `file`, `human`, `external`, or pending `test` items is accepted and leaves the counter as it was.
+
+Word-limited text (`test`, `note`, each `ac_add` item) needs at least one word: a blank or whitespace-only value fails SCHEMA.
+
 ### 3.2 Examples (goal `20261025-rate-limit`, lead `claude`, ACs AC1 to AC3)
 
 `chat/20261025T140000Z-0001-human-KICKOFF.md`
@@ -296,9 +300,9 @@ PRs 412 and 413 merged to main.
 | CHALLENGE | challenger only | `claim`, `decision_id`, `reply_to`, `evidence` with a `test` item | PLAN; EXECUTE and decided threads only with new evidence | round 2; starts deadlock watch | lead: DECIDE (mandatory) |
 | DECIDE | lead; `human` (`basis: human`) in BLOCKED | `claim`, `basis`, `decision_id` or `supersedes`; `evidence` when `basis: test` | PLAN; EXECUTE only replying to an open CHALLENGE or with `supersedes` plus new evidence; BLOCKED human only | closes thread, appends decisions.md, clears deadlock watch; `plan` → EXECUTE and writes `tasks`/`ac_add`; human DECIDE restores `blocked_from`, applies `budgets` | none |
 | ASSIGN | lead | `to` = agent id; `task` or `new_task`; `kind`; `worktree` + `branch` (implement) or `pr` (review) | EXECUTE | task assignee, branch, status `assigned`; review assignee busy until review evidence for that PR lands | assignee: STATUS |
-| STATUS | any PM | `evidence` non-empty | PLAN, EXECUTE | resets `talk_since_work`; updates PR registry, task status, and (in EXECUTE) AC status | none |
+| STATUS | any PM | `evidence` non-empty | PLAN, EXECUTE | with work evidence (3.1) resets `talk_since_work`; updates PR registry, task status, and (in EXECUTE) AC status | none |
 | DONE | lead | `evidence` non-empty; 9.2 holds | EXECUTE | EXECUTE → DONE; its evidence changes no AC, PR, or task; launcher stops both CLIs | none |
-| BLOCKED | any PM | `kind`, body | PLAN, EXECUTE | `external`: → BLOCKED, system posts ASK_HUMAN; `internal`: none | lead: ASSIGN or DECIDE |
+| BLOCKED | any PM | `kind`, body | PLAN, EXECUTE | `external`: → BLOCKED, system posts ASK_HUMAN quoting the body (its first 100 words, ending `...` when cut); `internal`: none | lead: ASSIGN or DECIDE |
 | ASK_HUMAN | `system` only | body; `reply_to` unless budget-triggered | written at every transition into BLOCKED | launcher notifies human, exits non-zero | human: DECIDE via `diarchy reply` |
 
 ## 5. Roles
@@ -308,7 +312,7 @@ PRs 412 and 413 merged to main.
 | lead | `lead` in kickoff.md: the agent that received the goal from the human (launcher alternates from the previous goal's lead, `--lead` overrides; a goal typed into a CLI makes that CLI's agent lead) | PROPOSE, DECIDE, ASSIGN, STATUS, DONE, BLOCKED |
 | challenger | every other PM | PROPOSE (not `plan`), CHALLENGE, STATUS, BLOCKED |
 
-Roles are per goal and swap on the next goal unless the human says otherwise. No rule routes work by model identity or frontend/backend ownership; ASSIGN `reason` is limited to availability-style values. An agent with an unfinished review assignment MUST NOT be assigned implementation (BUSY_REVIEWING). The lead MAY assign itself.
+Roles are per goal and swap on the next goal unless the human says otherwise. No rule routes work by model identity or frontend/backend ownership; ASSIGN `reason` is limited to availability-style values. An agent holding a review assignment MUST NOT be assigned implementation until it posts `review` evidence on that PR; a STATUS marking the review task done does not count (BUSY_REVIEWING). The lead MAY assign itself.
 
 ## 6. Phases
 
@@ -345,9 +349,11 @@ In EXECUTE every thread is already decided, so an EXECUTE DECIDE is always a sup
 | messages_total | 80 | PM messages accepted, all phases | `used >= limit` after an acceptance in PLAN/EXECUTE: → BLOCKED, system ASK_HUMAN (TOTAL_BUDGET) |
 | challenges_per_decision | 1 | per `decision_id` | ONE_CHALLENGE |
 | rounds_per_decision | 2 | per open thread | TWO_ROUNDS |
-| talk_work_ratio | 3 | `talk_since_work`: EXECUTE messages since the last STATUS; STATUS resets it; BLOCKED, DONE, and a DECIDE replying to an open CHALLENGE neither count nor are gated | `talk_since_work >= limit`: reject all but STATUS, BLOCKED, DONE, exempt DECIDE (TALK_WORK_RATIO) |
+| talk_work_ratio | 3 | `talk_since_work`: EXECUTE messages since the last STATUS with work evidence (3.1), which resets it; BLOCKED, DONE, every STATUS, and a DECIDE replying to an open CHALLENGE neither count nor are gated | `talk_since_work >= limit`: reject all but STATUS, BLOCKED, DONE, exempt DECIDE (TALK_WORK_RATIO) |
 | wall_clock_minutes | 240 | minutes since `kickoff.created`, checked every tick | at limit in PLAN/EXECUTE: → BLOCKED, system ASK_HUMAN (WALL_CLOCK) |
 | spend_usd | null | written by the launcher into `used.spend_usd` | informational; at limit same as WALL_CLOCK |
+
+The `allowed_types` a tool returns (section 10) apply these gates: at the `talk_work_ratio` limit they list DECIDE to the lead only while some decision has an open CHALLENGE.
 
 `diarchy.config.json` (project root):
 
@@ -380,7 +386,7 @@ Each PM works only in `<worktrees.root>/<agent>` on `<branch_prefix>/<goal-id>/<
 
 ### 9.2 DONE preconditions (DONE_PRECONDITION)
 
-(a) phase EXECUTE, sender lead; (b) every AC's status in goal.md is `passing`, which only a STATUS accepted in EXECUTE sets (2.3): the DONE's own `test` items do not count; (c) every url in `budget.json.prs` has a `review` with `verdict: approve` from an agent other than its author (waived by `review.required: false`); (d) no thread is open and `deadlock_watch` is null; (e) every task in goal.md has status `done`; (f) at least one PR is registered, and every task other than a review was done by an assignee who introduced a PR with `pr` evidence (waived by `review.required: false`).
+(a) phase EXECUTE, sender lead; (b) every AC's status in goal.md is `passing`, which only a STATUS accepted in EXECUTE sets (2.3): the DONE's own `test` items do not count; (c) every url in `budget.json.prs` has a `review` with `verdict: approve` from an agent other than its author, and every `pr` url the DONE cites is one of them (waived by `review.required: false`); (d) no thread is open and `deadlock_watch` is null; (e) every task in goal.md has status `done`; (f) at least one PR is registered, and every task other than a review was done by an assignee who introduced a PR with `pr` evidence (waived by `review.required: false`).
 
 The store checks recorded state only, so a DONE cannot certify itself: (b) needs a STATUS per AC, (e) a STATUS per task, and (c) with (f) a PR plus the other agent's review.
 

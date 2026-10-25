@@ -1,0 +1,81 @@
+description: "TALK_WORK_RATIO: at the limit, STATUS messages carrying only a pending test, an external URL, or a file are accepted but do not reset the counter, so the next ASSIGN is still rejected."
+state:
+  base: execute
+  used:
+    plan_messages: 3
+    messages_total: 6
+    talk_since_work: 3
+    wall_clock_minutes: 9
+    spend_usd: 0
+prior:
+  - message:
+      protocol_version: 1
+      id: 20261025T140900Z-0002-codex-STATUS
+      goal: 20261025-rate-limit
+      from: codex
+      to: all
+      type: STATUS
+      re:
+        - AC1
+      evidence:
+        - kind: test
+          test: npm test -- rateLimit
+          result: pending
+      phase: EXECUTE
+      ts: 2026-10-25T14:09:00Z
+      body: Suite is running; about 25 minutes left.
+  - message:
+      protocol_version: 1
+      id: 20261025T141000Z-0003-codex-STATUS
+      goal: 20261025-rate-limit
+      from: codex
+      to: all
+      type: STATUS
+      re:
+        - AC1
+      evidence:
+        - kind: external
+          url: https://github.com/acme/api/actions/runs/1
+          note: CI run for the middleware branch
+      phase: EXECUTE
+      ts: 2026-10-25T14:10:00Z
+      body: CI is queued.
+  - message:
+      protocol_version: 1
+      id: 20261025T141100Z-0004-codex-STATUS
+      goal: 20261025-rate-limit
+      from: codex
+      to: all
+      type: STATUS
+      re:
+        - AC1
+      evidence:
+        - kind: file
+          path: docs/rate-limit.md
+      phase: EXECUTE
+      ts: 2026-10-25T14:11:00Z
+      body: Design notes written down.
+message:
+  protocol_version: 1
+  id: 20261025T141200Z-0004-claude-ASSIGN
+  goal: 20261025-rate-limit
+  from: claude
+  to: codex
+  type: ASSIGN
+  re:
+    - AC1
+  task: T2
+  kind: implement
+  worktree: .diarchy/worktrees/codex
+  branch: diarchy/20261025-rate-limit/codex
+  phase: EXECUTE
+  ts: 2026-10-25T14:12:00Z
+  body: ""
+expect:
+  ok: false
+  rule: TALK_WORK_RATIO
+  message: 3 messages since the last STATUS with work evidence. Post STATUS with a commit, pr, review, or a passing or failing test, or post BLOCKED or DONE, before anything else.
+  state:
+    used:
+      messages_total: 9
+      talk_since_work: 3

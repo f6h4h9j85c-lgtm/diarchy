@@ -169,10 +169,13 @@ export function authoredPr(state: GoalState, agent: AgentId | null): boolean {
   return agent !== null && Object.values(state.prs).some((pr) => pr.author === agent);
 }
 
-/** The PR an agent still owes a review on, if any (BUSY_REVIEWING). */
+/**
+ * The PR an agent still owes a review on, if any (BUSY_REVIEWING). Only that
+ * agent's `review` evidence settles it: a STATUS marking the task done does not.
+ */
 export function pendingReviewUrl(state: GoalState, agent: AgentId): string | undefined {
   for (const task of Object.values(state.tasks)) {
-    if (task.kind !== "review" || task.assignee !== agent || task.status === "done" || task.pr === null) continue;
+    if (task.kind !== "review" || task.assignee !== agent || task.pr === null) continue;
     const reviewed = state.prs[task.pr]?.reviews.some((review) => review.by === agent) ?? false;
     if (!reviewed) return task.pr;
   }
@@ -211,7 +214,7 @@ export function roleAllows(state: GoalState, role: Role, type: MessageType): boo
   return ROLE_TYPES[role].includes(type);
 }
 
-const TALK_GATED_EXEMPT: MessageType[] = ["STATUS", "BLOCKED", "DONE", "DECIDE"];
+const TALK_GATED_EXEMPT: MessageType[] = ["STATUS", "BLOCKED", "DONE"];
 
 /** Types the agent may post now, after phase, role, and budget gates. */
 export function allowedTypes(state: GoalState, agent: AgentId): MessageType[] {
@@ -224,7 +227,9 @@ export function allowedTypes(state: GoalState, agent: AgentId): MessageType[] {
     types = types.filter((type) => type === "BLOCKED" || (type === "DECIDE" && role === "lead"));
   }
   if (state.phase === "EXECUTE" && talkRatioReached(state)) {
-    types = types.filter((type) => TALK_GATED_EXEMPT.includes(type));
+    // Only a DECIDE answering an open CHALLENGE is exempt (TALK_WORK_RATIO).
+    const challengeOpen = Object.values(state.decisions).some((decision) => decision.challenge !== null);
+    types = types.filter((type) => TALK_GATED_EXEMPT.includes(type) || (type === "DECIDE" && challengeOpen));
   }
   return types;
 }

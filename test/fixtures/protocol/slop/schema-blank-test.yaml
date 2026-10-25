@@ -1,0 +1,25 @@
+description: "SCHEMA: a test item whose test is a single space names no check; it would otherwise mark every cited AC passing."
+state:
+  base: execute-assigned
+message:
+  protocol_version: 1
+  id: 20261025T142100Z-0002-codex-STATUS
+  goal: 20261025-rate-limit
+  from: codex
+  to: all
+  type: STATUS
+  re:
+    - AC1
+    - AC2
+    - AC3
+  evidence:
+    - kind: test
+      test: " "
+      result: pass
+  phase: EXECUTE
+  ts: 2026-10-25T14:21:00Z
+  body: Suite is green.
+expect:
+  ok: false
+  rule: SCHEMA
+  message: 'Field "evidence.0.test": must be 1 to 40 words. Fix it per PROTOCOL.md section 3 and post again.'

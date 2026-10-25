@@ -300,7 +300,7 @@ Deadlock (`reply_to` is a CHALLENGE; ASK_HUMAN carries `decision_id`):
 2. <challenger> CHALLENGE <HH:MM:SS>: *<claim>* (test `<test>` · <result word>)
 ```
 
-For a reopened thread, item 1 is the DECIDE that last closed it, labelled `DECIDE`.
+For a reopened thread, item 1 is the DECIDE that last closed it, labelled `DECIDE`. A reopened thread is already decided, so its answer is the general deadlock line below even for `plan`: the ruling supersedes it, and <blocked_from> resumes with the tasks already set.
 
 Budget or clock (`reply_to` absent):
 
@@ -313,7 +313,7 @@ Final paragraph, how to answer. The human never edits a vault file; the launcher
 - external: `` **To answer:** run `diarchy reply "<your answer>"`. It is posted as a DECIDE with basis human, recorded in decisions.md, and EXECUTE resumes. `diarchy stop` ends the run and leaves it BLOCKED. ``
 - deadlock: `` **To answer:** run `diarchy reply "<ruling>" --decision <decision_id>`. Your ruling closes <decision_id> as a DECIDE with basis human and <blocked_from> resumes. `diarchy stop` ends the run. ``
 
-When the stalled decision is `plan` and another thread is still open, the command is `diarchy reply "<ruling>"` without `--decision` (a `plan` ruling would be rejected by PHASE_GATE); the paragraph then says the ruling is recorded as a new DECIDE and that the lead must DECIDE plan next. When the stalled decision is `plan` and no other thread is open, the human ruling closes PLAN at once but carries no `tasks`, so the paragraph reads: `` **To answer:** run `diarchy reply "<ruling>" --decision plan`. Your ruling closes plan as a DECIDE with basis human, and EXECUTE begins with no tasks: <lead> must ASSIGN each task with new_task. `diarchy stop` ends the run. ``
+When the stalled decision is an open `plan` thread (the run blocked from PLAN) and another thread is still open, the command is `diarchy reply "<ruling>"` without `--decision` (a `plan` ruling would be rejected by PHASE_GATE); the paragraph then says the ruling is recorded as a new DECIDE and that the lead must DECIDE plan next. When it is an open `plan` thread and no other thread is open, the human ruling closes PLAN at once but carries no `tasks`, so the paragraph reads: `` **To answer:** run `diarchy reply "<ruling>" --decision plan`. Your ruling closes plan as a DECIDE with basis human, and EXECUTE begins with no tasks: <lead> must ASSIGN each task with new_task. `diarchy stop` ends the run. ``
 - budget: `` **To answer:** run `diarchy reply "continue" --budget <counter>=<suggested>` to raise the limit and resume <blocked_from>, or `diarchy stop` to end the run. `` where `<suggested>` is twice the current limit.
 
 The word `EXECUTE` in the external variant is `<blocked_from>` when the block happened in PLAN.

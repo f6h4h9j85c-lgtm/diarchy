@@ -1,0 +1,32 @@
+description: "DONE_PRECONDITION (d): everything else is met, but a deadlock watch on D3 is still running."
+state:
+  base: execute-ready
+  deadlock_watch:
+    decision_id: D3
+    challenge_id: 20261025T162500Z-0006-codex-CHALLENGE
+    remaining: 2
+    deadline: 2026-10-25T16:35:00Z
+message:
+  protocol_version: 1
+  id: 20261025T163000Z-0009-claude-DONE
+  goal: 20261025-rate-limit
+  from: claude
+  to: all
+  type: DONE
+  re:
+    - AC1
+    - AC2
+    - AC3
+  evidence:
+    - kind: commit
+      sha: 1c0ffee42
+    - kind: test
+      test: npm test
+      result: pass
+  phase: EXECUTE
+  ts: 2026-10-25T16:30:00Z
+  body: PRs 412 and 413 merged to main.
+expect:
+  ok: false
+  rule: DONE_PRECONDITION
+  message: "Not done: deadlock watch on D3 is active. Finish every task, post STATUS with passing tests for each AC, and get the other agent's approve review on each PR."

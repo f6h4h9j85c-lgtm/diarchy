@@ -1,0 +1,42 @@
+description: "DECIDE plan with ac_add appends AC4 as an open criterion and closes PLAN."
+state:
+  base: plan-proposed
+message:
+  protocol_version: 1
+  id: 20261025T140730Z-0002-claude-DECIDE
+  goal: 20261025-rate-limit
+  from: claude
+  to: all
+  type: DECIDE
+  re:
+    - AC1
+    - AC2
+    - AC3
+  decision_id: plan
+  claim: Use the Redis-backed token bucket and send Retry-After on every 429.
+  basis: authority
+  tasks:
+    - Token-bucket middleware in src/middleware/rateLimit.ts
+    - RATE_LIMIT_PER_MIN config, default 100
+  ac_add:
+    - Every 429 response carries a Retry-After header.
+  phase: PLAN
+  ts: 2026-10-25T14:07:30Z
+  body: No test can run before the middleware exists.
+expect:
+  ok: true
+  phase_after: EXECUTE
+  effects:
+    - kind: ac_added
+      ac: AC4
+      criterion: Every 429 response carries a Retry-After header.
+    - kind: phase
+      from: PLAN
+      to: EXECUTE
+  state:
+    acs:
+      AC1:
+        status: open
+      AC4:
+        criterion: Every 429 response carries a Retry-After header.
+        status: open

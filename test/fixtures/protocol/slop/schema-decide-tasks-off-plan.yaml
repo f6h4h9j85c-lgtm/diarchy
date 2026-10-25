@@ -1,0 +1,28 @@
+description: "SCHEMA: an EXECUTE DECIDE superseding D3 carries tasks, which only a DECIDE on plan may write."
+state:
+  base: execute-ready
+message:
+  protocol_version: 1
+  id: 20261025T162000Z-0009-claude-DECIDE
+  goal: 20261025-rate-limit
+  from: claude
+  to: all
+  type: DECIDE
+  re:
+    - AC2
+  supersedes: D3
+  claim: The dashboard needs its own higher default.
+  basis: test
+  evidence:
+    - kind: test
+      test: npm run e2e -- dashboard-burst
+      result: fail
+  tasks:
+    - Per-route default for the dashboard
+  phase: EXECUTE
+  ts: 2026-10-25T16:20:00Z
+  body: The burst test fails at the shared default.
+expect:
+  ok: false
+  rule: SCHEMA
+  message: 'Field "tasks": allowed only on decision plan. Fix it per PROTOCOL.md section 3 and post again.'

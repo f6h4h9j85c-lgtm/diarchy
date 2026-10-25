@@ -34,6 +34,7 @@ import {
 } from "../src/vault/index.js";
 import { budgetLine, code, escapeBlockStarts, italic, linkText, localHint } from "../src/vault/render/shared.js";
 
+const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const FIXTURES = fileURLToPath(new URL("./fixtures/", import.meta.url));
 const SAMPLE_RUN = join(FIXTURES, "vault", "sample-run");
 const EXAMPLES = join(FIXTURES, "protocol", "examples");
@@ -368,7 +369,9 @@ describe("renderer rules", () => {
 
 function spawnWriter(projectDir: string, agent: string, count: number, startMs: number): Promise<void> {
   return new Promise((resolve, reject) => {
+    // `--import tsx` resolves from the child's cwd, so pin it to the repo rather than inherit vitest's.
     const child = spawn(process.execPath, ["--import", "tsx", WRITER, projectDir, agent, String(count), String(startMs), TZ], {
+      cwd: ROOT,
       stdio: ["ignore", "pipe", "pipe"],
     });
     let output = "";
@@ -410,7 +413,14 @@ describe("concurrent writers", () => {
     if (before === null) throw new Error("no goal");
     expect(before.phase).toBe("EXECUTE");
     const start = h.clock.ms + 1_000;
-    await Promise.all([spawnWriter(h.projectDir, "claude", 20, start), spawnWriter(h.projectDir, "codex", 20, start)]);
+    // Spawned from outside the repo, as when vitest runs with --root from another directory.
+    const cwd = process.cwd();
+    process.chdir(tmpdir());
+    try {
+      await Promise.all([spawnWriter(h.projectDir, "claude", 20, start), spawnWriter(h.projectDir, "codex", 20, start)]);
+    } finally {
+      process.chdir(cwd);
+    }
 
     const goalDir = h.goalDir("20261025-ship");
     const files = readdirSync(join(goalDir, "chat")).filter((name) => name.endsWith(".md"));

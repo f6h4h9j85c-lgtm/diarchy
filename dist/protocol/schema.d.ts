@@ -755,6 +755,8 @@ export interface FieldProblem {
 export declare function schemaMessage(field: string, problem: string): string;
 export declare function typedOnlyMessage(type: unknown): string;
 export declare function isMessageType(type: unknown): type is MessageType;
+/** The field a zod issue points at and what is wrong with it, for a SCHEMA message. */
+export declare function describeIssue(issue: z.core.$ZodIssue, input: unknown): FieldProblem;
 /** Cross-field requirements PROTOCOL.md section 3 states in prose. */
 export declare function conditionalProblem(message: Message): FieldProblem | null;
 /**

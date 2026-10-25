@@ -167,7 +167,8 @@ function valueAt(input, path) {
     }
     return current;
 }
-function describeIssue(issue, input) {
+/** The field a zod issue points at and what is wrong with it, for a SCHEMA message. */
+export function describeIssue(issue, input) {
     if (issue.code === "unrecognized_keys") {
         return { field: issue.keys[0] ?? "frontmatter", problem: "unknown field" };
     }

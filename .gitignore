@@ -1,0 +1,20 @@
+# dependencies
+node_modules/
+
+# build output
+dist/
+
+# test coverage
+coverage/
+
+# OS files
+.DS_Store
+
+# logs
+*.log
+
+# diarchy runtime directory
+.diarchy/
+
+# local environment
+.env

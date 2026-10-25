@@ -355,7 +355,12 @@ In EXECUTE every thread is already decided, so an EXECUTE DECIDE is always a sup
 {
   "protocol_version": 1,
   "vault": "<project> brain/diarchy",
-  "agents": { "claude": { "command": "claude -p ..." }, "codex": { "command": "codex exec ..." } },
+  "agents": {
+    "claude": { "command": "claude",
+                "args": ["-p", "--permission-mode", "acceptEdits", "--permission-prompts", "none",
+                         "--allowedTools", "mcp__plugin_diarchy_diarchy__*,Bash(git *),Bash(npm *),Bash(node *),Bash(gh *)"] },
+    "codex": { "command": "codex", "args": ["exec", "--sandbox", "workspace-write"] }
+  },
   "budgets": { "plan_messages": 12, "messages_total": 80, "challenges_per_decision": 1,
                "rounds_per_decision": 2, "talk_work_ratio": 3, "wall_clock_minutes": 240, "spend_usd": null },
   "worktrees": { "root": ".diarchy/worktrees", "branch_prefix": "diarchy" },
@@ -364,6 +369,8 @@ In EXECUTE every thread is already decided, so an EXECUTE DECIDE is always a sup
 ```
 
 `vault` is relative to the project root. `kickoff.budgets` overrides config per goal; a human DECIDE `budgets` overrides for the rest of the goal (without it, an exhausted budget re-blocks on the next accepted message). `review.required: false` waives 9.2(c) only; NO_SELF_REVIEW still applies.
+
+`agents.<id>.command` and `args` are the executable and the flags the launcher puts before the prompt (with `args` absent, a `command` with spaces is split on whitespace). Headless `claude -p` has nobody to answer a permission prompt, so the Claude PM runs with `--permission-prompts none` and an allow list: `mcp__plugin_diarchy_diarchy__*`, the diarchy tools under the server name a plugin install gives them (a server registered with `claude mcp add diarchy` is `mcp__diarchy__*` instead), plus `Bash(git *)`, `Bash(npm *)`, `Bash(node *)`, and `Bash(gh *)`. The list is one comma-joined argument. A project whose checks run through another command adds it (`Bash(make *)`) before the first run; a tool outside the list is denied and the PM stalls at that step.
 
 ## 9. Code flow
 

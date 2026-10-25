@@ -1,7 +1,8 @@
 /**
  * How `diarchy start` spawns one PM per agent.
  *
- * Real driver: `claude -p --permission-mode acceptEdits "<prompt>"` and
+ * Real driver: `claude -p --permission-mode acceptEdits --permission-prompts none
+ * --allowedTools <diarchy MCP tools and git, npm, node, gh> "<prompt>"` and
  * `codex exec --sandbox workspace-write "<prompt>"` (command and base flags
  * from diarchy.config.json `agents.<id>`), cwd the agent's worktree, env
  * DIARCHY_AGENT and DIARCHY_PROJECT so the MCP server and hooks find the vault.

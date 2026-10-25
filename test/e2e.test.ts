@@ -135,7 +135,10 @@ describe("diarchy init", () => {
     expect(config.vault).toBe(join("api brain", "diarchy"));
     expect(existsSync(join(dir, "api brain", "diarchy"))).toBe(true);
     expect(config.agents).toMatchObject({
-      claude: { command: "claude", args: ["-p", "--permission-mode", "acceptEdits"] },
+      claude: {
+        command: "claude",
+        args: ["-p", "--permission-mode", "acceptEdits", "--permission-prompts", "none", "--allowedTools", "mcp__plugin_diarchy_diarchy__*,Bash(git *),Bash(npm *),Bash(node *),Bash(gh *)"],
+      },
       codex: { command: "codex", args: ["exec", "--sandbox", "workspace-write"] },
     });
     expect(config.budgets).toMatchObject({ plan_messages: 12, messages_total: 80, wall_clock_minutes: 240, spend_usd: null });

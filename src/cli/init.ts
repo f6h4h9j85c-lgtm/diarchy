@@ -68,9 +68,10 @@ function nextSteps(projectDir: string, vaultPath: string, ignored: boolean | nul
     "  2. Codex CLI:    codex plugin marketplace add f6h4h9j85c-lgtm/diarchy",
     "                   then add [mcp_servers.diarchy] to ~/.codex/config.toml and trust the project (docs/INSTALL-CODEX.md)",
     "  3. Copy templates/AGENTS.md to this project root as AGENTS.md so the Codex PM reads it at session start.",
-    '  4. Run a goal:   diarchy start "<goal>" --ac "<criterion>" [--ac ...]',
+    "  4. The Claude PM may run git, npm, node, and gh. If your checks use another command, add Bash(<cmd> *) to agents.claude.args in diarchy.config.json.",
+    '  5. Run a goal:   diarchy start "<goal>" --ac "<criterion>" [--ac ...]',
     '     No model calls, protocol only:  diarchy start "<goal>" --ac "<criterion>" --driver fake',
-    '  5. Follow along: diarchy watch, diarchy status. Answer a BLOCKED run with diarchy reply "<text>".',
+    '  6. Follow along: diarchy watch, diarchy status. Answer a BLOCKED run with diarchy reply "<text>".',
   ].join("\n");
 }
 

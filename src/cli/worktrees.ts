@@ -6,7 +6,7 @@
  */
 import { spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
-import { resolve } from "node:path";
+import { join, resolve } from "node:path";
 
 import type { DiarchyConfig } from "../protocol/index.js";
 
@@ -72,6 +72,20 @@ function ensureOne(projectDir: string, config: DiarchyConfig, goalId: string, ag
     : git(projectDir, ["worktree", "add", "-b", branch, path, "HEAD"]);
   if (!added.ok) throw new Error(`git worktree add failed for ${agent}: ${added.stderr}`);
   return { ...base, outcome: "created", note: branchExists ? "existing branch" : null };
+}
+
+/**
+ * Project files Codex reads from its git root, which for a PM in a linked
+ * worktree is the worktree itself, never the main checkout.
+ */
+export const CODEX_PROJECT_FILES = ["AGENTS.md", ".codex/agents"];
+
+/**
+ * The Codex project files present in the project but missing from at least
+ * one worktree: uncommitted, so a worktree cut from HEAD does not have them.
+ */
+export function missingFromWorktrees(projectDir: string, worktrees: string[]): string[] {
+  return CODEX_PROJECT_FILES.filter((path) => existsSync(join(projectDir, path)) && worktrees.some((worktree) => !existsSync(join(worktree, path))));
 }
 
 /** One worktree per agent; prunes stale registrations first. Throws when git itself fails. */

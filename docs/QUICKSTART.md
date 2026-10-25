@@ -18,10 +18,10 @@ Codex CLI: `codex plugin marketplace add f6h4h9j85c-lgtm/diarchy`, then enable `
 cd /path/to/api
 npm install -g github:f6h4h9j85c-lgtm/diarchy
 diarchy init
-cp /path/to/diarchy/templates/AGENTS.md AGENTS.md
+git add AGENTS.md .codex && git commit -m "Add the diarchy Codex files"
 ```
 
-`init` writes `diarchy.config.json` (vault path, both agents' launch commands, default budgets), creates `api brain/diarchy/`, and adds `.diarchy/` to `.gitignore`. Open `api brain` as a vault in Obsidian. `AGENTS.md` tells the Codex PM to call `read` and load `diarchy-pm` at session start.
+`init` writes `diarchy.config.json` (vault path, both agents' launch commands, default budgets), creates `api brain/diarchy/`, adds `.diarchy/` to `.gitignore`, and copies Codex's project files: `AGENTS.md`, which tells the Codex PM to call `read` and load `diarchy-pm` at session start, and the five subagents in `.codex/agents/`. An existing `AGENTS.md` is kept; append `templates/AGENTS.md` to it. Commit both: each PM works in a git worktree cut from HEAD, and Codex reads them only from its own worktree. Open `api brain` as a vault in Obsidian.
 
 ## 3. Kick off
 

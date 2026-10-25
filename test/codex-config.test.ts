@@ -416,6 +416,13 @@ describe("codex-config: skills", () => {
 });
 
 describe("codex-config: prose", () => {
+  it("install docs say to commit AGENTS.md and .codex/agents/ before diarchy start", () => {
+    // Each PM runs in a worktree cut from HEAD and Codex reads both only from its own worktree.
+    expect(readFileSync(at("docs", "QUICKSTART.md"), "utf8")).toContain("git add AGENTS.md .codex && git commit");
+    expect(readFileSync(at("README.md"), "utf8")).toContain("git add AGENTS.md .codex && git commit");
+    expect(readFileSync(at("docs", "INSTALL-CODEX.md"), "utf8")).toContain("Commit `AGENTS.md` and `.codex/agents/` before `diarchy start`");
+  });
+
   it("install docs never send Codex to a project-layer .codex/hooks.json or a DIARCHY_ROOT path", () => {
     // Codex hooks ride the plugin (hooks/codex-hooks.json, resolved from PLUGIN_ROOT).
     for (const file of ["README.md", "docs/INSTALL-CODEX.md", "docs/QUICKSTART.md", "docs/ARCHITECTURE.md", "src/cli/init.ts"]) {

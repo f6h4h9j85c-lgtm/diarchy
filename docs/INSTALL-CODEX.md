@@ -3,7 +3,8 @@
 Codex loads four things from this repository: the skills in `.agents/skills/`
 (byte-for-byte copies of `skills/`, refreshed with `npm run sync-skills`), the
 `diarchy` MCP server, the hooks in `hooks/codex-hooks.json`, and the custom
-subagents in `.codex/agents/*.toml`.
+subagents in `.codex/agents/*.toml`, which `diarchy init` copies into your
+project because Codex reads subagents only from there.
 
 Requirements: Node 20 or later on `PATH`, Codex CLI with plugin and hook support
 (October 2026 or later), and `npm ci && npm run build` run in the diarchy
@@ -64,11 +65,19 @@ trust_level = "trusted"
 
 - Run `diarchy init` in the project root. It writes `diarchy.config.json`
   (vault path, both agents' launch commands, budgets), creates the vault, and
-  adds `.diarchy/` to `.gitignore`.
-- Copy `templates/AGENTS.md` to the project root as `AGENTS.md` (or append its
-  content to an existing one). Codex reads `AGENTS.md` at session start; the
-  template tells the PM to call `read` and load `diarchy-pm`, without
-  duplicating the skill.
+  adds `.diarchy/` to `.gitignore`. When `codex` is one of the agents it also
+  copies Codex's two project files from the diarchy package: the five
+  subagents into `.codex/agents/` (Codex loads subagents from the project,
+  never from a plugin) and `templates/AGENTS.md` to `AGENTS.md`. An existing
+  file is kept; if your `AGENTS.md` predates diarchy, append the template to
+  it. Codex reads `AGENTS.md` at session start; the template tells the PM to
+  call `read` and load `diarchy-pm`, without duplicating the skill.
+- Commit `AGENTS.md` and `.codex/agents/` before `diarchy start`. The launcher
+  runs each PM in a git worktree cut from HEAD, and Codex looks for
+  `AGENTS.md` and `.codex/` from its git root, which in a worktree is the
+  worktree itself, so uncommitted copies in the main checkout never reach the
+  Codex PM. `diarchy start` prints a note when either is missing from the
+  worktrees.
 - Hooks come with the plugin; nothing is copied for them. The manifest's
   `hooks` entry names `hooks/codex-hooks.json`, whose two commands run
   `bash "${PLUGIN_ROOT}/hooks/session-start.sh" codex` and

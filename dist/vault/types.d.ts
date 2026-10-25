@@ -1,4 +1,5 @@
 /** Public types of the vault store (docs/PROTOCOL.md sections 2 and 10). */
+import { SchemaError } from "../protocol/index.js";
 import type { AcState, AgentId, BudgetLimits, BudgetUsed, DiarchyConfig, Message, MessageType, Phase, Rejection, Role } from "../protocol/index.js";
 import type { GoalPaths } from "./config.js";
 export interface VaultStoreOptions {
@@ -94,4 +95,14 @@ export interface ReplyOptions {
 }
 export declare class NoGoalError extends Error {
     constructor();
+}
+/**
+ * A stored vault file (kickoff.md or a chat/ message) that will not parse.
+ * The vault is corrupt, not the caller's draft: `message` names the file and
+ * the problem without the advice to fix and post again; `rule` stays SCHEMA,
+ * or TYPED_ONLY for a message file whose type is unknown.
+ */
+export declare class CorruptVaultFileError extends SchemaError {
+    readonly file: string;
+    constructor(file: string, cause: SchemaError);
 }

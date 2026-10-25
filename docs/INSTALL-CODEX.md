@@ -27,8 +27,8 @@ enabled = true
 ```
 
 The manifest Codex reads is `.codex-plugin/plugin.json`: it names the skills
-directory (`./.agents/skills`), the MCP server file (`./mcp.json`), and the hooks
-file (`./hooks/codex-hooks.json`). The marketplace file is
+directory (`./.agents/skills`), the MCP server file (`./mcp.json`), and the
+hooks file (`./hooks/codex-hooks.json`). The marketplace file is
 `.agents/plugins/marketplace.json`.
 Codex reads a root `plugin.json` only when it declares the agent-plugins.org
 `$schema`, and that format has no `skills` or `mcp` keys, so diarchy ships no

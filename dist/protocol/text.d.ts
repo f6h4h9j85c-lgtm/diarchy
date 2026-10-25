@@ -28,5 +28,3 @@ export declare function hasControlChars(text: string): boolean;
  * than `maxChars` is cut with an ellipsis.
  */
 export declare function oneLine(text: string, maxChars?: number): string;
-/** First `max` whitespace-split tokens, with an ellipsis when cut. */
-export declare function truncateWords(text: string, max: number): string;

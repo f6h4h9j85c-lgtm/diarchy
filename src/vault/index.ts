@@ -18,6 +18,7 @@ export { AgentLease } from "./lease.js";
 export { type LockOwner } from "./lock.js";
 export { DEFAULT_POLL_MS, LOCK_STALE_MS, MAX_WAIT_MS, PROGRESS_MS, VaultStore } from "./store.js";
 export {
+  CorruptVaultFileError,
   NoGoalError,
   type BudgetSnapshot,
   type GoalRef,

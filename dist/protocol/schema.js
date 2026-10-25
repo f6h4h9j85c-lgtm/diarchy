@@ -40,7 +40,8 @@ const taskId = z.string().regex(TASK_ID_PATTERN, "must be a task id");
 const decisionId = z.string().regex(DECISION_ID_PATTERN, "must be plan or D<n>");
 const isoTs = z.string().regex(ISO_TS_PATTERN, "must be an ISO 8601 UTC timestamp");
 const url = z.url();
-const wordsMax = (max) => z.string().min(1).refine((text) => wordCount(text) <= max, `at most ${max} words`);
+/** Free text of 1 to `max` whitespace-split words; blank or whitespace-only text fails. */
+const wordsMax = (max) => z.string().refine((text) => wordCount(text) >= 1 && wordCount(text) <= max, `must be 1 to ${max} words`);
 const ONE_LINE = "must be one line with no control characters";
 /** Free text embedded in single-line contexts (briefs, hook reasons, tables): one line, 1 to `max` words. */
 const oneLineWords = (max) => wordsMax(max).refine((text) => !hasControlChars(text), ONE_LINE);
@@ -161,11 +162,17 @@ export const messageSchema = z.discriminatedUnion("type", [
     messageSchemas.BLOCKED,
     messageSchemas.ASK_HUMAN,
 ]);
+function fieldProblem(field, problem) {
+    return `Field "${field}": ${problem}`;
+}
+function unknownType(type) {
+    return `Unknown type "${String(type)}"`;
+}
 export function schemaMessage(field, problem) {
-    return `Field "${field}": ${problem}. Fix it per PROTOCOL.md section 3 and post again.`;
+    return `${fieldProblem(field, problem)}. Fix it per PROTOCOL.md section 3 and post again.`;
 }
 export function typedOnlyMessage(type) {
-    return `Unknown type "${String(type)}". Use one of ${MESSAGE_TYPES.join(", ")}.`;
+    return `${unknownType(type)}. Use one of ${MESSAGE_TYPES.join(", ")}.`;
 }
 export function isMessageType(type) {
     return typeof type === "string" && MESSAGE_TYPES.includes(type);
@@ -182,7 +189,8 @@ function valueAt(input, path) {
     }
     return current;
 }
-function describeIssue(issue, input) {
+/** The field a zod issue points at and what is wrong with it, for a SCHEMA message. */
+export function describeIssue(issue, input) {
     if (issue.code === "unrecognized_keys") {
         return { field: issue.keys[0] ?? "frontmatter", problem: "unknown field" };
     }
@@ -238,8 +246,8 @@ export function conditionalProblem(message) {
         return assignProblem(message);
     return null;
 }
-function fail(rule, message, field) {
-    return { ok: false, rule, message, field };
+function schemaFail(field, problem) {
+    return { ok: false, rule: "SCHEMA", message: schemaMessage(field, problem), field, problem: fieldProblem(field, problem) };
 }
 /**
  * Stateless validation of a message object. Runs the common fields first
@@ -248,24 +256,24 @@ function fail(rule, message, field) {
  */
 export function checkMessageShape(input) {
     if (!isRecord(input))
-        return fail("SCHEMA", schemaMessage("frontmatter", "must be a mapping"), "frontmatter");
+        return schemaFail("frontmatter", "must be a mapping");
     const common = commonSchema.safeParse(input);
     if (!common.success) {
         const { field, problem } = describeIssue(common.error.issues[0], input);
-        return fail("SCHEMA", schemaMessage(field, problem), field);
+        return schemaFail(field, problem);
     }
-    if (!isMessageType(input.type))
-        return fail("TYPED_ONLY", typedOnlyMessage(input.type), "type");
+    if (!isMessageType(input.type)) {
+        return { ok: false, rule: "TYPED_ONLY", message: typedOnlyMessage(input.type), field: "type", problem: unknownType(input.type) };
+    }
     const typed = messageSchemas[input.type].safeParse(input);
     if (!typed.success) {
         const { field, problem } = describeIssue(typed.error.issues[0], input);
-        return fail("SCHEMA", schemaMessage(field, problem), field);
+        return schemaFail(field, problem);
     }
     const message = typed.data;
     const conditional = conditionalProblem(message);
-    if (conditional) {
-        return fail("SCHEMA", schemaMessage(conditional.field, conditional.problem), conditional.field);
-    }
+    if (conditional)
+        return schemaFail(conditional.field, conditional.problem);
     return { ok: true, message };
 }
 // ---------------------------------------------------------------------------
@@ -274,19 +282,25 @@ export function checkMessageShape(input) {
 export class SchemaError extends Error {
     rule;
     field;
-    constructor(rule, message, field = null) {
+    /** What is wrong, without the advice to fix and post again: a stored file is not the caller's draft. */
+    problem;
+    constructor(rule, message, field = null, problem = message) {
         super(message);
         this.name = "SchemaError";
         this.rule = rule;
         this.field = field;
+        this.problem = problem;
     }
+}
+function schemaError(field, problem) {
+    return new SchemaError("SCHEMA", schemaMessage(field, problem), field, fieldProblem(field, problem));
 }
 const FRONTMATTER_PATTERN = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)([\s\S]*)$/;
 /** Split a markdown file into its YAML frontmatter mapping and body. */
 export function splitFrontmatter(text) {
     const match = FRONTMATTER_PATTERN.exec(text);
     if (!match) {
-        throw new SchemaError("SCHEMA", schemaMessage("frontmatter", "missing or unterminated"), "frontmatter");
+        throw schemaError("frontmatter", "missing or unterminated");
     }
     const [, yamlText, body] = match;
     let parsed;
@@ -295,10 +309,10 @@ export function splitFrontmatter(text) {
     }
     catch (error) {
         const reason = error instanceof Error ? error.message.split("\n")[0] : String(error);
-        throw new SchemaError("SCHEMA", schemaMessage("frontmatter", reason), "frontmatter");
+        throw schemaError("frontmatter", reason);
     }
     if (!isRecord(parsed)) {
-        throw new SchemaError("SCHEMA", schemaMessage("frontmatter", "must be a mapping"), "frontmatter");
+        throw schemaError("frontmatter", "must be a mapping");
     }
     return { frontmatter: coerceTimestamps(parsed), body };
 }
@@ -317,7 +331,7 @@ export function parseMessageFile(text) {
     const { frontmatter, body } = splitFrontmatter(text);
     const result = checkMessageShape({ ...frontmatter, body });
     if (!result.ok)
-        throw new SchemaError(result.rule, result.message, result.field);
+        throw new SchemaError(result.rule, result.message, result.field, result.problem);
     return result.message;
 }
 /** Canonical key order, taken from the PROTOCOL.md 3.2 examples. */
@@ -400,33 +414,49 @@ export const kickoffFrontmatterSchema = z.strictObject({
     created: isoTs,
     by: agentId,
 });
-const AC_LINE_PATTERN = /^- AC([1-9][0-9]*): (.+)$/;
-/** Parse kickoff.md: frontmatter, goal text, and the `- AC<n>: <criterion>` lines. */
+/** A `- AC<n>: <criterion>` line of kickoff.md; the store refuses a goal text shaped like one. */
+export const AC_LINE_PATTERN = /^- AC([1-9][0-9]*): (.+)$/;
+/**
+ * Every Unicode line terminator: CR, LF, VT, FF, NEL (U+0085), LS (U+2028),
+ * PS (U+2029). kickoff.md is line based, so the store refuses a goal or
+ * criterion containing one; `.` in AC_LINE_PATTERN stops at CR, LF, LS, PS,
+ * and editors and other readers break lines at the rest.
+ */
+export const LINE_TERMINATOR = /[\r\n\v\f\u0085\u2028\u2029]/;
+/**
+ * Parse kickoff.md: frontmatter, goal text, and the `- AC<n>: <criterion>` lines.
+ * The criteria are the unbroken run of AC lines that ends the body; everything
+ * above it is goal text, so an AC-shaped line inside the goal (a hand-edited
+ * file) stays goal text instead of shifting the numbering.
+ */
 export function parseKickoffFile(text) {
     const { frontmatter, body } = splitFrontmatter(text);
     const parsed = kickoffFrontmatterSchema.safeParse(frontmatter);
     if (!parsed.success) {
         const { field, problem } = describeIssue(parsed.error.issues[0], frontmatter);
-        throw new SchemaError("SCHEMA", schemaMessage(field, problem), field);
+        throw schemaError(field, problem);
     }
-    const goalLines = [];
-    const acceptance_criteria = [];
-    for (const line of body.split(/\r?\n/)) {
-        const match = AC_LINE_PATTERN.exec(line);
-        if (match) {
-            if (Number(match[1]) !== acceptance_criteria.length + 1) {
-                throw new SchemaError("SCHEMA", schemaMessage("body", `AC${match[1]} is out of order`), "body");
-            }
-            acceptance_criteria.push(match[2].trim());
+    const lines = body.split(/\r?\n/);
+    while (lines.length > 0 && lines[lines.length - 1].trim() === "")
+        lines.pop();
+    const acLines = [];
+    for (let index = lines.length - 1; index >= 0; index -= 1) {
+        const match = AC_LINE_PATTERN.exec(lines[index]);
+        if (match === null)
+            break;
+        acLines.unshift(match);
+    }
+    if (acLines.length === 0) {
+        throw schemaError("body", "needs at least one `- AC<n>: <criterion>` line");
+    }
+    const acceptance_criteria = acLines.map((match, index) => {
+        if (Number(match[1]) !== index + 1) {
+            throw schemaError("body", `AC${match[1]} is out of order`);
         }
-        else if (acceptance_criteria.length === 0) {
-            goalLines.push(line);
-        }
-    }
-    if (acceptance_criteria.length === 0) {
-        throw new SchemaError("SCHEMA", schemaMessage("body", "needs at least one `- AC<n>: <criterion>` line"), "body");
-    }
-    return { ...parsed.data, goal_text: goalLines.join("\n").trim(), acceptance_criteria };
+        return match[2].trim();
+    });
+    const goal_text = lines.slice(0, lines.length - acLines.length).join("\n").trim();
+    return { ...parsed.data, goal_text, acceptance_criteria };
 }
 // ---------------------------------------------------------------------------
 // diarchy.config.json

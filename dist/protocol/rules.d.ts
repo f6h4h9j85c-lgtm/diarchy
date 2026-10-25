@@ -11,7 +11,8 @@ export declare function stateProblem(message: Message, state: GoalState): FieldP
 /**
  * PROTOCOL.md 9.2 (a) to (f), as a list of what is missing. Only recorded
  * state counts: the DONE's own evidence is an attestation and cannot set an
- * AC passing, register a PR, or close a task.
+ * AC passing, register a PR, or close a task, so a PR it cites must already
+ * be registered and approved (c).
  */
 export declare function doneMissing(message: Message, state: GoalState): string[];
 export declare const RULES: Record<RuleId, Rule>;

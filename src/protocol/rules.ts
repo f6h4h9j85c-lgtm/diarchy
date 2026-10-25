@@ -142,8 +142,14 @@ function threadProblem(message: Message, state: GoalState): FieldProblem | null 
     return { field: "decision_id", problem: `unknown decision ${message.decision_id}; omit it and the store assigns one` };
   }
   if (message.type === "CHALLENGE" && message.decision_id !== undefined) {
-    if (!(message.decision_id in state.decisions)) {
-      return { field: "decision_id", problem: `unknown decision ${message.decision_id}` };
+    const decision = state.decisions[message.decision_id];
+    if (decision === undefined) return { field: "decision_id", problem: `unknown decision ${message.decision_id}` };
+    if (decision.status === "superseded") {
+      // No DECIDE can answer it: the lead supersedes only the live decision (decideProblem).
+      return {
+        field: "decision_id",
+        problem: `${message.decision_id} is superseded by ${decision.superseded_by}; challenge that instead`,
+      };
     }
     const target = message.reply_to === undefined ? undefined : messageRef(state, message.reply_to);
     if (target !== undefined && target.decision_id !== message.decision_id) {
@@ -285,7 +291,12 @@ const phaseGate: Rule = ({ message, state, callerAgent }) => {
     message.type === "DECIDE" &&
     message.decision_id === "plan" &&
     openThreads(state).some((id) => id !== "plan");
-  if (phaseAllows(state, message.type) && !planDecideWhileOpen) return null;
+  // One watch at a time: a second CHALLENGE would replace it and leave the first one unenforced.
+  const challengeWhileWatched =
+    message.type === "CHALLENGE" &&
+    state.deadlock_watch !== null &&
+    message.decision_id !== state.deadlock_watch.decision_id;
+  if (phaseAllows(state, message.type) && !planDecideWhileOpen && !challengeWhileWatched) return null;
   const allowed = allowedTypes(state, callerAgent);
   return reject(
     "PHASE_GATE",
@@ -345,7 +356,7 @@ const talkWorkRatio: Rule = ({ message, state }) => {
   if (TALK_EXEMPT.includes(message.type) || repliesToOpenChallenge(state, message)) return null;
   return reject(
     "TALK_WORK_RATIO",
-    `${state.used.talk_since_work} messages since the last STATUS with evidence. Post STATUS with evidence, BLOCKED, or DONE before anything else.`,
+    `${state.used.talk_since_work} messages since the last STATUS with work evidence. Post STATUS with a commit, pr, review, or a passing or failing test, or post BLOCKED or DONE, before anything else.`,
   );
 };
 
@@ -380,9 +391,18 @@ const oneChallenge: Rule = ({ message, state }) => {
 };
 
 const twoRounds: Rule = ({ message, state }) => {
-  if ((message.type !== "PROPOSE" && message.type !== "CHALLENGE") || message.decision_id === undefined) return null;
+  if (message.decision_id === undefined) return null;
   const decision = state.decisions[message.decision_id];
   if (decision === undefined || decision.status !== "open") return null;
+  if (message.type === "DECIDE") {
+    // The human may rule on any thread, and a spent PLAN budget leaves the lead's DECIDE as the only way out.
+    if (decision.messages > 0 || message.from === AGENT_HUMAN || planBudgetSpent(state)) return null;
+    return reject(
+      "TWO_ROUNDS",
+      `Decision ${message.decision_id} has no PROPOSE yet. Only the lead's PROPOSE may follow.`,
+    );
+  }
+  if (message.type !== "PROPOSE" && message.type !== "CHALLENGE") return null;
   const overflow =
     message.type === "PROPOSE" ? decision.messages >= 1 : decision.messages >= state.limits.rounds_per_decision;
   if (!overflow) return null;
@@ -454,7 +474,8 @@ const busyReviewing: Rule = ({ message, state }) => {
 /**
  * PROTOCOL.md 9.2 (a) to (f), as a list of what is missing. Only recorded
  * state counts: the DONE's own evidence is an attestation and cannot set an
- * AC passing, register a PR, or close a task.
+ * AC passing, register a PR, or close a task, so a PR it cites must already
+ * be registered and approved (c).
  */
 export function doneMissing(message: Message, state: GoalState): string[] {
   const missing: string[] = [];
@@ -469,8 +490,15 @@ export function doneMissing(message: Message, state: GoalState): string[] {
       const approved = pr.reviews.some((review) => review.verdict === "approve" && review.by !== pr.author);
       if (!approved) missing.push(`PR ${url} has no approve review from the other agent`);
     }
+    const cited = new Set((message.evidence ?? []).flatMap((item) => (item.kind === "pr" ? [item.url] : [])));
+    for (const url of cited) {
+      if (!(url in state.prs)) missing.push(`PR ${url} was never posted in a STATUS or reviewed`);
+    }
   }
   for (const id of openThreads(state)) missing.push(`decision ${id} is open`);
+  for (const [id, decision] of Object.entries(state.decisions)) {
+    if (decision.challenge !== null) missing.push(`decision ${id} has an unanswered CHALLENGE`);
+  }
   if (state.deadlock_watch !== null) missing.push(`deadlock watch on ${state.deadlock_watch.decision_id} is active`);
   for (const task of Object.values(state.tasks)) {
     if (task.status !== "done") missing.push(`task ${task.id} is ${task.status}`);

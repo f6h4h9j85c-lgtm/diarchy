@@ -1,0 +1,64 @@
+description: "SCHEMA near miss: after D1 supersedes plan, a CHALLENGE on D1 with new evidence is accepted and arms the deadlock watch on D1, which a DECIDE superseding D1 can clear."
+state:
+  base: execute
+  decisions:
+    plan:
+      status: decided
+      proposer: claude
+      messages: 1
+      challenges: 0
+      supersedes: null
+      superseded_by: null
+      evidence: []
+      challenge: null
+prior:
+  - message:
+      protocol_version: 1
+      id: 20261025T140900Z-0004-claude-DECIDE
+      goal: 20261025-rate-limit
+      from: claude
+      to: all
+      type: DECIDE
+      re:
+        - AC1
+      supersedes: plan
+      basis: authority
+      claim: Use an in-process bucket because the API runs one replica.
+      evidence:
+        - kind: external
+          url: https://wiki.example/ops/api-replicas
+      phase: EXECUTE
+      ts: 2026-10-25T14:09:00Z
+      body: Ops confirmed a single replica until Q4.
+message:
+  protocol_version: 1
+  id: 20261025T141000Z-0002-codex-CHALLENGE
+  goal: 20261025-rate-limit
+  from: codex
+  to: claude
+  type: CHALLENGE
+  re:
+    - AC1
+  reply_to: 20261025T140900Z-0004-claude-DECIDE
+  decision_id: D1
+  claim: The API runs three replicas, so an in-process bucket misses AC1.
+  evidence:
+    - kind: test
+      test: kubectl -n prod get deploy api -o jsonpath='{.spec.replicas}' prints 1
+      result: fail
+  phase: EXECUTE
+  ts: 2026-10-25T14:10:00Z
+  body: ""
+expect:
+  ok: true
+  phase_after: EXECUTE
+  state:
+    deadlock_watch:
+      decision_id: D1
+      challenge_id: 20261025T141000Z-0002-codex-CHALLENGE
+    decisions:
+      plan:
+        status: superseded
+        superseded_by: D1
+      D1:
+        challenges: 1

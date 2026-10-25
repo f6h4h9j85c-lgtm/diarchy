@@ -4,7 +4,9 @@
  * agent acts on a goal: the others answer AGENT_BUSY. Every tool answers with the
  * store's result as JSON text plus structuredContent; a protocol rejection
  * (docs/ANTI-SLOP.md `{ ok: false, rule, message }`) sets isError so the
- * calling agent reads the rule and does what the message says.
+ * calling agent reads the rule and does what the message says. Arguments that
+ * do not fit a tool's input schema are such a rejection too (SCHEMA): the
+ * server checks them itself instead of leaving it to the SDK.
  */
 import { readFileSync } from "node:fs";
 import { posix } from "node:path";
@@ -21,14 +23,20 @@ import {
   DECISION_BASES,
   MESSAGE_TYPES,
   STATUS_TASK_STATUSES,
+  SchemaError,
+  describeIssue,
   evidenceItemSchema,
+  isMessageType,
   partialBudgetsSchema,
+  schemaMessage,
+  typedOnlyMessage,
   type AgentId,
   type MessageType,
   type Rejection,
 } from "../protocol/index.js";
 import {
   AgentLease,
+  CorruptVaultFileError,
   MAX_WAIT_MS,
   NoGoalError,
   VaultStore,
@@ -86,15 +94,53 @@ function logError(error: unknown): void {
   console.error(`diarchy-mcp: ${error instanceof Error ? (error.stack ?? error.message) : String(error)}`);
 }
 
-/** Run a tool body; NoGoalError becomes NO_GOAL, anything else INTERNAL. The server never crashes on a bad input. */
+/** A stored vault file will not parse: say so, and send the PM to the human instead of a retry. */
+function corruptFileText(error: CorruptVaultFileError): string {
+  return `${error.message} The vault is damaged, not your draft, so do not retry. Post BLOCKED with kind external naming that file so the human can fix it or run diarchy stop.`;
+}
+
+/**
+ * Run a tool body; NoGoalError becomes NO_GOAL, a CorruptVaultFileError (a
+ * vault file that will not parse) keeps its rule (SCHEMA, or TYPED_ONLY for an
+ * unknown message type) with a message naming the file, anything else
+ * INTERNAL. The server never crashes on a bad input.
+ */
 async function runTool(body: () => Promise<object> | object): Promise<CallToolResult> {
   try {
     return toolResult(await body());
   } catch (error) {
     if (error instanceof NoGoalError) return toolResult(serverError("NO_GOAL", NO_GOAL_TEXT));
     logError(error);
+    if (error instanceof CorruptVaultFileError) return toolResult({ ok: false, rule: error.rule, message: corruptFileText(error) } satisfies Rejection);
+    if (error instanceof SchemaError) return toolResult({ ok: false, rule: error.rule, message: error.message } satisfies Rejection);
     return toolResult(serverError("INTERNAL", error instanceof Error ? error.message : String(error)));
   }
+}
+
+type InputShape = Record<string, z.ZodType>;
+
+/**
+ * The input schema a tool registers with the SDK: every declared field as an
+ * optional z.unknown(), carrying the declared object's JSON Schema as metadata.
+ * tools/list advertises exactly the declared schema, but the SDK's own input
+ * check, which answers a mismatch with a plain-text -32602 error and no rule,
+ * always passes, and the handler parses the declared shape itself.
+ */
+function advertisedSchema(shape: InputShape) {
+  const json = z.toJSONSchema(z.object(shape), { target: "draft-7", io: "input" });
+  delete json.$schema;
+  return z.object(Object.fromEntries(Object.keys(shape).map((key) => [key, z.unknown().optional()]))).meta(json);
+}
+
+/**
+ * Arguments that do not fit the declared shape: ANTI-SLOP.md SCHEMA naming the
+ * first bad field, or TYPED_ONLY for a post whose type is not a message type,
+ * as the engine answers the same message.
+ */
+function inputRejection(error: z.ZodError, args: Record<string, unknown>): Rejection {
+  const { field, problem } = describeIssue(error.issues[0], args);
+  if (field === "type" && args.type !== undefined && !isMessageType(args.type)) return { ok: false, rule: "TYPED_ONLY", message: typedOnlyMessage(args.type) };
+  return { ok: false, rule: "SCHEMA", message: schemaMessage(field, problem) };
 }
 
 /** The active goal, else the newest, as the store's own read path does. */
@@ -126,17 +172,6 @@ export function createMcpServer(options: McpServerOptions): McpServer {
   const config = loadConfig(projectDir);
   const store = options.store ?? new VaultStore({ projectDir, config, agent, ...(options.now === undefined ? {} : { now: options.now }) });
   const server = new McpServer({ name: "diarchy", version: VERSION }, { capabilities: { logging: {} }, instructions: INSTRUCTIONS });
-  const lease = new AgentLease(agent);
-  server.server.onclose = () => lease.release();
-
-  /** AGENT_BUSY while another live server acts as this agent on the current goal; claims the goal otherwise. */
-  const busy = (): ServerError | null => {
-    const goal = currentGoal(store);
-    const holder = goal === null ? null : lease.claim(goal.paths);
-    return holder === null ? null : serverError("AGENT_BUSY", agentBusyText(agent, holder));
-  };
-  /** Run a tool body as this agent: refused with AGENT_BUSY unless this server holds the goal. */
-  const asAgent = (body: () => Promise<object> | object): Promise<CallToolResult> => run(() => busy() ?? body());
 
   /** The wait_for_reply this server has in flight, if any: one agent, one wait. */
   let waiting: AbortController | null = null;
@@ -152,15 +187,40 @@ export function createMcpServer(options: McpServerOptions): McpServer {
     return runTool(body);
   };
 
-  server.registerTool(
+  const lease = new AgentLease(agent);
+  server.server.onclose = () => lease.release();
+
+  /** AGENT_BUSY while another live server acts as this agent on the current goal; claims the goal otherwise. */
+  const busy = (): ServerError | null => {
+    const goal = currentGoal(store);
+    const holder = goal === null ? null : lease.claim(goal.paths);
+    return holder === null ? null : serverError("AGENT_BUSY", agentBusyText(agent, holder));
+  };
+  /** Run a tool body as this agent: refused with AGENT_BUSY unless this server holds the goal. */
+  const asAgent = (body: () => Promise<object> | object): Promise<CallToolResult> => run(() => busy() ?? body());
+
+  /** Register a tool whose arguments this server parses, so a malformed one is a rejection with a rule like any other. */
+  const register = <S extends InputShape>(
+    name: (typeof TOOL_NAMES)[number],
+    config: { title: string; description: string; inputSchema: S },
+    handler: (args: z.output<z.ZodObject<S>>, extra: Extra) => Promise<CallToolResult>,
+  ): void => {
+    const declared = z.object(config.inputSchema);
+    server.registerTool(name, { ...config, inputSchema: advertisedSchema(config.inputSchema) }, (args, extra) => {
+      const parsed = declared.safeParse(args);
+      return parsed.success ? handler(parsed.data, extra) : run(() => inputRejection(parsed.error, args));
+    });
+  };
+
+  register(
     "kickoff",
     {
       title: "Kick off a goal",
       description:
-        "Start the one goal this vault will run; you become lead and the other agent challenger. Use only when read returns NO_GOAL and a human gave you a goal. Goal text 120 words max, each criterion 40 words max; criteria become AC1.. and are never reworded. Rejected with SINGLE_KICKOFF while a goal is PLAN, EXECUTE, or BLOCKED. Then post a PROPOSE with decision_id plan.",
+        "Start a goal; you become lead and the other agent challenger. Use when read returns NO_GOAL or a goal in phase DONE, and a human gave you a goal. Goal text 120 words max on one line, each criterion 40 words max on one line (no line terminators: CR, LF, VT, FF, U+0085, U+2028, U+2029); criteria become AC1.. and are never reworded. Rejected with SINGLE_KICKOFF while a goal is PLAN, EXECUTE, or BLOCKED. Then post a PROPOSE with decision_id plan.",
       inputSchema: {
-        goal: z.string().describe("Goal text; becomes the KICKOFF body."),
-        acceptance_criteria: z.array(z.string()).describe("Testable criteria, one line each, in order."),
+        goal: z.string().describe("Goal text as one paragraph on one line; becomes the KICKOFF body. Must not contain CR, LF, VT, FF, U+0085, U+2028, or U+2029, or start with `- AC<n>: ` (SCHEMA)."),
+        acceptance_criteria: z.array(z.string()).describe("Testable criteria in order, each on one line: no CR, LF, VT, FF, U+0085, U+2028, or U+2029 (SCHEMA)."),
         budgets: partialBudgetsSchema.optional().describe("Per-goal overrides of the diarchy.config.json budgets."),
         slug: z.string().optional().describe("[a-z0-9-]{1,40} for the goal id; default derived from the goal text."),
       },
@@ -174,7 +234,7 @@ export function createMcpServer(options: McpServerOptions): McpServer {
       }),
   );
 
-  server.registerTool(
+  register(
     "post",
     {
       title: "Post a message",
@@ -200,7 +260,7 @@ export function createMcpServer(options: McpServerOptions): McpServer {
       }),
   );
 
-  server.registerTool(
+  register(
     "decide",
     {
       title: "Decide a thread",
@@ -222,7 +282,7 @@ export function createMcpServer(options: McpServerOptions): McpServer {
     (args) => asAgent(() => store.post({ ...args, type: "DECIDE", to: "all", re: args.re ?? [] })),
   );
 
-  server.registerTool(
+  register(
     "assign",
     {
       title: "Assign work",
@@ -253,12 +313,12 @@ export function createMcpServer(options: McpServerOptions): McpServer {
       }),
   );
 
-  server.registerTool(
+  register(
     "status",
     {
       title: "Report work",
       description:
-        "Post a STATUS with evidence: the only message that counts as work. Use it when a commit lands, a PR opens, tests run, or a review is done; it resets the talk budget that otherwise blocks further discussion in EXECUTE. In EXECUTE a test item with result pass or fail sets the status of every AC in re (DONE needs every AC passing this way), so cite exactly the criteria the test covers. A review item is the only thing that counts as a review and must come from a non-author. Name task and task_status when the work belongs to a task.",
+        "Post a STATUS with evidence: the only message that counts as work. Use it when a commit lands, a PR opens, tests run, or a review is done; with a commit, pr, review, or a passing or failing test it resets the talk budget that otherwise blocks further discussion in EXECUTE (a pending test, file, or link alone does not). In EXECUTE a test item with result pass or fail sets the status of every AC in re (DONE needs every AC passing this way), so cite exactly the criteria the test covers. A review item is the only thing that counts as a review and must come from a non-author. Name task and task_status when the work belongs to a task.",
       inputSchema: {
         re,
         task: z.string().optional().describe("Task id T<n> this reports on."),
@@ -270,7 +330,7 @@ export function createMcpServer(options: McpServerOptions): McpServer {
     (args) => asAgent(() => store.post({ ...args, type: "STATUS", to: "all", re: args.re ?? [] })),
   );
 
-  server.registerTool(
+  register(
     "read",
     {
       title: "Read the chat",
@@ -281,7 +341,7 @@ export function createMcpServer(options: McpServerOptions): McpServer {
     (args) => asAgent(() => store.read(args) ?? serverError("NO_GOAL", NO_GOAL_TEXT)),
   );
 
-  server.registerTool(
+  register(
     "wait_for_reply",
     {
       title: "Wait for a reply",

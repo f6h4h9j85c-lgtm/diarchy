@@ -23,7 +23,6 @@ import {
   totalBudgetReached,
   type LimitHit,
 } from "./state.js";
-import { truncateWords } from "./text.js";
 import {
   AGENT_HUMAN,
   AGENT_SYSTEM,
@@ -35,6 +34,7 @@ import {
   type DecisionStatus,
   type DiarchyConfig,
   type Effect,
+  type EvidenceItem,
   type GoalState,
   type Kickoff,
   type Message,
@@ -107,12 +107,19 @@ function accept(ctx: RuleContext): Acceptance {
 
 const TALK_EXEMPT: MessageType[] = ["STATUS", "BLOCKED", "DONE"];
 
+/** PROTOCOL.md 3.1 work evidence: a commit, pr, or review, or a test that passed or failed. */
+function isWorkEvidence(item: EvidenceItem): boolean {
+  if (item.kind === "test") return item.result !== "pending";
+  return item.kind === "commit" || item.kind === "pr" || item.kind === "review";
+}
+
 function applyCounters(state: GoalState, message: Message): void {
   if (!isPm(state, message.from)) return;
   state.used.messages_total += 1;
   if (state.phase === "PLAN" && message.type !== "KICKOFF") state.used.plan_messages += 1;
   if (message.type === "STATUS") {
-    state.used.talk_since_work = 0;
+    // A STATUS without work evidence is accepted but neither counts nor resets (section 8).
+    if ((message.evidence ?? []).some(isWorkEvidence)) state.used.talk_since_work = 0;
   } else if (state.phase === "EXECUTE" && !TALK_EXEMPT.includes(message.type) && !repliesToOpenChallenge(state, message)) {
     state.used.talk_since_work += 1;
   }
@@ -323,12 +330,18 @@ function applyTest(state: GoalState, re: string[], result: "pass" | "fail", effe
   }
 }
 
+/** The BLOCKED body as one sentence: its first 100 words, ending in `.`, or in `...` when cut. */
+function blockedSummary(body: string): string {
+  const words = body.trim().split(/\s+/).filter((word) => word !== "");
+  const text = words.slice(0, ASK_HUMAN_BODY_WORDS).join(" ").replace(/[.!?]+$/, "");
+  return words.length > ASK_HUMAN_BODY_WORDS ? `${text} ...` : `${text}.`;
+}
+
 function applyBlocked(state: GoalState, message: Message, effects: Effect[]): void {
   if (message.kind !== "external") return;
-  const summary = truncateWords(message.body, ASK_HUMAN_BODY_WORDS).replace(/[.!?]+$/, "");
   block(state, effects, "BLOCKED", {
     re: message.re,
-    body: `${message.from} is BLOCKED (external): ${summary}. ${HUMAN_PAGED}`,
+    body: `${message.from} is BLOCKED (external): ${blockedSummary(message.body)} ${HUMAN_PAGED}`,
     reply_to: message.id,
     decision_id: null,
   });

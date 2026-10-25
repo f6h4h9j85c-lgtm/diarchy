@@ -742,11 +742,14 @@ export type ShapeRule = "SCHEMA" | "TYPED_ONLY";
 export type ShapeResult = {
     ok: true;
     message: Message;
-} | {
+}
+/** `problem` is `message` without the advice to the poster, for a stored file that will not parse. */
+ | {
     ok: false;
     rule: ShapeRule;
     message: string;
     field: string | null;
+    problem: string;
 };
 export interface FieldProblem {
     field: string;
@@ -755,6 +758,8 @@ export interface FieldProblem {
 export declare function schemaMessage(field: string, problem: string): string;
 export declare function typedOnlyMessage(type: unknown): string;
 export declare function isMessageType(type: unknown): type is MessageType;
+/** The field a zod issue points at and what is wrong with it, for a SCHEMA message. */
+export declare function describeIssue(issue: z.core.$ZodIssue, input: unknown): FieldProblem;
 /** Cross-field requirements PROTOCOL.md section 3 states in prose. */
 export declare function conditionalProblem(message: Message): FieldProblem | null;
 /**
@@ -766,7 +771,9 @@ export declare function checkMessageShape(input: unknown): ShapeResult;
 export declare class SchemaError extends Error {
     readonly rule: ShapeRule;
     readonly field: string | null;
-    constructor(rule: ShapeRule, message: string, field?: string | null);
+    /** What is wrong, without the advice to fix and post again: a stored file is not the caller's draft. */
+    readonly problem: string;
+    constructor(rule: ShapeRule, message: string, field?: string | null, problem?: string);
 }
 export interface SplitFile {
     frontmatter: Record<string, unknown>;
@@ -800,7 +807,21 @@ export declare const kickoffFrontmatterSchema: z.ZodObject<{
     created: z.ZodString;
     by: z.ZodString;
 }, z.core.$strict>;
-/** Parse kickoff.md: frontmatter, goal text, and the `- AC<n>: <criterion>` lines. */
+/** A `- AC<n>: <criterion>` line of kickoff.md; the store refuses a goal text shaped like one. */
+export declare const AC_LINE_PATTERN: RegExp;
+/**
+ * Every Unicode line terminator: CR, LF, VT, FF, NEL (U+0085), LS (U+2028),
+ * PS (U+2029). kickoff.md is line based, so the store refuses a goal or
+ * criterion containing one; `.` in AC_LINE_PATTERN stops at CR, LF, LS, PS,
+ * and editors and other readers break lines at the rest.
+ */
+export declare const LINE_TERMINATOR: RegExp;
+/**
+ * Parse kickoff.md: frontmatter, goal text, and the `- AC<n>: <criterion>` lines.
+ * The criteria are the unbroken run of AC lines that ends the body; everything
+ * above it is goal text, so an AC-shaped line inside the goal (a hand-edited
+ * file) stays goal text instead of shifting the numbering.
+ */
 export declare function parseKickoffFile(text: string): Kickoff;
 export declare const configSchema: z.ZodObject<{
     protocol_version: z.ZodLiteral<1>;

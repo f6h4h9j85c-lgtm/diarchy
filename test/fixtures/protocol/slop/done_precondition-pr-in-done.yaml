@@ -1,0 +1,29 @@
+description: "DONE_PRECONDITION (c): every recorded PR is cross-approved, but the DONE cites PR 414, which no STATUS registered and nobody reviewed."
+state:
+  base: execute-ready
+message:
+  protocol_version: 1
+  id: 20261025T163000Z-0009-claude-DONE
+  goal: 20261025-rate-limit
+  from: claude
+  to: all
+  type: DONE
+  re:
+    - AC1
+    - AC2
+    - AC3
+  evidence:
+    - kind: commit
+      sha: 1c0ffee42
+    - kind: pr
+      url: https://github.com/acme/api/pull/414
+    - kind: test
+      test: npm test
+      result: pass
+  phase: EXECUTE
+  ts: 2026-10-25T16:30:00Z
+  body: PRs 412, 413, and 414 merged to main.
+expect:
+  ok: false
+  rule: DONE_PRECONDITION
+  message: "Not done: PR https://github.com/acme/api/pull/414 was never posted in a STATUS or reviewed. Finish every task, post STATUS with passing tests for each AC, and get the other agent's approve review on each PR."

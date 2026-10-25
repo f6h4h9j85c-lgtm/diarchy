@@ -93,7 +93,9 @@ program
   .option("--agents <ids>", "comma-separated agent ids", "claude,codex")
   .option("--force", "overwrite an existing diarchy.config.json")
   .option("--codex-full-access", "launch the Codex PM without its sandbox, with your full OS permissions (default: sandboxed, cannot commit)")
-  .action((options: { vault?: string; agents?: string; force?: boolean; codexFullAccess?: boolean }) => exitWith(() => runInit(projectDir({ walkUp: false }), options)));
+  .action((options: { vault?: string; agents?: string; force?: boolean; codexFullAccess?: boolean }) =>
+    exitWith(() => runInit(projectDir({ walkUp: false }), options)),
+  );
 
 const kickoffOptions = (command: Command): Command =>
   command

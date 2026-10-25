@@ -169,10 +169,13 @@ export function authoredPr(state: GoalState, agent: AgentId | null): boolean {
   return agent !== null && Object.values(state.prs).some((pr) => pr.author === agent);
 }
 
-/** The PR an agent still owes a review on, if any (BUSY_REVIEWING). */
+/**
+ * The PR an agent still owes a review on, if any (BUSY_REVIEWING). Only that
+ * agent's `review` evidence settles it: a STATUS marking the task done does not.
+ */
 export function pendingReviewUrl(state: GoalState, agent: AgentId): string | undefined {
   for (const task of Object.values(state.tasks)) {
-    if (task.kind !== "review" || task.assignee !== agent || task.status === "done" || task.pr === null) continue;
+    if (task.kind !== "review" || task.assignee !== agent || task.pr === null) continue;
     const reviewed = state.prs[task.pr]?.reviews.some((review) => review.by === agent) ?? false;
     if (!reviewed) return task.pr;
   }
@@ -211,20 +214,30 @@ export function roleAllows(state: GoalState, role: Role, type: MessageType): boo
   return ROLE_TYPES[role].includes(type);
 }
 
-const TALK_GATED_EXEMPT: MessageType[] = ["STATUS", "BLOCKED", "DONE", "DECIDE"];
+const TALK_GATED_EXEMPT: MessageType[] = ["STATUS", "BLOCKED", "DONE"];
 
-/** Types the agent may post now, after phase, role, and budget gates. */
+/** A PM DECIDE needs a thread with a PROPOSE or a decided one to supersede, unless PLAN_BUDGET is spent (TWO_ROUNDS). */
+function decideHasTarget(state: GoalState): boolean {
+  return planBudgetSpent(state) || Object.values(state.decisions).some((d) => d.status !== "open" || d.messages > 0);
+}
+
+/** Types the agent may post now, after phase, role, thread, and budget gates. */
 export function allowedTypes(state: GoalState, agent: AgentId): MessageType[] {
   const role = roleOf(state, agent);
   if (state.kickoff_id === null) return roleAllows(state, role, "KICKOFF") ? ["KICKOFF"] : [];
   let types = PHASE_TYPES[state.phase].filter((type) => roleAllows(state, role, type));
   if (!isPm(state, agent)) return types;
   if (totalBudgetReached(state)) return [];
+  if (!decideHasTarget(state)) types = types.filter((type) => type !== "DECIDE");
+  // PHASE_GATE: the lead owes a DECIDE on the watched thread before the next CHALLENGE.
+  if (state.deadlock_watch !== null) types = types.filter((type) => type !== "CHALLENGE");
   if (state.phase === "PLAN" && planBudgetSpent(state)) {
     types = types.filter((type) => type === "BLOCKED" || (type === "DECIDE" && role === "lead"));
   }
   if (state.phase === "EXECUTE" && talkRatioReached(state)) {
-    types = types.filter((type) => TALK_GATED_EXEMPT.includes(type));
+    // Only a DECIDE answering an open CHALLENGE is exempt (TALK_WORK_RATIO).
+    const challengeOpen = Object.values(state.decisions).some((decision) => decision.challenge !== null);
+    types = types.filter((type) => TALK_GATED_EXEMPT.includes(type) || (type === "DECIDE" && challengeOpen));
   }
   return types;
 }

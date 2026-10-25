@@ -91,11 +91,4 @@ export function oneLine(text, maxChars = ONE_LINE_MAX_CHARS) {
     const flat = Array.from(chars.join("").replace(/\s+/g, " ").trim());
     return flat.length <= maxChars ? flat.join("") : `${flat.slice(0, maxChars - 1).join("").trimEnd()}…`;
 }
-/** First `max` whitespace-split tokens, with an ellipsis when cut. */
-export function truncateWords(text, max) {
-    const words = text.trim().split(/\s+/).filter((word) => word !== "");
-    if (words.length <= max)
-        return words.join(" ");
-    return `${words.slice(0, max).join(" ")} ...`;
-}
 //# sourceMappingURL=text.js.map

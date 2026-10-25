@@ -1,0 +1,57 @@
+description: "SCHEMA: a CHALLENGE on plan after the lead superseded it with D1. No DECIDE could answer it (plan is immutable and only D1 can be superseded), so the deadlock watch it armed would always fire; challenge D1 instead."
+state:
+  base: execute
+  decisions:
+    plan:
+      status: decided
+      proposer: claude
+      messages: 1
+      challenges: 0
+      supersedes: null
+      superseded_by: null
+      evidence: []
+      challenge: null
+prior:
+  - message:
+      protocol_version: 1
+      id: 20261025T140900Z-0004-claude-DECIDE
+      goal: 20261025-rate-limit
+      from: claude
+      to: all
+      type: DECIDE
+      re:
+        - AC1
+      supersedes: plan
+      basis: authority
+      claim: Use an in-process bucket because the API runs one replica.
+      evidence:
+        - kind: external
+          url: https://wiki.example/ops/api-replicas
+      phase: EXECUTE
+      ts: 2026-10-25T14:09:00Z
+      body: Ops confirmed a single replica until Q4.
+message:
+  protocol_version: 1
+  id: 20261025T141000Z-0002-codex-CHALLENGE
+  goal: 20261025-rate-limit
+  from: codex
+  to: claude
+  type: CHALLENGE
+  re:
+    - AC1
+  reply_to: 20261025T140730Z-0002-claude-DECIDE
+  decision_id: plan
+  claim: A Redis-backed bucket is unreachable from the API pods.
+  evidence:
+    - kind: test
+      test: redis-cli -h redis ping from an api pod
+      result: fail
+  phase: EXECUTE
+  ts: 2026-10-25T14:10:00Z
+  body: ""
+expect:
+  ok: false
+  rule: SCHEMA
+  message: 'Field "decision_id": plan is superseded by D1; challenge that instead. Fix it per PROTOCOL.md section 3 and post again.'
+  state:
+    deadlock_watch: null

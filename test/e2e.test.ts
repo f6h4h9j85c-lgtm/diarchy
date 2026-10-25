@@ -456,6 +456,10 @@ describe("inbox-skim and gate", () => {
     claude.read();
     const caughtUp = await cli(["gate", "--agent", "claude", "--project", dir], { input: "{}" });
     expect(caughtUp.stdout).toBe("");
+    // A silent challenger is legal: the lead's brief bounds the wait and names the basis to DECIDE on.
+    const waiting = await cli(["inbox-skim", "--agent", "claude", "--project", dir]);
+    expect(waiting.stdout).toContain("next: wait_for_reply for a CHALLENGE; after two timeouts with none");
+    expect(waiting.stdout).toContain("call decide with decision_id plan (basis authority, body: no CHALLENGE came)");
   });
 
   it("gate blocks the lead while a CHALLENGE awaits DECIDE, until the 12-block cap", async () => {

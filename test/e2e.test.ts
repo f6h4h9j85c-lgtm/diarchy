@@ -347,6 +347,33 @@ describe("start --driver fake (slop)", () => {
 });
 
 // ---------------------------------------------------------------------------
+// start while a goal is already active
+// ---------------------------------------------------------------------------
+
+describe("start with a goal already active", () => {
+  it("refuses a new goal text or kickoff option instead of running the old goal, in PLAN too", async () => {
+    const dir = await initProject("sleeper", false);
+    const kick = await cli(["kickoff", "Old goal about caching", "--ac", "old criterion", "--lead", "claude", "--project", dir]);
+    expect(kick.code, kick.stderr).toBe(0);
+    const goalId = goalPaths(dir).goalId;
+    expect(goalState(dir).phase).toBe("PLAN");
+
+    for (const args of [["Totally different goal", "--ac", "new criterion"], ["--lead", "codex"]]) {
+      const run = await cli(["start", ...args, "--driver", "fake", "--no-worktrees", "--project", dir]);
+      expect(run.code, run.stdout).toBe(1);
+      expect(run.stderr).toContain(`${goalId} is already active (phase PLAN)`);
+      expect(run.stderr).toContain("run diarchy start with no goal text or kickoff options to attach");
+      expect(run.stdout).not.toContain("attached to");
+      expect(run.stdout).not.toContain("started");
+    }
+    const after = goalState(dir);
+    expect(after.messages.map((message) => message.type)).toEqual(["KICKOFF"]);
+    expect(after.lead).toBe("claude");
+    expect(existsSync(join(dir, ".diarchy", "start.pid"))).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Hooks: inbox-skim and gate
 // ---------------------------------------------------------------------------
 

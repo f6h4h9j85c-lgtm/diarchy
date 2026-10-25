@@ -1,0 +1,39 @@
+description: "The challenger stayed silent: the lead DECIDEs plan on basis authority, saying so in the body (PROPOSE -> DECIDE): PLAN -> EXECUTE."
+state:
+  base: plan-proposed
+message:
+  protocol_version: 1
+  id: 20261025T140630Z-0002-claude-DECIDE
+  goal: 20261025-rate-limit
+  from: claude
+  to: all
+  type: DECIDE
+  re:
+    - AC1
+    - AC2
+    - AC3
+  decision_id: plan
+  claim: Use the Redis-backed token bucket because the API runs three replicas.
+  basis: authority
+  tasks:
+    - Token-bucket middleware in src/middleware/rateLimit.ts
+    - RATE_LIMIT_PER_MIN config, default 100
+    - Tests for 429 and config override; full suite green
+  phase: PLAN
+  ts: 2026-10-25T14:06:30Z
+  body: No CHALLENGE came after two wait_for_reply timeouts, so there is no test to run.
+expect:
+  ok: true
+  phase_after: EXECUTE
+  effects:
+    - kind: decision_closed
+      id: plan
+      supersedes: null
+    - kind: phase
+      from: PLAN
+      to: EXECUTE
+  state:
+    decisions:
+      plan:
+        status: decided
+        challenges: 0

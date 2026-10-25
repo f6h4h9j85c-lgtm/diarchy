@@ -58,6 +58,17 @@ export function runningSupervisor(projectDir: string): number | null {
   }
 }
 
+/** The kickoff inputs given on the command line; they only mean something when no goal is active. */
+function newGoalArgs(goalText: string | undefined, options: KickoffCliOptions): string[] {
+  const given: string[] = [];
+  if (goalText !== undefined) given.push("the goal text");
+  if (options.ac.length > 0) given.push("--ac");
+  if (options.lead !== undefined) given.push("--lead");
+  if (options.budget.length > 0) given.push("--budget");
+  if (options.slug !== undefined) given.push("--slug");
+  return given;
+}
+
 function parseDriver(value: string): DriverName {
   if (value === "real" || value === "fake") return value;
   throw new CliError(`--driver must be real or fake, got "${value}"`);
@@ -81,6 +92,12 @@ export async function runStart(projectDir: string, goalText: string | undefined,
     if (goal === null) throw new CliError("kickoff succeeded but no active goal was found");
     console.log(`${nowHms()} kickoff ${result.goal_id} · lead ${result.lead} · challenger ${result.challenger}`);
   } else {
+    const kickoffArgs = newGoalArgs(goalText, options);
+    if (kickoffArgs.length > 0) {
+      throw new CliError(
+        `${goal.goalId} is already active (phase ${goal.phase}), so ${kickoffArgs.join(", ")} would be ignored; run diarchy start with no goal text or kickoff options to attach to it`,
+      );
+    }
     console.log(`${nowHms()} attached to ${goal.goalId} (phase ${goal.phase}, lead ${goal.lead})`);
     if (goal.phase === "BLOCKED") {
       const state = human.state();
@@ -88,9 +105,6 @@ export async function runStart(projectDir: string, goalText: string | undefined,
       if (state !== null) console.log(`${nowHms()} human needed: ${blockSummary(state, messages)}. Run: ${replyHint(state, messages) ?? "diarchy reply"}`);
       return EXIT_BLOCKED;
     }
-  }
-  if (goalText !== undefined && goal.phase !== "PLAN" && options.ac.length > 0) {
-    console.log(`${nowHms()} note: goal text and --ac ignored; ${goal.goalId} is already active`);
   }
 
   const worktrees = prepareWorktrees(projectDir, config, goal.goalId, agents, options.worktrees);

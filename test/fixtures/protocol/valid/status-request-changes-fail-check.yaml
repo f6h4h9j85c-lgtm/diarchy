@@ -1,0 +1,46 @@
+description: "Reviewer requests changes as diarchy-review step 5 says (re = only the unmet AC, a fail check, no pass item): the unmet AC reads failing, the met one keeps passing, the review task closes."
+state:
+  base: execute-review-assigned
+message:
+  protocol_version: 1
+  id: 20261025T152000Z-0005-claude-STATUS
+  goal: 20261025-rate-limit
+  from: claude
+  to: all
+  type: STATUS
+  re:
+    - AC2
+  task: T4
+  task_status: done
+  evidence:
+    - kind: review
+      url: https://github.com/acme/api/pull/412
+      verdict: request_changes
+    - kind: test
+      test: grep -n RATE_LIMIT_PER_MIN src/middleware/rateLimit.ts finds no read of the variable
+      result: fail
+  phase: EXECUTE
+  ts: 2026-10-25T15:20:00Z
+  body: src/middleware/rateLimit.ts hardcodes 100, so AC2 fails.
+expect:
+  ok: true
+  phase_after: EXECUTE
+  effects:
+    - kind: ac_status
+      ac: AC2
+      status: failing
+    - kind: task
+      id: T4
+      status: done
+  state:
+    acs:
+      AC1:
+        status: passing
+      AC2:
+        status: failing
+    prs:
+      https://github.com/acme/api/pull/412:
+        author: codex
+        reviews:
+          - by: claude
+            verdict: request_changes

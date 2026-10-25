@@ -438,6 +438,23 @@ describe("codex-config: skills", () => {
     const words = readFileSync(at("skills", "diarchy-pm", "SKILL.md"), "utf8").split(/\s+/).filter(Boolean).length;
     expect(words).toBeLessThan(900);
   });
+
+  it("diarchy-pm bounds the lead's wait on a silent challenger and names the basis to DECIDE on", () => {
+    const text = readFileSync(at("skills", "diarchy-pm", "SKILL.md"), "utf8");
+    const plan = text.slice(text.indexOf("## PLAN phase"), text.indexOf("## EXECUTE phase"));
+    expect(plan).toContain("After two `{ timeout: true }` with none, or once the challenger posts something else, DECIDE.");
+    expect(plan).toContain("`authority` when no CHALLENGE came");
+    expect(plan).toContain("after 4 quiet minutes the lead decides");
+  });
+
+  it("diarchy-review checks out the PR detached and keeps a request_changes STATUS from marking ACs passing", () => {
+    const text = readFileSync(at("skills", "diarchy-review", "SKILL.md"), "utf8");
+    expect(text).toContain("git checkout --detach FETCH_HEAD");
+    expect(text).toContain("git checkout --detach <branch>");
+    expect(text).not.toMatch(/&& git checkout <branch>`/);
+    expect(text).toContain("`request_changes`: `re` = only the unmet ACs, each backed by a `test` item with `result: fail`");
+    expect(text).toContain("no `pass` items");
+  });
 });
 
 describe("codex-config: prose", () => {

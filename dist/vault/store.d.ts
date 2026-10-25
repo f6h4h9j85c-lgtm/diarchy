@@ -1,6 +1,6 @@
 import { type AgentId, type GoalState, type Kickoff, type Message } from "../protocol/index.js";
 import type { GoalRef, KickoffInput, KickoffResult, MessageDraft, PostResult, ReadResult, ReplyOptions, VaultStoreOptions, WaitOptions, WaitResult } from "./types.js";
-export declare const LOCK_STALE_MS = 30000;
+export { LOCK_STALE_MS } from "./lock.js";
 export declare const MAX_WAIT_MS = 110000;
 export declare const PROGRESS_MS = 15000;
 export declare const DEFAULT_POLL_MS = 500;
@@ -14,9 +14,17 @@ export declare class VaultStore {
     private readonly pollIntervalMs;
     /** Per goal directory: chat/ files the open transaction wrote since its last budget.json commit. */
     private readonly uncommitted;
+    /** budget.json files already reported as unreadable, so a poll loop warns once. */
+    private readonly warned;
     constructor(options: VaultStoreOptions);
-    /** Every goal with a budget.json, oldest first. */
+    /**
+     * Every goal with a readable budget.json, oldest first. A goal whose
+     * budget.json does not parse (damaged, or another protocol_version) is
+     * skipped with one stderr warning naming the file, so it cannot take the
+     * rest of the vault down with it (PROTOCOL.md 2.3).
+     */
     listGoals(): GoalRef[];
+    private warnUnreadable;
     /** The one goal in PLAN, EXECUTE, or BLOCKED, if any. */
     activeGoal(): GoalRef | null;
     /** The active goal, else the newest (so `read` keeps working after DONE). */
@@ -27,8 +35,24 @@ export declare class VaultStore {
     readKickoff(): Kickoff | null;
     /** Re-render goal.md, chat.md, decisions.md from the files on disk. */
     render(): void;
+    /**
+     * Start a goal. The whole kickoff runs under the vault lock (goals/.lock), so
+     * two PMs kicking off at once cannot both start a goal: the second sees the
+     * first one active and gets SINGLE_KICKOFF.
+     */
     kickoff(input: KickoffInput): Promise<KickoffResult>;
+    private kickoffLocked;
     private kickoffProblem;
+    /**
+     * `<YYYYMMDD>-<slug>`, slug from `slug` or the goal text (a time-based
+     * `goal-HHMMSS` when the text has no Latin letters or digits). Under the vault
+     * lock no goal is active, so an id that is taken belongs to a finished or
+     * abandoned goal: the slug gets the first free `-2`, `-3`, ... suffix instead.
+     * An explicit `goal_id` is used as given or refused.
+     */
+    private newGoalId;
+    /** kickoff never reuses a goal directory that holds a kickoff.md or a budget.json. */
+    private goalIdTaken;
     /** A PM kicking off leads; the launcher alternates from the previous goal's lead. */
     private defaultLead;
     /** One transaction (PROTOCOL.md 2.2): lock, recover, tick, evaluate, write, effects, persist (the commit), render. */
@@ -79,13 +103,13 @@ export declare class VaultStore {
     private withLock;
     /** Under the lock: a chat/ file whose id budget.json does not record never committed; move it to chat/.orphans/. */
     private recoverOrphans;
-    private acquireLock;
     /** The store never writes a message whose ts is still in the future. */
     private waitUntil;
     /** chat/ files are writer-owned and immutable: own agent or system only, never overwritten. */
     private writeMessage;
     /** The committed messages: chat/ files whose id `state` records, in (ts, seq) order. Nothing else is read or rendered. */
     private readMessages;
+    /** budget.json of one goal; a file that does not parse throws an error naming it. */
     private loadState;
     /** The commit point: every chat/ file written so far is now accepted. */
     private persist;

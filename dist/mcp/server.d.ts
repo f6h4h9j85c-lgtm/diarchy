@@ -9,7 +9,7 @@ export interface McpServerOptions {
     now?: () => Date;
 }
 /** Error codes the server adds to the protocol's RuleId set (PROTOCOL.md section 10). */
-export declare const SERVER_ERRORS: readonly ["NO_GOAL", "WRONG_TOOL", "INTERNAL"];
+export declare const SERVER_ERRORS: readonly ["NO_GOAL", "WRONG_TOOL", "AGENT_BUSY", "INTERNAL"];
 export type ServerErrorCode = (typeof SERVER_ERRORS)[number];
 export interface ServerError {
     ok: false;

@@ -48,6 +48,7 @@ export function resolveVaultPaths(projectDir, config, goalId) {
         inboxDir,
         lock: join(goal, ".lock"),
         inbox: (agent) => join(inboxDir, `${agent}.json`),
+        lease: (agent) => join(inboxDir, `${agent}.lock`),
     };
 }
 //# sourceMappingURL=config.js.map

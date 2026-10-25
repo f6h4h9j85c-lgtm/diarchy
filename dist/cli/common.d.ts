@@ -13,8 +13,21 @@ export declare class CliError extends Error {
  * for its children and their hooks), else the cwd. A cwd inside
  * `.diarchy/worktrees/<agent>` resolves to the project that owns the worktree,
  * so hooks and the MCP server find the right vault from inside a worktree.
+ * Otherwise the nearest directory at or above the cwd that holds
+ * diarchy.config.json wins, so a command run from `<project>/src` reads the
+ * project's vault; `walkUp: false` (for `init`) keeps the cwd.
  */
-export declare function resolveProjectDir(option: string | undefined): string;
+export declare function resolveProjectDir(option: string | undefined, options?: {
+    walkUp?: boolean;
+}): string;
+/** The nearest directory at or above `start` holding diarchy.config.json. */
+export declare function findConfigDir(start: string): string | null;
+/**
+ * "No goal" for the human, naming the vault that was checked and, when the
+ * project has no diarchy.config.json, saying the defaults were used, so a
+ * command run from the wrong directory does not look like an empty vault.
+ */
+export declare function noGoalText(projectDir: string): string;
 /** A store posting as the human; `reply` and `stop` require it, every read works. */
 export declare function humanStore(projectDir: string, pollIntervalMs?: number): VaultStore;
 /** The active goal, else the newest one (so status and watch keep working after DONE). */

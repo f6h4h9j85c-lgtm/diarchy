@@ -110,7 +110,7 @@ Paragraph 1, state:
 ```
 
 - `<PHASE>` is the literal phase. In BLOCKED it is `**BLOCKED** from <blocked_from>`.
-- `<human slot>` is `no action needed` in PLAN, EXECUTE, DONE, and `**human needed** since <HH:MM:SS> UTC` in BLOCKED, using the ts of the message that put the run into BLOCKED (4.1).
+- `<human slot>` is `no action needed` in PLAN, EXECUTE, DONE, and `**human needed** since <HH:MM:SS> UTC` in BLOCKED, using the ts of the block's trigger: the latest ASK_HUMAN, or a later human BLOCKED from `diarchy stop`, which writes no ASK_HUMAN.
 - `<challenger>` is the agent that is not the lead; protocol_version 1 runs exactly two agents (PROTOCOL 11).
 
 Paragraph 2, budget line (1.4).
@@ -281,11 +281,9 @@ Paragraph 1, always:
 **Human needed** since <HH:MM:SS> UTC (<HH:MM> local). The run is BLOCKED (from <blocked_from>); nothing moves until you answer.
 ```
 
-The time is the ts of the message that put the run into BLOCKED: the latest ASK_HUMAN, or a human BLOCKED (`diarchy stop`) posted after it. The strip (2.1) and `## Status` (4.2) show the same time.
+Paragraph 2 and 3 depend on the trigger, read from the latest ASK_HUMAN and its `reply_to`, or from a later human BLOCKED (`diarchy stop`):
 
-Paragraph 2 and 3 depend on that message: an ASK_HUMAN read with its `reply_to`, or the human BLOCKED itself.
-
-External BLOCKED (`reply_to` is a BLOCKED message, or the message is a human BLOCKED, whose agent is `human`):
+External BLOCKED (`reply_to` is a BLOCKED message, or the trigger is the human BLOCKED itself):
 
 ```
 **<agent> is blocked (external), re <AC list>:**

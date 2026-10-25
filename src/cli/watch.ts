@@ -1,6 +1,6 @@
 /** `diarchy watch`: print each message's header line as it lands; exit on DONE/BLOCKED unless --follow. */
 import { sortMessages } from "../vault/render/shared.js";
-import { CliError, EXIT_BLOCKED, EXIT_OK, currentGoal, headerLine, humanStore, sleep } from "./common.js";
+import { CliError, EXIT_BLOCKED, EXIT_OK, currentGoal, headerLine, humanStore, noGoalText, sleep } from "./common.js";
 
 export interface WatchOptions {
   follow?: boolean;
@@ -15,7 +15,7 @@ export async function runWatch(projectDir: string, options: WatchOptions): Promi
   for (;;) {
     const goal = currentGoal(store);
     if (goal === null) {
-      if (options.follow !== true) throw new CliError("No goal in this vault. Run diarchy start or diarchy kickoff first.");
+      if (options.follow !== true) throw new CliError(`${noGoalText(projectDir)}. Run diarchy start or diarchy kickoff first.`);
       await sleep(POLL_MS);
       continue;
     }

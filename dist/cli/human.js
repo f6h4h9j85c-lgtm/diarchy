@@ -1,6 +1,6 @@
 /** `diarchy reply` and `diarchy stop`: the two things the human does to a running goal. */
 import { NoGoalError } from "../vault/index.js";
-import { EXIT_ERROR, EXIT_OK, humanStore, parseBudgets, printJson } from "./common.js";
+import { EXIT_ERROR, EXIT_OK, humanStore, noGoalText, parseBudgets, printJson } from "./common.js";
 import { runningSupervisor } from "./start.js";
 export async function runReply(projectDir, text, options) {
     const store = humanStore(projectDir);
@@ -27,7 +27,7 @@ export async function runReply(projectDir, text, options) {
 const DEFAULT_REASON = "Stopped by the human with diarchy stop.";
 export async function runStop(projectDir, options) {
     const store = humanStore(projectDir);
-    let stopped = { ok: false, detail: "no goal in this vault" };
+    let stopped = { ok: false, detail: noGoalText(projectDir) };
     try {
         const result = await store.stop(options.reason ?? DEFAULT_REASON);
         stopped = result.ok

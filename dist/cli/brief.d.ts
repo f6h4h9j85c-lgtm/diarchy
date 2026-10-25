@@ -1,0 +1,38 @@
+import { type AgentId, type GoalState, type Message, type TaskStatus } from "../protocol/index.js";
+import type { GoalRef } from "../vault/index.js";
+export interface Assignment {
+    task: string;
+    kind: "implement" | "review";
+    text: string;
+    assignee: AgentId;
+    branch: string | null;
+    pr: string | null;
+    status: TaskStatus;
+}
+/** Tasks still owed: implement tasks not done, review tasks with no review evidence from the assignee yet. */
+export declare function openAssignments(state: GoalState, agent?: AgentId): Assignment[];
+/** Open threads whose CHALLENGE still awaits the lead's DECIDE. */
+export declare function challengedThreads(state: GoalState): {
+    id: string;
+    from: AgentId;
+    challengeId: string;
+}[];
+/** Messages after the agent's inbox cursor, excluding its own. Reads the cursor file; never moves it. */
+export declare function unreadFor(goal: GoalRef, messages: Message[], agent: AgentId): Message[];
+/**
+ * The `diarchy reply` invocation that answers the current block, mirroring the
+ * goal.md question callout (RENDERING.md 4.1). Null unless BLOCKED.
+ */
+export declare function replyHint(state: GoalState, messages: Message[]): string | null;
+/** Why the run is BLOCKED, in one short clause. */
+export declare function blockSummary(state: GoalState, messages: Message[]): string;
+/** Which store trigger blocked the run: WALL_CLOCK (clock or spend), TOTAL_BUDGET, DEADLOCK, BLOCKED, or STOP. */
+export declare function blockReason(state: GoalState, messages: Message[]): "WALL_CLOCK" | "TOTAL_BUDGET" | "DEADLOCK" | "BLOCKED" | "STOP";
+export interface NextStep {
+    /** Imperative, names the MCP tool to call. */
+    text: string;
+    /** True when the agent owes the goal something now (the Stop gate blocks on this). */
+    owes: boolean;
+}
+/** The imperative next step for `agent`, in priority order. */
+export declare function nextStep(state: GoalState, messages: Message[], agent: AgentId, unread: Message[]): NextStep;

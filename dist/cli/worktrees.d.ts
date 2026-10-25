@@ -1,0 +1,21 @@
+import type { DiarchyConfig } from "../protocol/index.js";
+export interface GitResult {
+    ok: boolean;
+    stdout: string;
+    stderr: string;
+}
+export declare function git(cwd: string, args: string[]): GitResult;
+export declare function isGitRepo(dir: string): boolean;
+export declare function hasCommits(dir: string): boolean;
+export interface WorktreeResult {
+    agent: string;
+    path: string;
+    branch: string;
+    /** created | reused | switched | kept (existing worktree on another branch that could not be switched) */
+    outcome: "created" | "reused" | "switched" | "kept";
+    note: string | null;
+}
+export declare function worktreePath(projectDir: string, config: DiarchyConfig, agent: string): string;
+export declare function branchName(config: DiarchyConfig, goalId: string, agent: string): string;
+/** One worktree per agent; prunes stale registrations first. Throws when git itself fails. */
+export declare function ensureWorktrees(projectDir: string, config: DiarchyConfig, goalId: string, agents: string[]): WorktreeResult[];

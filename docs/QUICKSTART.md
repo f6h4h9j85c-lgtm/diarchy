@@ -34,6 +34,8 @@ diarchy start "Add per-API-key rate limiting to the public API." \
 
 Each criterion is one checkable statement of at most 40 words; they become AC1, AC2, AC3 and are never reworded. The launcher prints the goal id (`20261025-rate-limit` for this goal on that date), the lead and the challenger, creates `.diarchy/worktrees/claude` and `.diarchy/worktrees/codex` on branches `diarchy/<goal-id>/<agent>`, and spawns `claude -p` and `codex exec` with a one-line prompt each. The lead alternates from the previous goal; `--lead claude` forces it.
 
+Nobody is there to answer a permission prompt, so the Claude PM is launched with `--allowedTools` for the diarchy tools and for `git`, `npm`, `node`, and `gh`, and anything else is denied. If your checks run through another command, add `Bash(make *)` (or the like) to `agents.claude.args` in `diarchy.config.json` before this step.
+
 ## 4. The first three messages
 
 Open `api brain/diarchy/goals/20261025-rate-limit/chat.md`. The callout at the top gives the phase (PLAN), who leads, and the budget used. Below it:

@@ -59,8 +59,13 @@ nothing until it exists.
 `diarchy init` in the project root writes `diarchy.config.json`, which names
 the vault (default `<project> brain/diarchy`) and both agents (see PROTOCOL.md
 section 8), creates the vault directory, and adds `.diarchy/` to `.gitignore`.
-`.diarchy/` holds the per-agent worktrees and launcher state. A run starts with
-`diarchy start "<goal>" --ac "<criterion>"`; see QUICKSTART.md.
+`.diarchy/` holds the per-agent worktrees and launcher state. The Claude PM's
+launch flags (`agents.claude.args`) carry an `--allowedTools` list naming the
+plugin-scoped server `mcp__plugin_diarchy_diarchy__*` and the `git`, `npm`,
+`node`, and `gh` commands, because a headless `claude -p` denies every tool
+nobody approved. If you registered the server with `claude mcp add diarchy`
+instead of installing the plugin, change that rule to `mcp__diarchy__*`. A run
+starts with `diarchy start "<goal>" --ac "<criterion>"`; see QUICKSTART.md.
 
 ## Uninstall
 

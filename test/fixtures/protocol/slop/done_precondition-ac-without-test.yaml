@@ -1,6 +1,16 @@
-description: "DONE_PRECONDITION: AC3 has no passing test (the DONE cites AC1 and AC2 only)."
+description: "DONE_PRECONDITION: AC3 was never set passing by a STATUS; the DONE's own pass item citing AC3 does not count."
 state:
-  base: execute-reviewed
+  base: execute-ready
+  acs:
+    AC1:
+      criterion: Requests over the per-key limit get HTTP 429 with a Retry-After header, and the count is shared across all API replicas.
+      status: passing
+    AC2:
+      criterion: The limit is configurable through RATE_LIMIT_PER_MIN with a documented default.
+      status: passing
+    AC3:
+      criterion: Tests cover the 429 path and the config override, and the full suite is green on main.
+      status: open
 message:
   protocol_version: 1
   id: 20261025T163000Z-0006-claude-DONE
@@ -11,6 +21,7 @@ message:
   re:
     - AC1
     - AC2
+    - AC3
   evidence:
     - kind: commit
       sha: 1c0ffee42
@@ -19,8 +30,8 @@ message:
       result: pass
   phase: EXECUTE
   ts: 2026-10-25T16:30:00Z
-  body: PR 412 merged to main.
+  body: PRs 412 and 413 merged to main.
 expect:
   ok: false
   rule: DONE_PRECONDITION
-  message: "Not done: AC3 has no passing test. Post STATUS with passing tests for each AC and get the other agent's approve review on each PR."
+  message: "Not done: AC3 has no passing test. Finish every task, post STATUS with passing tests for each AC, and get the other agent's approve review on each PR."

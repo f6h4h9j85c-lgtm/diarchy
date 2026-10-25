@@ -336,6 +336,31 @@ describe("PROTOCOL.md examples", () => {
 });
 
 // ---------------------------------------------------------------------------
+// The sample run behind docs/samples reaches DONE under 9.2 (a) to (f)
+// ---------------------------------------------------------------------------
+
+const SAMPLE_RUN = fileURLToPath(new URL("./fixtures/vault/sample-run/", import.meta.url));
+
+describe("sample run", () => {
+  it("replayed through the engine lands on execute-ready just before its DONE, then on DONE", () => {
+    const kickoff = parseKickoffFile(readFileSync(join(SAMPLE_RUN, "kickoff.md"), "utf8"));
+    let state = initialState(kickoff, CONFIG, new Date(kickoff.created));
+    const files = readdirSync(SAMPLE_RUN).filter((file) => file.endsWith(".md") && file !== "kickoff.md").sort();
+    for (const file of files) {
+      const message = parseMessageFile(readFileSync(join(SAMPLE_RUN, file), "utf8"));
+      // Store-assigned decision ids: the engine assigns them itself (PROTOCOL.md section 3).
+      const storeAssigned =
+        (message.type === "PROPOSE" && message.decision_id !== "plan") ||
+        (message.type === "DECIDE" && (message.supersedes !== undefined || message.from === "human"));
+      if (storeAssigned) delete message.decision_id;
+      if (message.type === "DONE") expect(state).toEqual(loadBase("execute-ready"));
+      state = accept(message, state);
+    }
+    expect(state.phase).toBe("DONE");
+  });
+});
+
+// ---------------------------------------------------------------------------
 // tick: DEADLOCK (10 min) and WALL_CLOCK
 // ---------------------------------------------------------------------------
 

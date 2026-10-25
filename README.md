@@ -14,7 +14,7 @@ Status: pre-alpha, v0.1.0. Requires Node 20 or later.
 6. Every PR is ASSIGNed for review to the agent that did not write it. An `approve` from a non-author is the only thing that unlocks merge.
 7. A PM posts BLOCKED `kind: external` for a credential it lacks, a destructive action, or a product call. The goal moves to BLOCKED, the store posts a system ASK_HUMAN, and the launcher exits 2. A deadlock or a spent budget (80 messages or 240 minutes by default) does the same.
 8. The human reads `goal.md`, `chat.md`, and `decisions.md` in Obsidian and answers with `diarchy reply "<text>"`: a DECIDE with `basis: human` recorded in `decisions.md`. The PMs have exited by then, so `diarchy start` (no goal text) re-attaches them and the run continues.
-9. The lead posts DONE once every AC has a passing test, every PR has a cross-review, and no thread is open. The launcher exits 0.
+9. The lead posts DONE once every task is done, every AC has a passing test from a STATUS, every PR has a cross-review, and no thread is open; a DONE cannot certify itself. The launcher exits 0.
 
 The plan being settled, from `docs/samples/chat.md` with blank lines removed:
 
@@ -46,7 +46,7 @@ Printed 3. In-process buckets would triple the effective limit.
 | Bounded debate: ONE_CHALLENGE, TWO_ROUNDS, DEADLOCK | A second challenge on one decision; a third message before the DECIDE; a lead that does not decide in 2 messages or 10 minutes (the goal blocks) | store |
 | Phases and roles: PHASE_GATE, ROLE_GATE, SINGLE_KICKOFF | A PROPOSE in EXECUTE; a challenger deciding; a second kickoff while a goal is active | store |
 | Budgets: PLAN_BUDGET, TALK_WORK_RATIO, TOTAL_BUDGET, WALL_CLOCK | A 13th PLAN message other than the lead's DECIDE; a fourth EXECUTE message without a STATUS; anything after 80 messages or 240 minutes | store; launcher kills the CLIs after the clock |
-| Work and review: NO_DOMAIN_ROUTING, NO_SELF_REVIEW, BUSY_REVIEWING, DONE_PRECONDITION | An ASSIGN reason other than availability, continuity, or load-balance; self-review; implementation assigned to a busy reviewer; DONE with an untested AC or an unreviewed PR | validator, store |
+| Work and review: NO_DOMAIN_ROUTING, NO_SELF_REVIEW, BUSY_REVIEWING, DONE_PRECONDITION | An ASSIGN reason other than availability, continuity, or load-balance; self-review; implementation assigned to a busy reviewer; DONE with an untested AC, an unfinished task, or an unreviewed PR | validator, store |
 
 These are code rather than prompts because prompts cannot be tested and degrade under load. When language-model peers debate, a correct answer is more likely to flip to a wrong one than the reverse (arXiv 2509.05396); most multi-agent failures are specification and coordination problems, not model limits (MAST, arXiv 2503.13657); and Anthropic's multi-agent research system became reliable only after free-form coordination gave way to structured briefs. Error texts and fixtures: `docs/ANTI-SLOP.md`.
 

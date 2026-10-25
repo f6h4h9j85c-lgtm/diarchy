@@ -2,7 +2,6 @@
 import {
   AGENT_HUMAN,
   AGENT_SYSTEM,
-  type AcStatus,
   type AgentId,
   type DeadlockWatch,
   type EvidenceItem,
@@ -165,6 +164,11 @@ export function prAuthor(state: GoalState, message: Message, url: string): Agent
   return introduced ? message.from : undefined;
 }
 
+/** Has `agent` introduced a PR on this goal (first `pr` evidence)? DONE 9.2(f). */
+export function authoredPr(state: GoalState, agent: AgentId | null): boolean {
+  return agent !== null && Object.values(state.prs).some((pr) => pr.author === agent);
+}
+
 /** The PR an agent still owes a review on, if any (BUSY_REVIEWING). */
 export function pendingReviewUrl(state: GoalState, agent: AgentId): string | undefined {
   for (const task of Object.values(state.tasks)) {
@@ -173,19 +177,6 @@ export function pendingReviewUrl(state: GoalState, agent: AgentId): string | und
     if (!reviewed) return task.pr;
   }
   return undefined;
-}
-
-/** AC statuses after applying a message's `test` items to the ACs it cites. */
-export function projectAcStatuses(state: GoalState, message: Message): Record<string, AcStatus> {
-  const statuses: Record<string, AcStatus> = {};
-  for (const [id, ac] of Object.entries(state.acs)) statuses[id] = ac.status;
-  for (const item of message.evidence ?? []) {
-    if (item.kind !== "test" || item.result === "pending") continue;
-    for (const ac of message.re) {
-      if (ac in statuses) statuses[ac] = item.result === "pass" ? "passing" : "failing";
-    }
-  }
-  return statuses;
 }
 
 // ---------------------------------------------------------------------------

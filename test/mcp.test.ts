@@ -258,7 +258,7 @@ describe("happy path", () => {
       basis: "adopted-challenge",
       decision_id: "plan",
       reply_to: challenge.id,
-      tasks: ["Token-bucket middleware in src/middleware/rateLimit.ts", "RATE_LIMIT_PER_MIN config, default 100", "Tests for 429 and config override"],
+      tasks: ["Token-bucket middleware, RATE_LIMIT_PER_MIN config, and tests for 429 and the override"],
       body: "The deploy runs one replica, so no shared counter is needed.",
     });
     expect(decide.phase).toBe("EXECUTE");
@@ -295,7 +295,7 @@ describe("happy path", () => {
     await accepted<PostOk>(h.claude, "assign", { to: "claude", new_task: "Review PR 412", kind: "review", pr: PR, re: ["AC3"] });
     await accepted<PostOk>(h.claude, "status", {
       re: ["AC3"],
-      task: "T4",
+      task: "T2",
       task_status: "done",
       evidence: [{ kind: "review", url: PR, verdict: "approve" }],
       body: "Middleware, config, and tests match the plan.",

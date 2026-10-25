@@ -62,4 +62,4 @@ For a deadlock: `diarchy reply "<ruling>" --decision plan` (or `D<n>`). For a sp
 diarchy stop --reason "Out of time today."
 ```
 
-This posts a human BLOCKED message, leaves the goal BLOCKED, and signals the running `diarchy start`. A goal ends on its own when the lead posts DONE: every AC has a passing test, every PR has the other agent's approve, and `chat.md` ends with `## → DONE`.
+This posts a human BLOCKED message, leaves the goal BLOCKED, and signals the running `diarchy start`. A goal ends on its own when the lead posts DONE: every task is done, every AC has a passing test from a STATUS, every PR has the other agent's approve, and `chat.md` ends with `## → DONE`.

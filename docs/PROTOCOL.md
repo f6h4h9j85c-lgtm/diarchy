@@ -46,7 +46,7 @@ One accepted message is one transaction: acquire `.lock/` by `mkdir` (a lock old
 
 ### 2.3 Store-owned files
 
-`goal.md`: `# <goal-id>`, goal text, then tables `## Status` (phase, lead, challenger, updated), `## Acceptance Criteria` (id, criterion, status `open|passing|failing`, set by the latest `test` evidence citing it in a STATUS or DONE message; `test` items in CHALLENGE or DECIDE are probes and never change AC status), `## Tasks` (id `T<n>`, task, assignee, branch, status `todo|assigned|in_progress|done`). A budget line (`<used> of <limit> messages (PLAN <used> of <limit>) · <used> of <limit> min`) follows the Status table. The exact layout, including the question callout shown while BLOCKED, is docs/RENDERING.md.
+`goal.md`: `# <goal-id>`, goal text, then tables `## Status` (phase, lead, challenger, updated), `## Acceptance Criteria` (id, criterion, status `open|passing|failing`, set by the latest `test` evidence citing it in a STATUS accepted in EXECUTE; `test` items in CHALLENGE, DECIDE, DONE, or a PLAN STATUS are probes or attestations and never change AC status), `## Tasks` (id `T<n>`, task, assignee, branch, status `todo|assigned|in_progress|done`). A budget line (`<used> of <limit> messages (PLAN <used> of <limit>) · <used> of <limit> min`) follows the Status table. The exact layout, including the question callout shown while BLOCKED, is docs/RENDERING.md.
 
 `chat.md`: `# Chat: <goal-id>`, then one block per message sorted by `(ts, seq)`, separated by `---`: header `**<from> → <to> · <TYPE> · <decision_id> · re <AC list> · HH:MM:SS**` (decision segment omitted when absent), claim in italics if present, body, evidence as bullets `- <kind>: <key fields>`. The renderer MAY place one header block between the title and the first message, and MAY insert `## → <PHASE> · HH:MM:SS` headings after the `---` that follows a phase-changing message; a glyph MAY precede the bold header. The exact layout is docs/RENDERING.md.
 
@@ -296,8 +296,8 @@ PRs 412 and 413 merged to main.
 | CHALLENGE | challenger only | `claim`, `decision_id`, `reply_to`, `evidence` with a `test` item | PLAN; EXECUTE and decided threads only with new evidence | round 2; starts deadlock watch | lead: DECIDE (mandatory) |
 | DECIDE | lead; `human` (`basis: human`) in BLOCKED | `claim`, `basis`, `decision_id` or `supersedes`; `evidence` when `basis: test` | PLAN; EXECUTE only replying to an open CHALLENGE or with `supersedes` plus new evidence; BLOCKED human only | closes thread, appends decisions.md, clears deadlock watch; `plan` → EXECUTE and writes `tasks`/`ac_add`; human DECIDE restores `blocked_from`, applies `budgets` | none |
 | ASSIGN | lead | `to` = agent id; `task` or `new_task`; `kind`; `worktree` + `branch` (implement) or `pr` (review) | EXECUTE | task assignee, branch, status `assigned`; review assignee busy until review evidence for that PR lands | assignee: STATUS |
-| STATUS | any PM | `evidence` non-empty | PLAN, EXECUTE | resets `talk_since_work`; updates AC status, PR registry, task status | none |
-| DONE | lead | `evidence` non-empty; 9.2 holds | EXECUTE | EXECUTE → DONE; launcher stops both CLIs | none |
+| STATUS | any PM | `evidence` non-empty | PLAN, EXECUTE | resets `talk_since_work`; updates PR registry, task status, and (in EXECUTE) AC status | none |
+| DONE | lead | `evidence` non-empty; 9.2 holds | EXECUTE | EXECUTE → DONE; its evidence changes no AC, PR, or task; launcher stops both CLIs | none |
 | BLOCKED | any PM | `kind`, body | PLAN, EXECUTE | `external`: → BLOCKED, system posts ASK_HUMAN; `internal`: none | lead: ASSIGN or DECIDE |
 | ASK_HUMAN | `system` only | body; `reply_to` unless budget-triggered | written at every transition into BLOCKED | launcher notifies human, exits non-zero | human: DECIDE via `diarchy reply` |
 
@@ -363,7 +363,7 @@ In EXECUTE every thread is already decided, so an EXECUTE DECIDE is always a sup
 }
 ```
 
-`vault` is relative to the project root. `kickoff.budgets` overrides config per goal; a human DECIDE `budgets` overrides for the rest of the goal (without it, an exhausted budget re-blocks on the next accepted message). `review.required: false` waives 9.2(c) only; NO_SELF_REVIEW still applies.
+`vault` is relative to the project root. `kickoff.budgets` overrides config per goal; a human DECIDE `budgets` overrides for the rest of the goal (without it, an exhausted budget re-blocks on the next accepted message). `review.required: false` waives 9.2(c) and (f) only; NO_SELF_REVIEW still applies.
 
 ## 9. Code flow
 
@@ -373,7 +373,9 @@ Each PM works only in `<worktrees.root>/<agent>` on `<branch_prefix>/<goal-id>/<
 
 ### 9.2 DONE preconditions (DONE_PRECONDITION)
 
-(a) phase EXECUTE, sender lead; (b) every AC has at least one `test` item with `result: pass` in a message whose `re` includes it, and its latest `test` item is not `fail`; (c) every url in `budget.json.prs` has a `review` with `verdict: approve` from an agent other than its author (waived by `review.required: false`); (d) no thread is open and `deadlock_watch` is null.
+(a) phase EXECUTE, sender lead; (b) every AC's status in goal.md is `passing`, which only a STATUS accepted in EXECUTE sets (2.3): the DONE's own `test` items do not count; (c) every url in `budget.json.prs` has a `review` with `verdict: approve` from an agent other than its author (waived by `review.required: false`); (d) no thread is open and `deadlock_watch` is null; (e) every task in goal.md has status `done`; (f) at least one PR is registered, and every task other than a review was done by an assignee who introduced a PR with `pr` evidence (waived by `review.required: false`).
+
+The store checks recorded state only, so a DONE cannot certify itself: (b) needs a STATUS per AC, (e) a STATUS per task, and (c) with (f) a PR plus the other agent's review.
 
 ## 10. MCP tools
 

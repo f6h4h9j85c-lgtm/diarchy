@@ -11,7 +11,11 @@ export async function runMcpServer(options) {
     const server = createMcpServer(options);
     const transport = new StdioServerTransport();
     const closed = new Promise((resolve) => {
-        server.server.onclose = resolve;
+        const releaseLease = server.server.onclose;
+        server.server.onclose = () => {
+            releaseLease?.();
+            resolve();
+        };
     });
     process.stdin.once("end", () => void transport.close());
     await server.connect(transport);

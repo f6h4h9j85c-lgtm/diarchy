@@ -37,7 +37,8 @@ import {
 } from "../protocol/index.js";
 import { resolveVaultPaths, vaultPaths, type GoalPaths } from "./config.js";
 import { atomicWrite, readJson, sleep as realSleep } from "./files.js";
-import { serializeKickoff, slugify } from "./kickoff.js";
+import { serializeKickoff, slugify, suffixSlug } from "./kickoff.js";
+import { withDirLock } from "./lock.js";
 import { renderChat } from "./render/chat.js";
 import { renderDecisions } from "./render/decisions.js";
 import { renderGoal } from "./render/goal.js";
@@ -57,7 +58,7 @@ import type {
   WaitResult,
 } from "./types.js";
 
-export const LOCK_STALE_MS = 30_000;
+export { LOCK_STALE_MS } from "./lock.js";
 export const MAX_WAIT_MS = 110_000;
 export const PROGRESS_MS = 15_000;
 export const DEFAULT_POLL_MS = 500;
@@ -67,6 +68,8 @@ const AC_MAX_WORDS = 40;
 const RECENT_MS = 2_000;
 /** Under chat/: where crash recovery moves message files budget.json never recorded (PROTOCOL.md 2.2). */
 const ORPHANS_DIR = ".orphans";
+/** Under goals/: the vault lock that serializes kickoff (PROTOCOL.md 2). */
+const VAULT_LOCK = ".lock";
 
 interface Inbox {
   protocol_version: 1;
@@ -104,6 +107,8 @@ export class VaultStore {
   private readonly pollIntervalMs: number;
   /** Per goal directory: chat/ files the open transaction wrote since its last budget.json commit. */
   private readonly uncommitted = new Map<string, string[]>();
+  /** budget.json files already reported as unreadable, so a poll loop warns once. */
+  private readonly warned = new Set<string>();
 
   constructor(options: VaultStoreOptions) {
     this.agent = options.agent;
@@ -119,7 +124,12 @@ export class VaultStore {
   // Goals
   // -------------------------------------------------------------------------
 
-  /** Every goal with a budget.json, oldest first. */
+  /**
+   * Every goal with a readable budget.json, oldest first. A goal whose
+   * budget.json does not parse (damaged, or another protocol_version) is
+   * skipped with one stderr warning naming the file, so it cannot take the
+   * rest of the vault down with it (PROTOCOL.md 2.3).
+   */
   listGoals(): GoalRef[] {
     const { goals } = vaultPaths(this.projectDir, this.config);
     if (!existsSync(goals)) return [];
@@ -127,10 +137,22 @@ export class VaultStore {
     for (const name of readdirSync(goals).sort()) {
       const paths = resolveVaultPaths(this.projectDir, this.config, name);
       if (!existsSync(paths.budget)) continue;
-      const state = this.loadState(paths);
+      let state: GoalState;
+      try {
+        state = this.loadState(paths);
+      } catch (error) {
+        this.warnUnreadable(paths, error);
+        continue;
+      }
       refs.push({ goalId: name, phase: state.phase, lead: state.lead, challenger: state.challenger, created: state.created, paths });
     }
     return refs.sort((a, b) => (a.created < b.created ? -1 : a.created > b.created ? 1 : 0));
+  }
+
+  private warnUnreadable(paths: GoalPaths, error: unknown): void {
+    if (this.warned.has(paths.budget)) return;
+    this.warned.add(paths.budget);
+    console.error(`diarchy: skipping goal ${paths.goalId}: ${error instanceof Error ? error.message : String(error)}`);
   }
 
   /** The one goal in PLAN, EXECUTE, or BLOCKED, if any. */
@@ -180,6 +202,11 @@ export class VaultStore {
   // kickoff
   // -------------------------------------------------------------------------
 
+  /**
+   * Start a goal. The whole kickoff runs under the vault lock (goals/.lock), so
+   * two PMs kicking off at once cannot both start a goal: the second sees the
+   * first one active and gets SINGLE_KICKOFF.
+   */
   async kickoff(input: KickoffInput): Promise<KickoffResult> {
     const active = this.activeGoal();
     if (active !== null) return singleKickoff(active.goalId, active.phase);
@@ -187,16 +214,23 @@ export class VaultStore {
     if (agents.length < 2) throw new Error("diarchy.config.json must declare at least two agents");
     const problem = this.kickoffProblem(input, agents);
     if (problem !== null) return problem;
+    const { goals } = vaultPaths(this.projectDir, this.config);
+    mkdirSync(goals, { recursive: true });
+    return withDirLock(join(goals, VAULT_LOCK), LOCK_RETRY_MS, realSleep, () => this.kickoffLocked(input, agents));
+  }
+
+  private async kickoffLocked(input: KickoffInput, agents: AgentId[]): Promise<KickoffResult> {
+    const active = this.activeGoal();
+    if (active !== null) return singleKickoff(active.goalId, active.phase);
     const lead = input.lead ?? this.defaultLead(agents);
     if (agents.includes(this.agent) && lead !== this.agent) {
       return reject("ROLE_GATE", `KICKOFF may only be posted by the lead (${lead}). You are the challenger.`);
     }
     const now = this.now();
     const created = isoSeconds(now);
-    const goalId = input.goal_id ?? `${created.slice(0, 10).replace(/-/g, "")}-${input.slug ?? slugify(input.goal)}`;
-    if (!GOAL_ID_PATTERN.test(goalId)) return reject("SCHEMA", schemaText("goal_id", "must be <YYYYMMDD>-<slug> with slug [a-z0-9-]{1,40}"));
+    const goalId = this.newGoalId(input, created);
+    if (typeof goalId !== "string") return goalId;
     const paths = resolveVaultPaths(this.projectDir, this.config, goalId);
-    if (existsSync(paths.kickoff)) return singleKickoff(goalId, existsSync(paths.budget) ? this.loadState(paths).phase : "PLAN");
 
     const kickoff: Kickoff = {
       protocol_version: 1,
@@ -214,7 +248,7 @@ export class VaultStore {
     };
     mkdirSync(paths.chatDir, { recursive: true });
     mkdirSync(paths.inboxDir, { recursive: true });
-    atomicWrite(paths.kickoff, serializeKickoff(kickoff));
+    atomicWrite(paths.kickoff, serializeKickoff(kickoff), { durable: true });
     const state = initialState(kickoff, this.config, now);
     return this.withLock(paths, async () => {
       let committed = false;
@@ -251,6 +285,34 @@ export class VaultStore {
       return reject("SCHEMA", schemaText("lead", `must be one of ${agents.join(", ")}`));
     }
     return null;
+  }
+
+  /**
+   * `<YYYYMMDD>-<slug>`, slug from `slug` or the goal text (a time-based
+   * `goal-HHMMSS` when the text has no Latin letters or digits). Under the vault
+   * lock no goal is active, so an id that is taken belongs to a finished or
+   * abandoned goal: the slug gets the first free `-2`, `-3`, ... suffix instead.
+   * An explicit `goal_id` is used as given or refused.
+   */
+  private newGoalId(input: KickoffInput, created: string): string | Rejection {
+    if (input.goal_id !== undefined) {
+      if (!GOAL_ID_PATTERN.test(input.goal_id)) return reject("SCHEMA", schemaText("goal_id", "must be <YYYYMMDD>-<slug> with slug [a-z0-9-]{1,40}"));
+      if (this.goalIdTaken(input.goal_id)) return reject("SCHEMA", schemaText("goal_id", `${input.goal_id} already exists; pick another id`));
+      return input.goal_id;
+    }
+    const day = created.slice(0, 10).replace(/-/g, "");
+    const slug = input.slug ?? slugify(input.goal, `goal-${created.slice(11, 19).replace(/:/g, "")}`);
+    if (!GOAL_ID_PATTERN.test(`${day}-${slug}`)) return reject("SCHEMA", schemaText("slug", "must be [a-z0-9-]{1,40}"));
+    for (let n = 1; ; n += 1) {
+      const goalId = `${day}-${n === 1 ? slug : suffixSlug(slug, n)}`;
+      if (!this.goalIdTaken(goalId)) return goalId;
+    }
+  }
+
+  /** kickoff never reuses a goal directory that holds a kickoff.md or a budget.json. */
+  private goalIdTaken(goalId: string): boolean {
+    const paths = resolveVaultPaths(this.projectDir, this.config, goalId);
+    return existsSync(paths.kickoff) || existsSync(paths.budget);
   }
 
   /** A PM kicking off leads; the launcher alternates from the previous goal's lead. */
@@ -545,19 +607,19 @@ export class VaultStore {
    * aside by the next transaction before it reads anything.
    */
   private async withLock<T>(paths: GoalPaths, body: () => Promise<T>): Promise<T> {
-    await this.acquireLock(paths.lock);
-    const written: string[] = [];
-    this.uncommitted.set(paths.goal, written);
-    try {
-      this.recoverOrphans(paths);
-      return await body();
-    } catch (error) {
-      for (const path of written) rmSync(path, { force: true });
-      throw error;
-    } finally {
-      this.uncommitted.delete(paths.goal);
-      rmSync(paths.lock, { recursive: true, force: true });
-    }
+    return withDirLock(paths.lock, LOCK_RETRY_MS, realSleep, async () => {
+      const written: string[] = [];
+      this.uncommitted.set(paths.goal, written);
+      try {
+        this.recoverOrphans(paths);
+        return await body();
+      } catch (error) {
+        for (const path of written) rmSync(path, { force: true });
+        throw error;
+      } finally {
+        this.uncommitted.delete(paths.goal);
+      }
+    });
   }
 
   /** Under the lock: a chat/ file whose id budget.json does not record never committed; move it to chat/.orphans/. */
@@ -571,22 +633,6 @@ export class VaultStore {
       let target = join(orphans, name);
       for (let n = 1; existsSync(target); n += 1) target = join(orphans, `${name.slice(0, -3)}.${n}.md`);
       renameSync(join(paths.chatDir, name), target);
-    }
-  }
-
-  private async acquireLock(lock: string): Promise<void> {
-    for (;;) {
-      try {
-        mkdirSync(lock);
-        return;
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-      }
-      if (lockIsStale(lock)) {
-        rmSync(lock, { recursive: true, force: true });
-        continue;
-      }
-      await realSleep(LOCK_RETRY_MS);
     }
   }
 
@@ -608,7 +654,7 @@ export class VaultStore {
     }
     const path = join(paths.chatDir, `${message.id}.md`);
     if (existsSync(path)) throw new Error(`refusing to overwrite message file ${path}`);
-    atomicWrite(path, serializeMessageFile(message));
+    atomicWrite(path, serializeMessageFile(message), { durable: true });
     this.uncommitted.get(paths.goal)?.push(path);
   }
 
@@ -622,13 +668,18 @@ export class VaultStore {
       .map((name) => parseMessageFile(readFileSync(join(paths.chatDir, name), "utf8")));
   }
 
+  /** budget.json of one goal; a file that does not parse throws an error naming it. */
   private loadState(paths: GoalPaths): GoalState {
-    return parseGoalState(readJson(paths.budget));
+    try {
+      return parseGoalState(readJson(paths.budget));
+    } catch (error) {
+      throw new Error(`${paths.budget} does not parse: ${error instanceof Error ? error.message : String(error)}`, { cause: error });
+    }
   }
 
   /** The commit point: every chat/ file written so far is now accepted. */
   private persist(paths: GoalPaths, state: GoalState): void {
-    atomicWrite(paths.budget, `${JSON.stringify(state, null, 2)}\n`);
+    atomicWrite(paths.budget, `${JSON.stringify(state, null, 2)}\n`, { durable: true });
     this.uncommitted.get(paths.goal)?.splice(0);
   }
 
@@ -670,13 +721,4 @@ function committedIds(state: GoalState): Set<string> {
 
 function singleKickoff(goalId: string, phase: Phase): Rejection {
   return reject("SINGLE_KICKOFF", `Goal ${goalId} is already active (phase ${phase}). Call read instead of kickoff.`);
-}
-
-/** Staleness is judged on the real clock: the lock's mtime comes from the filesystem. */
-function lockIsStale(lock: string): boolean {
-  try {
-    return Date.now() - statSync(lock).mtimeMs > LOCK_STALE_MS;
-  } catch {
-    return false;
-  }
 }

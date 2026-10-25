@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -204,6 +204,36 @@ describe("kickoff and read", () => {
     expect(again).toEqual({ ok: false, rule: "SINGLE_KICKOFF", message: `Goal ${GOAL_ID} is already active (phase PLAN). Call read instead of kickoff.` });
     const asCodex = await rejected(h.codex, "kickoff", KICKOFF_ARGS);
     expect(asCodex.rule).toBe("SINGLE_KICKOFF");
+  });
+
+  it("a second live server for the same agent gets AGENT_BUSY and takes nothing until the first one closes", async () => {
+    const h = await harness();
+    const kick = await h.kickoff();
+    expect((await accepted<ReadResult>(h.codex, "read")).messages.map((message) => message.id)).toEqual([kick.kickoff_id]);
+    const second = await connect(h.projectDir, "codex", h.clock);
+    const busy = await rejected(second, "read");
+    expect(busy).toEqual({
+      ok: false,
+      rule: "AGENT_BUSY",
+      message: `Another diarchy server already acts as codex on this goal (pid ${process.pid}). One session per agent: end that session, or stop here; this server takes over once that one exits.`,
+    });
+    // PROTOCOL.md section 10 quotes the same message.
+    const spec = /rule: "AGENT_BUSY", message: "([^"]+)"/.exec(readFileSync(join(ROOT, "docs", "PROTOCOL.md"), "utf8"))?.[1];
+    expect(spec?.replace("<agent>", "codex").replace("<pid>", String(process.pid))).toBe(busy.message);
+    expect((await rejected(second, "status", { re: ["AC1"], evidence: [{ kind: "commit", sha: "abcdef1" }] })).rule).toBe("AGENT_BUSY");
+    expect((await rejected(second, "wait_for_reply", { timeout_ms: 100 })).rule).toBe("AGENT_BUSY");
+
+    // The lead's PROPOSE reaches the server that holds the goal; the second one cannot take it.
+    const propose = await accepted<PostOk>(h.claude, "post", PROPOSE);
+    expect((await rejected(second, "read")).rule).toBe("AGENT_BUSY");
+    expect((await accepted<ReadResult>(h.codex, "read")).messages.map((message) => message.id)).toEqual([propose.id]);
+
+    // Once the holder closes, the next server takes over with the same cursor.
+    await h.codex.close();
+    const takeover = await accepted<ReadResult>(second, "read");
+    expect(takeover).toMatchObject({ role: "challenger", messages: [], cursor: propose.id });
+    const third = await connect(h.projectDir, "codex", h.clock);
+    expect((await rejected(third, "read")).rule).toBe("AGENT_BUSY");
   });
 
   it("read, wait_for_reply, and post before any kickoff return NO_GOAL instead of throwing", async () => {

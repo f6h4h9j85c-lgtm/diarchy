@@ -50,6 +50,8 @@ export interface GoalPaths extends VaultPaths {
   inboxDir: string;
   lock: string;
   inbox(agent: AgentId): string;
+  /** `inbox/<agent>.lock/`: held by the one live MCP server acting as `agent` on this goal (PROTOCOL.md 10). */
+  lease(agent: AgentId): string;
 }
 
 export function vaultPaths(projectDir: string, config: DiarchyConfig): VaultPaths {
@@ -75,5 +77,6 @@ export function resolveVaultPaths(projectDir: string, config: DiarchyConfig, goa
     inboxDir,
     lock: join(goal, ".lock"),
     inbox: (agent) => join(inboxDir, `${agent}.json`),
+    lease: (agent) => join(inboxDir, `${agent}.lock`),
   };
 }

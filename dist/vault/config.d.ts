@@ -24,6 +24,8 @@ export interface GoalPaths extends VaultPaths {
     inboxDir: string;
     lock: string;
     inbox(agent: AgentId): string;
+    /** `inbox/<agent>.lock/`: held by the one live MCP server acting as `agent` on this goal (PROTOCOL.md 10). */
+    lease(agent: AgentId): string;
 }
 export declare function vaultPaths(projectDir: string, config: DiarchyConfig): VaultPaths;
 /** Every path in the PROTOCOL.md section 2 layout for one goal. */

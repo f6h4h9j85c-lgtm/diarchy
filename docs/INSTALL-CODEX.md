@@ -109,3 +109,9 @@ uses this form for `agents.codex.command` in `diarchy.config.json`.
 5. Ask Codex to run `diarchy reply "test"` in the shell. The PreToolUse hook
    denies it with a reason naming `wait_for_reply`; the human's commands are
    not for a PM (ANTI-SLOP.md, What this does NOT prevent).
+
+One session per agent: while a goal is active, only one session acts as
+`codex`. The first session whose diarchy tools touch the goal holds it until
+it exits; a second one, such as an interactive session next to the headless PM
+that `diarchy start` runs, gets `AGENT_BUSY` from the diarchy tools (PROTOCOL.md
+section 10). Close the other session, or let it be the PM.

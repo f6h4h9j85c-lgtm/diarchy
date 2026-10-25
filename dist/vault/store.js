@@ -4,18 +4,19 @@
  * Rules live in the protocol engine; this module owns locking, ids, files,
  * cursors, and rendering.
  */
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, watch } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, watch } from "node:fs";
 import { join, resolve } from "node:path";
 import { AGENT_HUMAN, AGENT_SYSTEM, BODY_MAX_WORDS, GOAL_ID_PATTERN, allowedTypes, assignId, checkMessageShape, evaluate, initialState, isoSeconds, parseGoalState, parseKickoffFile, parseMessageFile, parseMessageId, roleOf, serializeMessageFile, tick, wordCount, } from "../protocol/index.js";
 import { resolveVaultPaths, vaultPaths } from "./config.js";
 import { atomicWrite, readJson, sleep as realSleep } from "./files.js";
-import { serializeKickoff, slugify } from "./kickoff.js";
+import { serializeKickoff, slugify, suffixSlug } from "./kickoff.js";
+import { withDirLock } from "./lock.js";
 import { renderChat } from "./render/chat.js";
 import { renderDecisions } from "./render/decisions.js";
 import { renderGoal } from "./render/goal.js";
 import { lastOfType } from "./render/shared.js";
 import { NoGoalError } from "./types.js";
-export const LOCK_STALE_MS = 30_000;
+export { LOCK_STALE_MS } from "./lock.js";
 export const MAX_WAIT_MS = 110_000;
 export const PROGRESS_MS = 15_000;
 export const DEFAULT_POLL_MS = 500;
@@ -23,6 +24,10 @@ const LOCK_RETRY_MS = 20;
 const AC_MAX_WORDS = 40;
 /** A directory touched this recently is re-scanned even if its mtime looks unchanged (coarse mtime clocks). */
 const RECENT_MS = 2_000;
+/** Under chat/: where crash recovery moves message files budget.json never recorded (PROTOCOL.md 2.2). */
+const ORPHANS_DIR = ".orphans";
+/** Under goals/: the vault lock that serializes kickoff (PROTOCOL.md 2). */
+const VAULT_LOCK = ".lock";
 const reject = (rule, message) => ({ ok: false, rule, message });
 /** Non-empty bodies end with exactly one newline, as in the PROTOCOL.md examples. */
 function normalizeBody(body) {
@@ -40,6 +45,10 @@ export class VaultStore {
     sleep;
     renderOptions;
     pollIntervalMs;
+    /** Per goal directory: chat/ files the open transaction wrote since its last budget.json commit. */
+    uncommitted = new Map();
+    /** budget.json files already reported as unreadable, so a poll loop warns once. */
+    warned = new Set();
     constructor(options) {
         this.agent = options.agent;
         this.projectDir = resolve(options.projectDir);
@@ -52,7 +61,12 @@ export class VaultStore {
     // -------------------------------------------------------------------------
     // Goals
     // -------------------------------------------------------------------------
-    /** Every goal with a budget.json, oldest first. */
+    /**
+     * Every goal with a readable budget.json, oldest first. A goal whose
+     * budget.json does not parse (damaged, or another protocol_version) is
+     * skipped with one stderr warning naming the file, so it cannot take the
+     * rest of the vault down with it (PROTOCOL.md 2.3).
+     */
     listGoals() {
         const { goals } = vaultPaths(this.projectDir, this.config);
         if (!existsSync(goals))
@@ -62,10 +76,23 @@ export class VaultStore {
             const paths = resolveVaultPaths(this.projectDir, this.config, name);
             if (!existsSync(paths.budget))
                 continue;
-            const state = this.loadState(paths);
+            let state;
+            try {
+                state = this.loadState(paths);
+            }
+            catch (error) {
+                this.warnUnreadable(paths, error);
+                continue;
+            }
             refs.push({ goalId: name, phase: state.phase, lead: state.lead, challenger: state.challenger, created: state.created, paths });
         }
         return refs.sort((a, b) => (a.created < b.created ? -1 : a.created > b.created ? 1 : 0));
+    }
+    warnUnreadable(paths, error) {
+        if (this.warned.has(paths.budget))
+            return;
+        this.warned.add(paths.budget);
+        console.error(`diarchy: skipping goal ${paths.goalId}: ${error instanceof Error ? error.message : String(error)}`);
     }
     /** The one goal in PLAN, EXECUTE, or BLOCKED, if any. */
     activeGoal() {
@@ -92,7 +119,7 @@ export class VaultStore {
     }
     listMessages() {
         const goal = this.currentGoal();
-        return goal === null ? [] : this.readMessages(goal.paths);
+        return goal === null ? [] : this.readMessages(goal.paths, this.loadState(goal.paths));
     }
     readKickoff() {
         const goal = this.currentGoal();
@@ -106,6 +133,11 @@ export class VaultStore {
     // -------------------------------------------------------------------------
     // kickoff
     // -------------------------------------------------------------------------
+    /**
+     * Start a goal. The whole kickoff runs under the vault lock (goals/.lock), so
+     * two PMs kicking off at once cannot both start a goal: the second sees the
+     * first one active and gets SINGLE_KICKOFF.
+     */
     async kickoff(input) {
         const active = this.activeGoal();
         if (active !== null)
@@ -116,18 +148,24 @@ export class VaultStore {
         const problem = this.kickoffProblem(input, agents);
         if (problem !== null)
             return problem;
+        const { goals } = vaultPaths(this.projectDir, this.config);
+        mkdirSync(goals, { recursive: true });
+        return withDirLock(join(goals, VAULT_LOCK), LOCK_RETRY_MS, realSleep, () => this.kickoffLocked(input, agents));
+    }
+    async kickoffLocked(input, agents) {
+        const active = this.activeGoal();
+        if (active !== null)
+            return singleKickoff(active.goalId, active.phase);
         const lead = input.lead ?? this.defaultLead(agents);
         if (agents.includes(this.agent) && lead !== this.agent) {
             return reject("ROLE_GATE", `KICKOFF may only be posted by the lead (${lead}). You are the challenger.`);
         }
         const now = this.now();
         const created = isoSeconds(now);
-        const goalId = input.goal_id ?? `${created.slice(0, 10).replace(/-/g, "")}-${input.slug ?? slugify(input.goal)}`;
-        if (!GOAL_ID_PATTERN.test(goalId))
-            return reject("SCHEMA", schemaText("goal_id", "must be <YYYYMMDD>-<slug> with slug [a-z0-9-]{1,40}"));
+        const goalId = this.newGoalId(input, created);
+        if (typeof goalId !== "string")
+            return goalId;
         const paths = resolveVaultPaths(this.projectDir, this.config, goalId);
-        if (existsSync(paths.kickoff))
-            return singleKickoff(goalId, existsSync(paths.budget) ? this.loadState(paths).phase : "PLAN");
         const kickoff = {
             protocol_version: 1,
             goal: goalId,
@@ -144,20 +182,27 @@ export class VaultStore {
         };
         mkdirSync(paths.chatDir, { recursive: true });
         mkdirSync(paths.inboxDir, { recursive: true });
-        atomicWrite(paths.kickoff, serializeKickoff(kickoff));
+        atomicWrite(paths.kickoff, serializeKickoff(kickoff), { durable: true });
         const state = initialState(kickoff, this.config, now);
         return this.withLock(paths, async () => {
-            this.persist(paths, state);
-            const draft = { type: "KICKOFF", to: "all", re: Object.keys(state.acs), body: kickoff.goal_text };
-            const outcome = await this.accept(paths, state, draft);
-            if (!outcome.ok) {
-                rmSync(paths.goal, { recursive: true, force: true });
-                return outcome;
+            let committed = false;
+            try {
+                this.persist(paths, state);
+                const draft = { type: "KICKOFF", to: "all", re: Object.keys(state.acs), body: kickoff.goal_text };
+                const outcome = await this.accept(paths, state, draft);
+                if (!outcome.ok)
+                    return outcome;
+                const final = await this.applyEffects(paths, outcome.transition);
+                this.persist(paths, final);
+                committed = true;
+                this.renderFiles(paths, kickoff, final);
+                return { ...this.postOk(outcome.message, final), goal_id: goalId, lead, challenger: kickoff.challenger, kickoff_id: outcome.message.id };
             }
-            const final = await this.applyEffects(paths, outcome.transition);
-            this.persist(paths, final);
-            this.renderFiles(paths, kickoff, final);
-            return { ...this.postOk(outcome.message, final), goal_id: goalId, lead, challenger: kickoff.challenger, kickoff_id: outcome.message.id };
+            finally {
+                // Until its KICKOFF commits, the goal is a placeholder: a rejection or a failure removes all of it.
+                if (!committed)
+                    rmSync(paths.goal, { recursive: true, force: true });
+            }
         });
     }
     kickoffProblem(input, agents) {
@@ -181,6 +226,36 @@ export class VaultStore {
         }
         return null;
     }
+    /**
+     * `<YYYYMMDD>-<slug>`, slug from `slug` or the goal text (a time-based
+     * `goal-HHMMSS` when the text has no Latin letters or digits). Under the vault
+     * lock no goal is active, so an id that is taken belongs to a finished or
+     * abandoned goal: the slug gets the first free `-2`, `-3`, ... suffix instead.
+     * An explicit `goal_id` is used as given or refused.
+     */
+    newGoalId(input, created) {
+        if (input.goal_id !== undefined) {
+            if (!GOAL_ID_PATTERN.test(input.goal_id))
+                return reject("SCHEMA", schemaText("goal_id", "must be <YYYYMMDD>-<slug> with slug [a-z0-9-]{1,40}"));
+            if (this.goalIdTaken(input.goal_id))
+                return reject("SCHEMA", schemaText("goal_id", `${input.goal_id} already exists; pick another id`));
+            return input.goal_id;
+        }
+        const day = created.slice(0, 10).replace(/-/g, "");
+        const slug = input.slug ?? slugify(input.goal, `goal-${created.slice(11, 19).replace(/:/g, "")}`);
+        if (!GOAL_ID_PATTERN.test(`${day}-${slug}`))
+            return reject("SCHEMA", schemaText("slug", "must be [a-z0-9-]{1,40}"));
+        for (let n = 1;; n += 1) {
+            const goalId = `${day}-${n === 1 ? slug : suffixSlug(slug, n)}`;
+            if (!this.goalIdTaken(goalId))
+                return goalId;
+        }
+    }
+    /** kickoff never reuses a goal directory that holds a kickoff.md or a budget.json. */
+    goalIdTaken(goalId) {
+        const paths = resolveVaultPaths(this.projectDir, this.config, goalId);
+        return existsSync(paths.kickoff) || existsSync(paths.budget);
+    }
     /** A PM kicking off leads; the launcher alternates from the previous goal's lead. */
     defaultLead(agents) {
         if (agents.includes(this.agent))
@@ -194,7 +269,7 @@ export class VaultStore {
     // -------------------------------------------------------------------------
     // post
     // -------------------------------------------------------------------------
-    /** One transaction (PROTOCOL.md 2.2): lock, tick, evaluate, write, persist, effects, render. */
+    /** One transaction (PROTOCOL.md 2.2): lock, recover, tick, evaluate, write, effects, persist (the commit), render. */
     async post(draft) {
         const goal = this.requireGoal();
         return this.withLock(goal.paths, async () => {
@@ -298,7 +373,7 @@ export class VaultStore {
         if (goal === null)
             return null;
         const state = this.loadState(goal.paths);
-        const all = this.readMessages(goal.paths);
+        const all = this.readMessages(goal.paths, state);
         const cursor = options.since ?? this.loadCursor(goal.paths);
         const messages = all.filter((message) => (cursor === null || message.id > cursor) && message.from !== this.agent);
         const last = all[all.length - 1];
@@ -403,7 +478,7 @@ export class VaultStore {
         this.requireHuman("reply");
         const goal = this.requireGoal();
         const state = this.loadState(goal.paths);
-        const ask = lastOfType(this.readMessages(goal.paths), "ASK_HUMAN");
+        const ask = lastOfType(this.readMessages(goal.paths, state), "ASK_HUMAN");
         const ruling = text.trim();
         const draft = {
             type: "DECIDE",
@@ -476,30 +551,43 @@ export class VaultStore {
     // -------------------------------------------------------------------------
     // Lock (PROTOCOL.md 2.2)
     // -------------------------------------------------------------------------
+    /**
+     * Writing budget.json commits a transaction (PROTOCOL.md 2.2). A throw removes
+     * the chat/ files written since the last commit; a crash's leftovers are moved
+     * aside by the next transaction before it reads anything.
+     */
     async withLock(paths, body) {
-        await this.acquireLock(paths.lock);
-        try {
-            return await body();
-        }
-        finally {
-            rmSync(paths.lock, { recursive: true, force: true });
-        }
-    }
-    async acquireLock(lock) {
-        for (;;) {
+        return withDirLock(paths.lock, LOCK_RETRY_MS, realSleep, async () => {
+            const written = [];
+            this.uncommitted.set(paths.goal, written);
             try {
-                mkdirSync(lock);
-                return;
+                this.recoverOrphans(paths);
+                return await body();
             }
             catch (error) {
-                if (error.code !== "EEXIST")
-                    throw error;
+                for (const path of written)
+                    rmSync(path, { force: true });
+                throw error;
             }
-            if (lockIsStale(lock)) {
-                rmSync(lock, { recursive: true, force: true });
+            finally {
+                this.uncommitted.delete(paths.goal);
+            }
+        });
+    }
+    /** Under the lock: a chat/ file whose id budget.json does not record never committed; move it to chat/.orphans/. */
+    recoverOrphans(paths) {
+        if (!existsSync(paths.budget) || !existsSync(paths.chatDir))
+            return;
+        const committed = committedIds(this.loadState(paths));
+        const orphans = join(paths.chatDir, ORPHANS_DIR);
+        for (const name of readdirSync(paths.chatDir)) {
+            if (!name.endsWith(".md") || committed.has(name.slice(0, -3)))
                 continue;
-            }
-            await realSleep(LOCK_RETRY_MS);
+            mkdirSync(orphans, { recursive: true });
+            let target = join(orphans, name);
+            for (let n = 1; existsSync(target); n += 1)
+                target = join(orphans, `${name.slice(0, -3)}.${n}.md`);
+            renameSync(join(paths.chatDir, name), target);
         }
     }
     /** The store never writes a message whose ts is still in the future. */
@@ -520,21 +608,32 @@ export class VaultStore {
         const path = join(paths.chatDir, `${message.id}.md`);
         if (existsSync(path))
             throw new Error(`refusing to overwrite message file ${path}`);
-        atomicWrite(path, serializeMessageFile(message));
+        atomicWrite(path, serializeMessageFile(message), { durable: true });
+        this.uncommitted.get(paths.goal)?.push(path);
     }
-    readMessages(paths) {
+    /** The committed messages: chat/ files whose id `state` records, in (ts, seq) order. Nothing else is read or rendered. */
+    readMessages(paths, state) {
         if (!existsSync(paths.chatDir))
             return [];
+        const committed = committedIds(state);
         return readdirSync(paths.chatDir)
-            .filter((name) => name.endsWith(".md"))
+            .filter((name) => name.endsWith(".md") && committed.has(name.slice(0, -3)))
             .sort()
             .map((name) => parseMessageFile(readFileSync(join(paths.chatDir, name), "utf8")));
     }
+    /** budget.json of one goal; a file that does not parse throws an error naming it. */
     loadState(paths) {
-        return parseGoalState(readJson(paths.budget));
+        try {
+            return parseGoalState(readJson(paths.budget));
+        }
+        catch (error) {
+            throw new Error(`${paths.budget} does not parse: ${error instanceof Error ? error.message : String(error)}`, { cause: error });
+        }
     }
+    /** The commit point: every chat/ file written so far is now accepted. */
     persist(paths, state) {
-        atomicWrite(paths.budget, `${JSON.stringify(state, null, 2)}\n`);
+        atomicWrite(paths.budget, `${JSON.stringify(state, null, 2)}\n`, { durable: true });
+        this.uncommitted.get(paths.goal)?.splice(0);
     }
     loadKickoff(paths) {
         return parseKickoffFile(readFileSync(paths.kickoff, "utf8"));
@@ -551,7 +650,7 @@ export class VaultStore {
         atomicWrite(paths.inbox(this.agent), `${JSON.stringify(inbox, null, 2)}\n`);
     }
     renderFiles(paths, kickoff, state) {
-        const messages = this.readMessages(paths);
+        const messages = this.readMessages(paths, state);
         atomicWrite(paths.goalMd, renderGoal(messages, state, kickoff, this.renderOptions));
         atomicWrite(paths.chatMd, renderChat(messages, state, kickoff, this.renderOptions));
         atomicWrite(paths.decisionsMd, renderDecisions(messages, state, kickoff));
@@ -563,16 +662,10 @@ export class VaultStore {
 function schemaText(field, problem) {
     return `Field "${field}": ${problem}. Fix it per PROTOCOL.md section 3 and post again.`;
 }
+function committedIds(state) {
+    return new Set(state.messages.map((ref) => ref.id));
+}
 function singleKickoff(goalId, phase) {
     return reject("SINGLE_KICKOFF", `Goal ${goalId} is already active (phase ${phase}). Call read instead of kickoff.`);
-}
-/** Staleness is judged on the real clock: the lock's mtime comes from the filesystem. */
-function lockIsStale(lock) {
-    try {
-        return Date.now() - statSync(lock).mtimeMs > LOCK_STALE_MS;
-    }
-    catch {
-        return false;
-    }
 }
 //# sourceMappingURL=store.js.map

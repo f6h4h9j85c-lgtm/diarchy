@@ -1,7 +1,8 @@
 /**
  * The `diarchy` command line: launcher, human controls, hook helpers, and the
  * MCP server entry. Every command reads diarchy.config.json from --project
- * (default: DIARCHY_PROJECT, else the cwd).
+ * (default: DIARCHY_PROJECT, else the nearest directory at or above the cwd
+ * that holds one, else the cwd; `init` uses the cwd).
  */
 import { Command, Option } from "commander";
 import { VERSION } from "../index.js";
@@ -19,13 +20,13 @@ program
     .name("diarchy")
     .description("Two AI coding agents, each running as a product manager, coordinating through an Obsidian vault.")
     .version(VERSION)
-    .option("--project <dir>", "project directory holding diarchy.config.json (default: DIARCHY_PROJECT or the cwd)")
+    .option("--project <dir>", "project directory holding diarchy.config.json (default: DIARCHY_PROJECT, else the nearest directory at or above the cwd that holds one, else the cwd)")
     .showHelpAfterError();
 function collect(value, previous) {
     return [...previous, value];
 }
-function projectDir() {
-    return resolveProjectDir(program.opts().project);
+function projectDir(options = {}) {
+    return resolveProjectDir(program.opts().project, options);
 }
 /** Run a command, map its exit code, and print CliErrors without a stack. */
 async function exitWith(run) {
@@ -85,7 +86,7 @@ program
     .option("--vault <path>", "vault directory, relative to the project (default: <project> brain/diarchy)")
     .option("--agents <ids>", "comma-separated agent ids", "claude,codex")
     .option("--force", "overwrite an existing diarchy.config.json")
-    .action((options) => exitWith(() => runInit(projectDir(), options)));
+    .action((options) => exitWith(() => runInit(projectDir({ walkUp: false }), options)));
 const kickoffOptions = (command) => command
     .option("--ac <criterion>", "acceptance criterion (repeatable)", collect, [])
     .option("--lead <agent>", "lead agent (default: alternates from the previous goal)")

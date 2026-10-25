@@ -219,6 +219,34 @@ describe("start --driver fake (good)", () => {
     expect(git(dir, "rev-parse", "--abbrev-ref", "HEAD")).not.toMatch(/^diarchy\//);
   });
 
+  it("the review skill's detached checkout works from the reviewer's worktree, where a plain checkout is refused", () => {
+    const skill = readFileSync(join(ROOT, "skills", "diarchy-review", "SKILL.md"), "utf8");
+    const checkouts = [...skill.matchAll(/`(cd \.diarchy\/worktrees\/<you> && [^`]+)`/g)].map((match) => match[1]);
+    const back = /`(git checkout diarchy\/<goal-id>\/<you>)`/.exec(skill)?.[1] ?? "";
+    expect(checkouts).toHaveLength(2);
+    expect(back).not.toBe("");
+    const author = `diarchy/${paths.goalId}/claude`;
+    const reviewer = join(dir, ".diarchy", "worktrees", "codex");
+    const fill = (command: string): string =>
+      command.replaceAll("<you>", "codex").replaceAll("<branch>", author).replaceAll("<goal-id>", paths.goalId);
+    const sh = (command: string, cwd: string) => spawnSync("sh", ["-c", command], { cwd, encoding: "utf8", env: { ...process.env, ...GIT_ENV } });
+
+    expect(sh(`git checkout ${author}`, reviewer).status).not.toBe(0);
+    // A remote holding the author's pushed branch, as an open PR implies; the second command needs none.
+    const origin = join(dir, "..", "origin.git");
+    git(dir, "init", "-q", "--bare", origin);
+    git(dir, "remote", "add", "origin", origin);
+    git(dir, "push", "-q", "origin", author);
+    for (const command of checkouts) {
+      const checkout = sh(fill(command), dir);
+      expect(checkout.status, `${command}: ${checkout.stderr}`).toBe(0);
+      expect(git(reviewer, "rev-parse", "HEAD")).toBe(git(dir, "rev-parse", author));
+      const restore = sh(fill(back), reviewer);
+      expect(restore.status, restore.stderr).toBe(0);
+      expect(git(reviewer, "rev-parse", "--abbrev-ref", "HEAD")).toBe(`diarchy/${paths.goalId}/codex`);
+    }
+  });
+
   it("rendered chat.md, decisions.md, and goal.md with the right first lines", () => {
     expect(readFileSync(paths.chatMd, "utf8").split("\n").slice(0, 2)).toEqual([GENERATED, `# Chat: ${paths.goalId}`]);
     expect(readFileSync(paths.decisionsMd, "utf8").split("\n").slice(0, 2)).toEqual([GENERATED, `# Decisions: ${paths.goalId}`]);

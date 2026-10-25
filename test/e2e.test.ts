@@ -632,6 +632,38 @@ describe("guard", () => {
     expect(humanCommand("")).toBeNull();
   });
 
+  // The usual Claude Code commit and PR forms: a quoted-delimiter heredoc inside "$(...)".
+  const commitHeredoc = "git commit -m \"$(cat <<'EOF'\nFix stop\n\ndiarchy stop now waits for both CLIs.\nEOF\n)\"";
+
+  it("reads quoted text, comments, and quoted-delimiter heredoc bodies as text, not as commands", () => {
+    expect(humanCommand('echo "x; diarchy stop now"')).toBeNull();
+    expect(humanCommand("echo 'a (diarchy reply x)'")).toBeNull();
+    expect(humanCommand("grep -rn 'diarchy reply\\|diarchy stop' docs/")).toBeNull();
+    expect(humanCommand(commitHeredoc)).toBeNull();
+    expect(humanCommand("git commit -m \"$(cat <<'EOF'\nDocument `diarchy reply` flags in the README\nEOF\n)\"")).toBeNull();
+    expect(humanCommand("gh pr create --title t --body \"$(cat <<'EOF'\n## Summary\n- `diarchy stop` now waits for both CLIs\nEOF\n)\"")).toBeNull();
+    expect(humanCommand("cat >> docs/NOTES.md <<'EOF'\n| `diarchy reply` | posts a DECIDE |\nEOF")).toBeNull();
+    expect(humanCommand('cat <<"EOF"\n$(diarchy reply x)\nEOF')).toBeNull();
+    expect(humanCommand("cat <<\\EOF\n; diarchy stop\nEOF")).toBeNull();
+    expect(humanCommand("cat <<-'EOF'\n\tdiarchy stop\n\tEOF\necho done")).toBeNull();
+    expect(humanCommand("# don't run diarchy stop here\nnpm test")).toBeNull();
+    expect(humanCommand('bash -c "echo \'diarchy stop\'"')).toBeNull();
+  });
+
+  it("still finds the human's commands in substitutions, unquoted heredocs, shell -c strings, and after a heredoc", () => {
+    expect(humanCommand('git commit -m "Fix: `diarchy stop` waits for both CLIs"')).toBe("stop");
+    expect(humanCommand('echo "$(diarchy reply ok)"')).toBe("reply");
+    expect(humanCommand("cat <<EOF\nit's $(diarchy reply ok)\nEOF")).toBe("reply");
+    expect(humanCommand("cat <<'EOF'\nliteral\nEOF\ndiarchy reply ok")).toBe("reply");
+    expect(humanCommand("x=\"$(cat <<'EOF'\nhi\nEOF)\"; diarchy reply ok")).toBe("reply");
+    expect(humanCommand("# don't\ndiarchy reply ok")).toBe("reply");
+    expect(humanCommand("echo $((1<<2))\ndiarchy stop")).toBe("stop");
+    expect(humanCommand("bash -c 'true; diarchy reply ok'")).toBe("reply");
+    expect(humanCommand("bash -lc 'cd /p && diarchy stop'")).toBe("stop");
+    expect(humanCommand("env /bin/sh -o pipefail -c \"diarchy reply 'go'\"")).toBe("reply");
+    expect(humanCommand('"diarchy" reply ok')).toBe("reply");
+  });
+
   it("denies a Bash call to diarchy reply with a PreToolUse decision and lets everything else through", async () => {
     const denied = await cli(["guard", "--agent", "claude"], { input: event('diarchy reply "continue" --budget messages_total=200') });
     expect(denied.code).toBe(0);
@@ -643,6 +675,7 @@ describe("guard", () => {
     const stop = await cli(["guard", "--agent", "codex"], { input: event("node bin/diarchy.js stop --reason enough") });
     expect(JSON.parse(stop.stdout)).toMatchObject({ hookSpecificOutput: { permissionDecision: "deny" } });
     expect(await cli(["guard", "--agent", "codex"], { input: event("npm test") })).toEqual({ code: 0, stdout: "", stderr: "" });
+    expect(await cli(["guard", "--agent", "claude"], { input: event(commitHeredoc) })).toEqual({ code: 0, stdout: "", stderr: "" });
     expect(await cli(["guard", "--agent", "codex"], { input: "not json {{{" })).toEqual({ code: 0, stdout: "", stderr: "" });
     expect(await cli(["guard", "--agent", "codex"], { input: "" })).toEqual({ code: 0, stdout: "", stderr: "" });
   });

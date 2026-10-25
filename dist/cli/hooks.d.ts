@@ -10,9 +10,12 @@ export declare function runGate(projectDir: string, agent: string): GateDecision
 /**
  * The human subcommand a shell command would run (`reply` or `stop`), else
  * null. Each simple command is read as `[VAR=x ...] [sudo|env|node|npx ...]
- * <program> [--project <dir>] <subcommand>`, so the words inside an argument
- * (`grep "diarchy reply" docs/`) do not count. Best effort by design: a
- * `bash -c '...'` string, an alias, or a wrapper script is not unpacked
+ * <program> [--project <dir>] <subcommand>` after quote removal, so the words
+ * inside an argument (`grep "diarchy reply" docs/`), single-quoted text, and a
+ * quoted-delimiter heredoc body (`<<'EOF'`) do not count, while a `$(...)` or
+ * backtick substitution does, even inside double quotes. The string of
+ * `bash|sh|zsh -c` is read as a command line of its own. Best effort by
+ * design: an alias, a function, `eval`, or a wrapper script is not unpacked
  * (ANTI-SLOP.md, What this does NOT prevent).
  */
 export declare function humanCommand(command: string): "reply" | "stop" | null;

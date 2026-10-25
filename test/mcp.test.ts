@@ -712,3 +712,19 @@ describe("runMcpServer over stdio", () => {
     expect(parsed.find((frame) => frame.id === 2)?.result?.tools?.map((tool) => tool.name).sort()).toEqual(SORTED_TOOLS);
   });
 });
+
+// ---------------------------------------------------------------------------
+// assign description: the recipe it gives must pass the store
+// ---------------------------------------------------------------------------
+
+describe("assign tool description", () => {
+  it("tells the lead a review ASSIGN takes new_task and to omit worktree and branch so config supplies them", async () => {
+    const h = await harness();
+    const { tools } = await h.claude.listTools();
+    const assign = tools.find((tool) => tool.name === "assign")?.description ?? "";
+    // An ASSIGN with neither task nor new_task is SCHEMA (PROTOCOL.md section 3), review included.
+    expect(assign).toContain("kind review takes the PR url");
+    expect(assign).toContain('new_task "Review <pr url>"');
+    expect(assign).toContain("omit worktree and branch so they come from diarchy.config.json");
+  });
+});

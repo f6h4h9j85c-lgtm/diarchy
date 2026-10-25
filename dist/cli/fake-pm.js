@@ -30,9 +30,10 @@
 import { spawnSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { existsSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { join, posix } from "node:path";
 import { openThreads } from "../protocol/index.js";
 import { VaultStore, loadConfig } from "../vault/index.js";
+import { branchName } from "./worktrees.js";
 const agent = process.env.DIARCHY_AGENT ?? "";
 const projectDir = process.env.DIARCHY_PROJECT ?? process.cwd();
 const mode = process.env.DIARCHY_FAKE_MODE ?? process.argv[2] ?? "good";
@@ -117,7 +118,7 @@ function proposePlan(ctx) {
 // good
 // ---------------------------------------------------------------------------
 function goodAction(ctx) {
-    const { store, state, messages, lead, other, acs } = ctx;
+    const { store, config, state, messages, lead, other, acs } = ctx;
     if (state.phase === "PLAN") {
         const plan = state.decisions.plan;
         if (plan === undefined || plan.status !== "open")
@@ -205,8 +206,8 @@ function goodAction(ctx) {
             re: [acOfTask(todo)],
             task: todo.id,
             kind: "implement",
-            worktree: `.diarchy/worktrees/${assignee}`,
-            branch: `diarchy/${state.goal}/${assignee}`,
+            worktree: posix.join(config.worktrees.root, assignee),
+            branch: branchName(config, state.goal, assignee),
             reason: "availability",
         }));
     }
@@ -339,7 +340,8 @@ for (const signal of ["SIGTERM", "SIGINT"]) {
     });
 }
 async function main() {
-    const store = new VaultStore({ projectDir, config: loadConfig(projectDir), agent, pollIntervalMs: 50 });
+    const config = loadConfig(projectDir);
+    const store = new VaultStore({ projectDir, config, agent, pollIntervalMs: 50 });
     const started = Date.now();
     const memory = new Set();
     log(`fake PM in ${mode} mode for ${projectDir}`);
@@ -359,6 +361,7 @@ async function main() {
         }
         const ctx = {
             store,
+            config,
             state,
             messages: store.listMessages(),
             lead: state.lead === agent,

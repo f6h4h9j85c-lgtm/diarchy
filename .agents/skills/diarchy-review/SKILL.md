@@ -5,7 +5,7 @@ description: Review the other PM's pull request in a diarchy run. Use when an AS
 
 # diarchy review
 
-Input: an ASSIGN `kind: review` naming a PR url and `re` ACs.
+Input: an ASSIGN `kind: review` naming a PR url and `re` ACs. Below, `.diarchy/worktrees/<you>` and `diarchy/<goal-id>/<you>` are the defaults: your own worktree and branch are `<worktrees.root>/<you>` and `<branch_prefix>/<goal-id>/<you>` from `diarchy.config.json`.
 
 1. Check out the PR head detached in your own worktree; a plain `git checkout <branch>` fails there because the author's worktree holds that branch. With a remote: `cd .diarchy/worktrees/<you> && git fetch origin <branch> && git checkout --detach FETCH_HEAD`. Without one: `cd .diarchy/worktrees/<you> && git checkout --detach <branch>`. Never review in the author's worktree and never from a stale local copy. When done, return to your branch with `git checkout diarchy/<goal-id>/<you>`.
 2. Run the project's full test command. Then run each command cited in the author's STATUS `test` evidence. Record exact commands and exit codes.

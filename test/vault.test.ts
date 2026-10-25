@@ -252,16 +252,44 @@ describe("golden renders", () => {
     expect(chat).toContain("> Question and how to answer: [goal](goal.md) · [decisions (2)](decisions.md)");
     expect(chat.trimEnd().endsWith("codex is BLOCKED (external): Integration test needs staging REDIS_URL. Not in .env.example or the vault; I will not guess a credential. The human has been paged; goal.md says how to answer.")).toBe(true);
     expect(h.claude.state()?.phase).toBe("BLOCKED");
+    // RENDERING.md 2.1 "Example, BLOCKED" is this very strip, not a paraphrase of it.
+    const rendering = readFileSync(join(SAMPLES, "..", "RENDERING.md"), "utf8");
+    const strip = /Example, BLOCKED:\n\n```\n([\s\S]*?)```/.exec(rendering)?.[1];
+    expect(strip).toBeDefined();
+    expect(chat).toContain(strip);
   });
 
-  it("the PROTOCOL.md 3.2 examples are messages of the run (ids re-numbered by the store, ASK_HUMAN body engine-generated)", () => {
+  it("RENDERING.md 1.2 and 2.3 describe the renderer: the local hint sits only on the strip and the BLOCKED callout; H2s are phase and day headings", async () => {
+    const LOCAL_HINT = /\(\d\d:\d\d local(?:, \d{4}-\d\d-\d\d)?\)/g;
+    const hints = (text: string): number => (text.match(LOCAL_HINT) ?? []).length;
+    const done = harness();
+    await replay(done);
+    expect(hints(done.file("chat.md"))).toBe(1);
+    expect(done.file("chat.md")).toMatch(/^> \d{4}-\d\d-\d\d · last \d\d:\d\d:\d\d UTC \(\d\d:\d\d local\)/m);
+    expect(hints(done.file("goal.md"))).toBe(0);
+    expect(hints(done.file("decisions.md"))).toBe(0);
+    const blocked = harness();
+    await replay(blocked, BLOCKED_INDEX);
+    expect(hints(blocked.file("goal.md"))).toBe(1);
+    expect(blocked.file("goal.md")).toMatch(/\*\*Human needed\*\* since \d\d:\d\d:\d\d UTC \(\d\d:\d\d local\)/);
+    for (const line of done.file("chat.md").split("\n").filter((text) => text.startsWith("## "))) {
+      expect(line).toMatch(/^## (?:→ [A-Z]+ · \d\d:\d\d:\d\d|\d{4}-\d\d-\d\d UTC)$/);
+    }
+    const rendering = readFileSync(join(SAMPLES, "..", "RENDERING.md"), "utf8");
+    expect(rendering).not.toContain("most recent timestamp in each file");
+    expect(rendering).toContain("Phase headings and the day headings of 2.4 are the only H2s in the file");
+    const notes = readFileSync(join(SAMPLES, "..", "RENDERING-DESIGN-NOTES.md"), "utf8");
+    expect(notes).not.toContain("Phase transitions are the only H2s");
+  });
+
+  it("the PROTOCOL.md 3.2 examples are messages of the run (ids re-numbered by the store), bodies included", () => {
     const examples = readdirSync(EXAMPLES).filter((name) => name.endsWith(".md"));
     expect(examples).toHaveLength(9);
     for (const name of examples) {
       const example = parseMessageFile(readFileSync(join(EXAMPLES, name), "utf8"));
       const twin = RUN.find((message) => message.ts === example.ts);
       expect(twin, name).toBeDefined();
-      expect(twin).toMatchObject({ from: example.from, to: example.to, type: example.type, re: example.re });
+      expect(twin).toMatchObject({ from: example.from, to: example.to, type: example.type, re: example.re, body: example.body });
       if (example.claim !== undefined) expect(twin?.claim).toBe(example.claim);
       if (example.evidence !== undefined) expect(twin?.evidence).toEqual(example.evidence);
     }

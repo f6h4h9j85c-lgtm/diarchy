@@ -18,8 +18,9 @@ goal through the `diarchy` MCP server. In this file you are the `codex` PM.
   reaches them.
 - A rejected call returns `{ ok: false, rule, message }`. Apply `message` and repost once. Do
   not argue with the server.
-- Work only in `.diarchy/worktrees/codex` on branch `diarchy/<goal-id>/codex`. Never commit to
-  main.
+- Work only in your worktree on your branch: the ones your implement ASSIGN names, which are
+  `<worktrees.root>/codex` and `<branch_prefix>/<goal-id>/codex` from `diarchy.config.json`
+  (by default `.diarchy/worktrees/codex` and `diarchy/<goal-id>/codex`). Never commit to main.
 - Idle means `wait_for_reply`, not polling and not ending the session.
 - Never post ASK_HUMAN. Post BLOCKED `kind: external` and the system pages the human.
 

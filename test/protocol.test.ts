@@ -35,6 +35,7 @@ import {
   type Rejection,
   type RuleId,
 } from "../src/protocol/index.js";
+import { goalStateSchema } from "../src/protocol/schema.js";
 
 const FIXTURES = fileURLToPath(new URL("./fixtures/protocol/", import.meta.url));
 const DOCS = fileURLToPath(new URL("../docs/", import.meta.url));
@@ -385,7 +386,10 @@ describe("ASK_HUMAN bodies", () => {
 
   it("the spec example and the engine's external body say the human is paged, not how to reply", () => {
     const spec = example("20261025T143501Z-0001-system-ASK_HUMAN");
-    expect(spec.body.trimEnd()).toBe(`codex is BLOCKED (external): staging REDIS_URL missing. ${PAGED}`);
+    // The spec example is the engine's own output for the 3.2 BLOCKED example, not a paraphrase.
+    expect(spec.body.trimEnd()).toBe(
+      `codex is BLOCKED (external): Integration test needs staging REDIS_URL. Not in .env.example or the vault; I will not guess a credential. ${PAGED}`,
+    );
     const blocked = example("20261025T143500Z-0002-codex-BLOCKED");
     const result = evaluate(blocked, loadBase("execute-assigned"), { now: new Date(blocked.ts), callerAgent: "codex" });
     if (!result.ok) throw new Error(result.message);
@@ -431,6 +435,39 @@ describe("ASK_HUMAN bodies", () => {
     // The rendered transcript shows the command nowhere; goal.md's callout is where the human finds it (RENDERING.md 4.1).
     expect(readFileSync(join(DOCS, "samples", "chat.md"), "utf8")).not.toMatch(HUMAN_COMMAND);
     expect(readFileSync(join(DOCS, "samples", "goal-blocked.md"), "utf8")).toMatch(/diarchy reply "<your answer>"/);
+  });
+
+  it("PROTOCOL.md 4 states one template per trigger, and the engine's bodies are exactly those", () => {
+    const protocol = readFileSync(join(DOCS, "PROTOCOL.md"), "utf8");
+    const section = protocol.slice(protocol.indexOf("## 4. Message types"), protocol.indexOf("## 5. Roles"));
+    const templates = [...section.matchAll(/^- [^`\n]*(?:`[^`\n]*`[^`\n]*)*?: `([^`\n]+)`/gm)].map((match) => match[1]);
+    expect(templates).toHaveLength(5);
+    const patterns = templates.map((template) => {
+      const parts = template.split(/<[a-z_]+>/).map((part) => part.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+      return new RegExp(`^${parts.join(".+?")}$`);
+    });
+
+    const blocked = example("20261025T143500Z-0002-codex-BLOCKED");
+    const external = evaluate(blocked, loadBase("execute-assigned"), { now: new Date(blocked.ts), callerAgent: "codex" });
+    if (!external.ok) throw new Error(external.message);
+    const deadlock = tick(loadBase("plan-challenged"), new Date("2026-10-25T15:00:00Z"));
+    const base = loadBase("execute-assigned");
+    const status = parseMessageFile(
+      "---\nprotocol_version: 1\nid: 20261025T142100Z-0002-codex-STATUS\ngoal: 20261025-rate-limit\nfrom: codex\nto: all\ntype: STATUS\nre: [AC1]\nphase: EXECUTE\nevidence:\n  - kind: commit\n    sha: 9f3c2ab\nts: 2026-10-25T14:21:00Z\n---\nScaffold pushed.\n",
+    );
+    const nearLimit: GoalState = { ...base, used: { ...base.used, messages_total: base.limits.messages_total - 1 } };
+    const total = evaluate(status, nearLimit, { now: new Date(status.ts), callerAgent: "codex" });
+    if (!total.ok) throw new Error(total.message);
+    const clock = tick(base, new Date("2026-10-25T18:00:00Z"));
+    const spent: GoalState = { ...base, limits: { ...base.limits, spend_usd: 50 }, used: { ...base.used, spend_usd: 50 } };
+    const spend = tick(spent, new Date("2026-10-25T14:30:00Z"));
+
+    const bodies = [external.effects, deadlock?.effects, total.effects, clock?.effects, spend?.effects].map((effects) => askBodies(effects ?? []));
+    bodies.forEach((list, index) => {
+      expect(list, templates[index]).toHaveLength(1);
+      expect(list[0]).toMatch(patterns[index]);
+    });
+    expect(example("20261025T143501Z-0001-system-ASK_HUMAN").body.trimEnd()).toMatch(patterns[0]);
   });
 });
 
@@ -669,5 +706,109 @@ describe("one-line field caps", () => {
     expect(protocol).toContain(`\`path\` (one line, ${FIELD_MAX_CHARS} characters max)`);
     expect(protocol).toContain(`\`log\` (path; one line, ${FIELD_MAX_CHARS} characters max)`);
     expect(protocol).toContain("One line: no line break and no other control character (C0, DEL, C1, U+2028, U+2029).");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// PROTOCOL.md 2.3 and 8: budget.json as the store writes it
+// ---------------------------------------------------------------------------
+
+/** Split `a, b{c, d}, e[{f}]` on the commas outside any bracket. */
+function topLevel(text: string): string[] {
+  const parts: string[] = [];
+  let depth = 0;
+  let start = 0;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (ch === "{" || ch === "[") depth++;
+    else if (ch === "}" || ch === "]") depth--;
+    else if (ch === "," && depth === 0) {
+      parts.push(text.slice(start, i).trim());
+      start = i + 1;
+    }
+  }
+  parts.push(text.slice(start).trim());
+  return parts.filter((part) => part !== "");
+}
+
+/** The field list a documented group names: `{a, b}`, `[{a, b}]`, `{<key>: {a, b}}`; null for `{...}` or `{<key>: n}`. */
+function groupFields(group: string): string[] | null {
+  let inner = group.slice(1, -1).trim();
+  const keyed = /^<[^>]+>: ([\s\S]*)$/.exec(inner);
+  if (keyed) inner = keyed[1].trim();
+  if (inner.startsWith("{") && inner.endsWith("}")) inner = inner.slice(1, -1).trim();
+  if (inner === "..." || /^[a-z]$/.test(inner)) return null;
+  return topLevel(inner);
+}
+
+/** Field name and its bracketed group, if any: `used{...}`, `reviews: [...]`, `deadlock_watch{...} | null`. */
+function parseField(field: string): { name: string; group: string | null } {
+  const name = /^[a-z_]+/.exec(field)?.[0] ?? "";
+  const rest = field.slice(name.length).replace(/^:\s*/, "");
+  const open = rest[0];
+  if (open !== "{" && open !== "[") return { name, group: null };
+  let depth = 0;
+  for (let i = 0; i < rest.length; i++) {
+    if (rest[i] === "{" || rest[i] === "[") depth++;
+    if (rest[i] === "}" || rest[i] === "]") depth--;
+    if (depth === 0) return { name, group: rest.slice(0, i + 1) };
+  }
+  return { name, group: null };
+}
+
+interface Introspectable {
+  _zod: { def: { type: string } };
+  shape?: Record<string, Introspectable>;
+  unwrap?: () => Introspectable;
+  valueType?: Introspectable;
+  element?: Introspectable;
+}
+
+/** The object schema under nullable, record, and array wrappers. */
+function objectShape(schema: Introspectable): Record<string, Introspectable> | null {
+  const type = schema._zod.def.type;
+  if (type === "object") return schema.shape ?? null;
+  if (type === "nullable" && schema.unwrap) return objectShape(schema.unwrap());
+  if (type === "record" && schema.valueType) return objectShape(schema.valueType);
+  if (type === "array" && schema.element) return objectShape(schema.element);
+  return null;
+}
+
+function expectSameFields(fields: string[], shape: Record<string, Introspectable>, where: string): void {
+  const parsed = fields.map(parseField);
+  expect(parsed.map((field) => field.name).sort(), where).toEqual(Object.keys(shape).sort());
+  for (const { name, group } of parsed) {
+    if (group === null) continue;
+    const nested = groupFields(group);
+    if (nested === null) continue;
+    const nestedShape = objectShape(shape[name]);
+    expect(nestedShape, `${where}.${name}`).not.toBeNull();
+    if (nestedShape !== null) expectSameFields(nested, nestedShape, `${where}.${name}`);
+  }
+}
+
+describe("PROTOCOL.md 2.3 budget.json", () => {
+  const protocol = readFileSync(join(DOCS, "PROTOCOL.md"), "utf8");
+
+  it("lists every key goalStateSchema requires, nested objects included, and no other", () => {
+    const shape = /^`budget\.json`: `([^`]+)`/m.exec(protocol)?.[1];
+    expect(shape).toBeDefined();
+    expectSameFields(topLevel(shape ?? ""), goalStateSchema.shape as unknown as Record<string, Introspectable>, "budget.json");
+  });
+
+  it("documents spend_usd as unmetered while nothing in src writes used.spend_usd", () => {
+    const writes: string[] = [];
+    const walk = (dir: string): void => {
+      for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        const path = join(dir, entry.name);
+        if (entry.isDirectory()) walk(path);
+        else if (entry.name.endsWith(".ts") && /spend_usd\s*[-+*/]?=(?!=)/.test(readFileSync(path, "utf8"))) writes.push(path);
+      }
+    };
+    walk(fileURLToPath(new URL("../src/", import.meta.url)));
+    // Metering cost is a feature to add with its docs: PROTOCOL.md 8 and the ANTI-SLOP.md Tuning row say nothing writes it.
+    expect(writes).toEqual([]);
+    expect(protocol).toMatch(/^\| spend_usd \| null \| `used\.spend_usd`; reserved: nothing writes it/m);
+    expect(readFileSync(join(DOCS, "ANTI-SLOP.md"), "utf8")).toMatch(/^\| spend_usd \| never in diarchy 0\.1: nothing meters cost/m);
   });
 });

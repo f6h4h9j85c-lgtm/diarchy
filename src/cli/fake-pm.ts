@@ -30,10 +30,11 @@
 import { spawnSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { existsSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { join, posix } from "node:path";
 
-import { openThreads, type AgentId, type GoalState, type Message, type RuleId, type TaskState } from "../protocol/index.js";
+import { openThreads, type AgentId, type DiarchyConfig, type GoalState, type Message, type RuleId, type TaskState } from "../protocol/index.js";
 import { VaultStore, loadConfig, type MessageDraft, type PostResult } from "../vault/index.js";
+import { branchName } from "./worktrees.js";
 
 const agent = process.env.DIARCHY_AGENT ?? "";
 const projectDir = process.env.DIARCHY_PROJECT ?? process.cwd();
@@ -56,6 +57,7 @@ type Action = () => Promise<void>;
 
 interface Ctx {
   store: VaultStore;
+  config: DiarchyConfig;
   state: GoalState;
   messages: Message[];
   lead: boolean;
@@ -137,7 +139,7 @@ function proposePlan(ctx: Ctx): MessageDraft {
 // ---------------------------------------------------------------------------
 
 function goodAction(ctx: Ctx): Action | null {
-  const { store, state, messages, lead, other, acs } = ctx;
+  const { store, config, state, messages, lead, other, acs } = ctx;
   if (state.phase === "PLAN") {
     const plan = state.decisions.plan;
     if (plan === undefined || plan.status !== "open") return null;
@@ -228,8 +230,8 @@ function goodAction(ctx: Ctx): Action | null {
         re: [acOfTask(todo)],
         task: todo.id,
         kind: "implement",
-        worktree: `.diarchy/worktrees/${assignee}`,
-        branch: `diarchy/${state.goal}/${assignee}`,
+        worktree: posix.join(config.worktrees.root, assignee),
+        branch: branchName(config, state.goal, assignee),
         reason: "availability",
       }));
   }
@@ -377,7 +379,8 @@ for (const signal of ["SIGTERM", "SIGINT"] as const) {
 }
 
 async function main(): Promise<number> {
-  const store = new VaultStore({ projectDir, config: loadConfig(projectDir), agent, pollIntervalMs: 50 });
+  const config = loadConfig(projectDir);
+  const store = new VaultStore({ projectDir, config, agent, pollIntervalMs: 50 });
   const started = Date.now();
   const memory = new Set<string>();
   log(`fake PM in ${mode} mode for ${projectDir}`);
@@ -397,6 +400,7 @@ async function main(): Promise<number> {
     }
     const ctx: Ctx = {
       store,
+      config,
       state,
       messages: store.listMessages(),
       lead: state.lead === agent,

@@ -45,14 +45,20 @@ nothing until it exists.
    `node <plugin root>/bin/diarchy.js mcp --agent claude` by hand and read the
    error; a missing `dist/` or a Node older than 20 are the usual causes.
 2. Run `/plugin` and check `diarchy@diarchy` is enabled.
-3. On the next session start, with a goal active, the first lines of context are
+3. Ask Claude to call the diarchy `read` tool. With no goal in the vault it
+   answers `{ ok: false, rule: "NO_GOAL", ... }`; that is the server working.
+   Once a goal exists it returns the phase, your role, and unread messages.
+4. On the next session start, with a goal active, the first lines of context are
    the inbox brief from `diarchy inbox-skim`. With no goal active nothing is
    printed; that is expected.
 
 ## Project configuration
 
-`diarchy.config.json` at the project root names the vault and both agents (see
-PROTOCOL.md section 8). `.diarchy/` holds the worktrees and is gitignored.
+`diarchy init` in the project root writes `diarchy.config.json`, which names
+the vault (default `<project> brain/diarchy`) and both agents (see PROTOCOL.md
+section 8), creates the vault directory, and adds `.diarchy/` to `.gitignore`.
+`.diarchy/` holds the per-agent worktrees and launcher state. A run starts with
+`diarchy start "<goal>" --ac "<criterion>"`; see QUICKSTART.md.
 
 ## Uninstall
 

@@ -63,6 +63,9 @@ trust_level = "trusted"
 
 ## 4. Project files
 
+- Run `diarchy init` in the project root. It writes `diarchy.config.json`
+  (vault path, both agents' launch commands, budgets), creates the vault, and
+  adds `.diarchy/` to `.gitignore`.
 - Copy `templates/AGENTS.md` to the project root as `AGENTS.md` (or append its
   content to an existing one). Codex reads `AGENTS.md` at session start; the
   template tells the PM to call `read` and load `diarchy-pm`, without
@@ -98,5 +101,8 @@ uses this form for `agents.codex.command` in `diarchy.config.json`.
    `kickoff`, `post`, `read`, `wait_for_reply`, `decide`, `assign`, `status`.
 2. Inside Codex run `/skills` (or ask "which skills do you have"); the three
    `diarchy-*` skills must appear.
-3. With a goal active, the session starts with the inbox brief from
+3. Ask Codex to call the diarchy `read` tool. With no goal in the vault it
+   answers `{ ok: false, rule: "NO_GOAL", ... }`; that is the server working.
+   Once a goal exists it returns the phase, your role, and unread messages.
+4. With a goal active, the session starts with the inbox brief from
    `diarchy inbox-skim --agent codex`. With no active goal nothing is printed.

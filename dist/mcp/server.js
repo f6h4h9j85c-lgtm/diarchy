@@ -10,8 +10,8 @@ import { posix } from "node:path";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { VERSION } from "../index.js";
-import { ASSIGN_KINDS, BLOCKED_KINDS, DECISION_BASES, MESSAGE_TYPES, STATUS_TASK_STATUSES, evidenceItemSchema, partialBudgetsSchema, } from "../protocol/index.js";
-import { MAX_WAIT_MS, NoGoalError, VaultStore, loadConfig, } from "../vault/index.js";
+import { ASSIGN_KINDS, BLOCKED_KINDS, DECISION_BASES, MESSAGE_TYPES, STATUS_TASK_STATUSES, SchemaError, evidenceItemSchema, partialBudgetsSchema, } from "../protocol/index.js";
+import { CorruptVaultFileError, MAX_WAIT_MS, NoGoalError, VaultStore, loadConfig, } from "../vault/index.js";
 /** Error codes the server adds to the protocol's RuleId set (PROTOCOL.md section 10). */
 export const SERVER_ERRORS = ["NO_GOAL", "WRONG_TOOL", "INTERNAL"];
 export const TOOL_NAMES = ["kickoff", "post", "read", "wait_for_reply", "decide", "assign", "status"];
@@ -33,7 +33,16 @@ function toolResult(result) {
 function logError(error) {
     console.error(`diarchy-mcp: ${error instanceof Error ? (error.stack ?? error.message) : String(error)}`);
 }
-/** Run a tool body; NoGoalError becomes NO_GOAL, anything else INTERNAL. The server never crashes on a bad input. */
+/** A stored vault file will not parse: say so, and send the PM to the human instead of a retry. */
+function corruptFileText(error) {
+    return `${error.message} The vault is damaged, not your draft, so do not retry. Post BLOCKED with kind external naming that file so the human can fix it or run diarchy stop.`;
+}
+/**
+ * Run a tool body; NoGoalError becomes NO_GOAL, a CorruptVaultFileError (a
+ * vault file that will not parse) keeps its rule (SCHEMA, or TYPED_ONLY for an
+ * unknown message type) with a message naming the file, anything else
+ * INTERNAL. The server never crashes on a bad input.
+ */
 async function runTool(body) {
     try {
         return toolResult(await body());
@@ -42,6 +51,10 @@ async function runTool(body) {
         if (error instanceof NoGoalError)
             return toolResult(serverError("NO_GOAL", NO_GOAL_TEXT));
         logError(error);
+        if (error instanceof CorruptVaultFileError)
+            return toolResult({ ok: false, rule: error.rule, message: corruptFileText(error) });
+        if (error instanceof SchemaError)
+            return toolResult({ ok: false, rule: error.rule, message: error.message });
         return toolResult(serverError("INTERNAL", error instanceof Error ? error.message : String(error)));
     }
 }
@@ -82,10 +95,10 @@ export function createMcpServer(options) {
     };
     server.registerTool("kickoff", {
         title: "Kick off a goal",
-        description: "Start the one goal this vault will run; you become lead and the other agent challenger. Use only when read returns NO_GOAL and a human gave you a goal. Goal text 120 words max, each criterion 40 words max; criteria become AC1.. and are never reworded. Rejected with SINGLE_KICKOFF while a goal is PLAN, EXECUTE, or BLOCKED. Then post a PROPOSE with decision_id plan.",
+        description: "Start the one goal this vault will run; you become lead and the other agent challenger. Use only when read returns NO_GOAL and a human gave you a goal. Goal text 120 words max on one line, each criterion 40 words max on one line (no line terminators: CR, LF, VT, FF, U+0085, U+2028, U+2029); criteria become AC1.. and are never reworded. Rejected with SINGLE_KICKOFF while a goal is PLAN, EXECUTE, or BLOCKED. Then post a PROPOSE with decision_id plan.",
         inputSchema: {
-            goal: z.string().describe("Goal text; becomes the KICKOFF body."),
-            acceptance_criteria: z.array(z.string()).describe("Testable criteria, one line each, in order."),
+            goal: z.string().describe("Goal text as one paragraph on one line; becomes the KICKOFF body. Must not contain CR, LF, VT, FF, U+0085, U+2028, or U+2029, or start with `- AC<n>: ` (SCHEMA)."),
+            acceptance_criteria: z.array(z.string()).describe("Testable criteria in order, each on one line: no CR, LF, VT, FF, U+0085, U+2028, or U+2029 (SCHEMA)."),
             budgets: partialBudgetsSchema.optional().describe("Per-goal overrides of the diarchy.config.json budgets."),
             slug: z.string().optional().describe("[a-z0-9-]{1,40} for the goal id; default derived from the goal text."),
         },

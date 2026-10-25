@@ -28,11 +28,25 @@ export declare class VaultStore {
     /** Re-render goal.md, chat.md, decisions.md from the files on disk. */
     render(): void;
     kickoff(input: KickoffInput): Promise<KickoffResult>;
+    /**
+     * Shape checks before anything is written. kickoff.md is line based (goal
+     * text, blank line, `- AC<n>: <criterion>` lines), so a goal or criterion
+     * with any line terminator or an unpaired surrogate, or a goal shaped like
+     * an AC line, would not parse back to what was posted; those are SCHEMA
+     * here rather than a wedged goal later.
+     */
     private kickoffProblem;
     /** A PM kicking off leads; the launcher alternates from the previous goal's lead. */
     private defaultLead;
-    /** One transaction (PROTOCOL.md 2.2): lock, recover, tick, evaluate, write, effects, persist (the commit), render. */
+    /**
+     * One transaction (PROTOCOL.md 2.2): lock, recover, tick, evaluate, write,
+     * effects, persist (the commit), render. A BLOCKED with kind external loads
+     * the kickoff the way the human's commands do, so a PM can still page the
+     * human when kickoff.md is corrupt; every other post needs kickoff.md to parse.
+     */
     post(draft: MessageDraft): Promise<PostResult>;
+    /** `post` with the kickoff loader chosen by the caller: strict for PMs, recovering for escalation and the human. */
+    private postWith;
     /** Assign id, evaluate, and on acceptance write the message file. Call under the lock. */
     private accept;
     /** Write the system ASK_HUMAN for every `system_message` effect through the same path. */
@@ -72,6 +86,14 @@ export declare class VaultStore {
     stop(reason: string): Promise<PostResult>;
     private requireHuman;
     /**
+     * stop, reply, and a BLOCKED kind external must work even when kickoff.md
+     * is missing or will not parse (a hand edit, or a file written before the
+     * kickoff shape checks), so a PM can page the human and the human can
+     * always retire a wedged goal. The renderers only need what budget.json and
+     * the KICKOFF message already hold.
+     */
+    private kickoffOrRebuilt;
+    /**
      * Writing budget.json commits a transaction (PROTOCOL.md 2.2). A throw removes
      * the chat/ files written since the last commit; a crash's leftovers are moved
      * aside by the next transaction before it reads anything.
@@ -84,7 +106,13 @@ export declare class VaultStore {
     private waitUntil;
     /** chat/ files are writer-owned and immutable: own agent or system only, never overwritten. */
     private writeMessage;
-    /** The committed messages: chat/ files whose id `state` records, in (ts, seq) order. Nothing else is read or rendered. */
+    /**
+     * The committed messages: chat/ files whose id `state` records, in (ts, seq)
+     * order; nothing else is read or rendered. A committed file that will not
+     * parse throws CorruptVaultFileError, unless `skipCorrupt`: the rendered
+     * views and the human's recovery paths leave it out so a corrupt file cannot
+     * block them.
+     */
     private readMessages;
     private loadState;
     /** The commit point: every chat/ file written so far is now accepted. */

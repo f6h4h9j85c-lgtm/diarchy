@@ -1,0 +1,131 @@
+description: "DONE after the sandboxed-implementer choreography (PROTOCOL.md 9.1): codex cannot commit, so claude commits and opens its PR and passes the url in a STATUS body with only commit evidence; codex posts the first pr evidence and is the author; claude, who did not write the code, reviews it; DONE passes 9.2 (c) and (f)."
+state:
+  base: execute-assigned
+  tasks:
+    T1:
+      id: T1
+      task: Token-bucket middleware in src/middleware/rateLimit.ts
+      kind: implement
+      assignee: codex
+      branch: diarchy/20261025-rate-limit/codex
+      worktree: .diarchy/worktrees/codex
+      pr: null
+      status: assigned
+prior:
+  - message:
+      protocol_version: 1
+      id: 20261025T151000Z-0001-codex-STATUS
+      goal: 20261025-rate-limit
+      from: codex
+      to: all
+      type: STATUS
+      re:
+        - AC1
+      task: T1
+      task_status: in_progress
+      evidence:
+        - kind: test
+          test: npm test -- rateLimit
+          result: pass
+        - kind: file
+          path: src/middleware/rateLimit.ts
+      phase: EXECUTE
+      ts: 2026-10-25T15:10:00Z
+      body: Middleware written and tested in my worktree; the sandbox blocks my commit.
+  - message:
+      protocol_version: 1
+      id: 20261025T151100Z-0004-claude-STATUS
+      goal: 20261025-rate-limit
+      from: claude
+      to: all
+      type: STATUS
+      re:
+        - AC1
+      evidence:
+        - kind: commit
+          sha: 9f3c2ab
+      phase: EXECUTE
+      ts: 2026-10-25T15:11:00Z
+      body: Committed and pushed the codex worktree; its PR is https://github.com/acme/api/pull/412 for codex to cite.
+  - message:
+      protocol_version: 1
+      id: 20261025T151200Z-0002-codex-STATUS
+      goal: 20261025-rate-limit
+      from: codex
+      to: all
+      type: STATUS
+      re:
+        - AC1
+      task: T1
+      task_status: done
+      evidence:
+        - kind: pr
+          url: https://github.com/acme/api/pull/412
+      phase: EXECUTE
+      ts: 2026-10-25T15:12:00Z
+      body: ""
+  - message:
+      protocol_version: 1
+      id: 20261025T151300Z-0005-claude-ASSIGN
+      goal: 20261025-rate-limit
+      from: claude
+      to: claude
+      type: ASSIGN
+      re:
+        - AC1
+      new_task: Review https://github.com/acme/api/pull/412
+      kind: review
+      pr: https://github.com/acme/api/pull/412
+      phase: EXECUTE
+      ts: 2026-10-25T15:13:00Z
+      body: ""
+  - message:
+      protocol_version: 1
+      id: 20261025T152000Z-0006-claude-STATUS
+      goal: 20261025-rate-limit
+      from: claude
+      to: all
+      type: STATUS
+      re:
+        - AC1
+        - AC2
+        - AC3
+      task: T2
+      task_status: done
+      evidence:
+        - kind: review
+          url: https://github.com/acme/api/pull/412
+          verdict: approve
+        - kind: test
+          test: npm test
+          result: pass
+      phase: EXECUTE
+      ts: 2026-10-25T15:20:00Z
+      body: ""
+message:
+  protocol_version: 1
+  id: 20261025T163000Z-0007-claude-DONE
+  goal: 20261025-rate-limit
+  from: claude
+  to: all
+  type: DONE
+  re:
+    - AC1
+    - AC2
+    - AC3
+  evidence:
+    - kind: commit
+      sha: 1c0ffee42
+  phase: EXECUTE
+  ts: 2026-10-25T16:30:00Z
+  body: PR 412 merged to main.
+expect:
+  ok: true
+  phase_after: DONE
+  state:
+    prs:
+      https://github.com/acme/api/pull/412:
+        author: codex
+        reviews:
+          - by: claude
+            verdict: approve

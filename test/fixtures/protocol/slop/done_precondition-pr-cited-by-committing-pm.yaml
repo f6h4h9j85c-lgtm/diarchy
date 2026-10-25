@@ -1,0 +1,132 @@
+description: "DONE_PRECONDITION (f): claude commits the sandboxed codex PM's work and cites its PR as pr evidence, so claude is the author and codex reviews its own code; codex citing the same url later does not make it the author, and the rejection says the implementer must cite a PR no other agent cited first."
+state:
+  base: execute-assigned
+  tasks:
+    T1:
+      id: T1
+      task: Token-bucket middleware in src/middleware/rateLimit.ts
+      kind: implement
+      assignee: codex
+      branch: diarchy/20261025-rate-limit/codex
+      worktree: .diarchy/worktrees/codex
+      pr: null
+      status: assigned
+prior:
+  - message:
+      protocol_version: 1
+      id: 20261025T151000Z-0001-codex-STATUS
+      goal: 20261025-rate-limit
+      from: codex
+      to: all
+      type: STATUS
+      re:
+        - AC1
+      task: T1
+      task_status: done
+      evidence:
+        - kind: test
+          test: npm test -- rateLimit
+          result: pass
+      phase: EXECUTE
+      ts: 2026-10-25T15:10:00Z
+      body: Middleware written and tested in my worktree; the sandbox blocks my commit.
+  - message:
+      protocol_version: 1
+      id: 20261025T151100Z-0004-claude-STATUS
+      goal: 20261025-rate-limit
+      from: claude
+      to: all
+      type: STATUS
+      re:
+        - AC1
+      evidence:
+        - kind: commit
+          sha: 9f3c2ab
+        - kind: pr
+          url: https://github.com/acme/api/pull/412
+      phase: EXECUTE
+      ts: 2026-10-25T15:11:00Z
+      body: Committed the codex worktree and opened its PR.
+  - message:
+      protocol_version: 1
+      id: 20261025T151300Z-0005-claude-ASSIGN
+      goal: 20261025-rate-limit
+      from: claude
+      to: codex
+      type: ASSIGN
+      re:
+        - AC1
+      new_task: Review https://github.com/acme/api/pull/412
+      kind: review
+      pr: https://github.com/acme/api/pull/412
+      phase: EXECUTE
+      ts: 2026-10-25T15:13:00Z
+      body: ""
+  - message:
+      protocol_version: 1
+      id: 20261025T152000Z-0002-codex-STATUS
+      goal: 20261025-rate-limit
+      from: codex
+      to: all
+      type: STATUS
+      re:
+        - AC1
+        - AC2
+        - AC3
+      task: T2
+      task_status: done
+      evidence:
+        - kind: review
+          url: https://github.com/acme/api/pull/412
+          verdict: approve
+        - kind: test
+          test: npm test
+          result: pass
+      phase: EXECUTE
+      ts: 2026-10-25T15:20:00Z
+      body: ""
+  - message:
+      protocol_version: 1
+      id: 20261025T152100Z-0003-codex-STATUS
+      goal: 20261025-rate-limit
+      from: codex
+      to: all
+      type: STATUS
+      re:
+        - AC1
+      task: T1
+      task_status: done
+      evidence:
+        - kind: pr
+          url: https://github.com/acme/api/pull/412
+      phase: EXECUTE
+      ts: 2026-10-25T15:21:00Z
+      body: ""
+message:
+  protocol_version: 1
+  id: 20261025T163000Z-0006-claude-DONE
+  goal: 20261025-rate-limit
+  from: claude
+  to: all
+  type: DONE
+  re:
+    - AC1
+    - AC2
+    - AC3
+  evidence:
+    - kind: commit
+      sha: 1c0ffee42
+  phase: EXECUTE
+  ts: 2026-10-25T16:30:00Z
+  body: PR 412 merged to main.
+expect:
+  ok: false
+  rule: DONE_PRECONDITION
+  message: "Not done: task T1 has no pr evidence from codex (codex must post STATUS with pr evidence for T1, citing a PR url no other agent cited first). Finish every task, post STATUS with passing tests for each AC, and get the other agent's approve review on each PR."
+  state:
+    prs:
+      https://github.com/acme/api/pull/412:
+        author: claude
+        reviews:
+          - by: codex
+            verdict: approve

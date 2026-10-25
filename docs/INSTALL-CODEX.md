@@ -57,13 +57,21 @@ installed plugin directory):
 [mcp_servers.diarchy]
 command = "node"
 args = ["/abs/path/to/diarchy/bin/diarchy.js", "mcp", "--agent", "codex"]
+env_vars = ["DIARCHY_PROJECT"]
 startup_timeout_sec = 20
 tool_timeout_sec = 1800
 ```
 
-A `config.toml` server with the same name overrides the plugin's, and this one
-starts in the session directory, so the server finds the project by its working
-directory. `--agent codex` is what makes this server post as `codex`.
+A `config.toml` server with the same name overrides the plugin's. Codex starts
+an MCP server with only a fixed set of environment variables (`HOME`, `PATH`,
+and a few more) plus the names in `env_vars`, so without that line the
+`DIARCHY_PROJECT` that `diarchy start` sets never reaches the server. This
+server has no `cwd`, so it starts in the session directory, and without
+`DIARCHY_PROJECT` it finds the project from there: inside a PM's git worktree
+(`<worktrees.root>/<agent>`, wherever `worktrees.root` points) the main
+checkout that owns it, else the nearest directory at or above it that holds
+`diarchy.config.json`. `--agent codex` is what makes this server post as
+`codex`.
 
 Why the raised timeouts: `wait_for_reply` blocks for up to 110 seconds per call
 and the PM chains several while the other agent works; Codex's default tool
@@ -155,6 +163,23 @@ does not help, the git directory stays read-only). When the Codex PM reports a
 finished task, commit and push `.diarchy/worktrees/codex` from outside the
 sandbox and open its PR. `diarchy start` prints a one-line notice whenever the
 codex args contain `workspace-write`.
+
+The Codex PM still posts that PR's `pr` evidence itself (PROTOCOL.md 9.1). The
+first agent to cite a PR as `pr` evidence is its author, the review goes to the
+agent that is not the author, and DONE needs a PR introduced by each
+implementer (9.2(f)). So the PM that commits or opens the PR for the Codex PM
+cites only `commit` and passes the url in its STATUS body, and the Codex PM
+then cites that url as `pr`. If the Claude PM cites it as `pr` instead, it
+becomes the author, the Codex PM is left to review its own code, and DONE is
+rejected. Leave the commit and the PR to the Claude PM: if you open the PR
+yourself, the Codex PM learns its url only from a message, and you can send one
+only with `diarchy reply` while the goal is BLOCKED.
+
+A sandboxed Codex PM cannot check out a PR head to review it either: the
+checkout and the fetch both write to the read-only git directory, and the
+fetch needs the network too. The `diarchy-review` skill then has it extract the branch into a
+temporary directory (`d=$(mktemp -d) && git archive <branch> | tar -x -C "$d"`),
+run the tests there, and read the change with `git diff main...<branch>`.
 
 ### Opt in to full access
 

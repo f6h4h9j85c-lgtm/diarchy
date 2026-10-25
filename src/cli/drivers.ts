@@ -9,8 +9,10 @@
  * cwd the agent's worktree, env
  * DIARCHY_AGENT and DIARCHY_PROJECT so the MCP server and hooks find the vault.
  * Under that sandbox the Codex PM cannot commit, push, or open a PR, so
- * `diarchy start` prints `sandboxNotice`; `diarchy init --codex-full-access`
- * swaps the sandbox flags for `--dangerously-bypass-approvals-and-sandbox`.
+ * `diarchy start` prints `sandboxNotice` (the other PM commits for it; the
+ * Codex PM still posts its own `pr` evidence, PROTOCOL.md 9.1);
+ * `diarchy init --codex-full-access` swaps the sandbox flags for
+ * `--dangerously-bypass-approvals-and-sandbox`.
  *
  * Session resume is best effort and keyed by goal in `.diarchy/sessions/<agent>.json`:
  * - claude: the launcher mints a UUID and passes `--session-id <uuid>` on the
@@ -142,7 +144,8 @@ export function sandboxNotice(agent: string, launch: AgentLaunch): string | null
   if (flavorOf(launch.command) !== "codex" || !runsInWorkspaceWrite(launch.args)) return null;
   return (
     `note: ${agent} runs in the Codex workspace-write sandbox, so it can edit and test in its worktree but cannot commit, push, or open a PR; ` +
-    "the other PM or you must commit its work (full access: diarchy init --codex-full-access, docs/INSTALL-CODEX.md 5)"
+    `the other PM commits its work and opens its PR citing only commit, with the url in its STATUS body, and ${agent} posts the pr evidence itself ` +
+    "(full access: diarchy init --codex-full-access, docs/INSTALL-CODEX.md 5)"
   );
 }
 

@@ -28,7 +28,7 @@ diarchy init
 git add AGENTS.md .codex && git commit -m "Add the diarchy Codex files"
 ```
 
-`init` writes `diarchy.config.json` (vault path, both agents' launch commands, default budgets), creates `api brain/diarchy/`, adds `.diarchy/` to `.gitignore`, and copies Codex's project files: `AGENTS.md`, which tells the Codex PM to call `read` and load `diarchy-pm` at session start, and the five subagents in `.codex/agents/`. An existing `AGENTS.md` is kept; append `templates/AGENTS.md` to it. Commit both: each PM works in a git worktree cut from HEAD, and Codex reads them only from its own worktree. Open `api brain` as a vault in Obsidian. The Codex PM runs sandboxed and cannot commit, push, or open a PR, so you or the Claude PM commit its work; `diarchy init --codex-full-access` lifts the sandbox and gives it your full OS permissions ([INSTALL-CODEX.md](INSTALL-CODEX.md) section 5).
+`init` writes `diarchy.config.json` (vault path, both agents' launch commands, default budgets), creates `api brain/diarchy/`, adds `.diarchy/` to `.gitignore`, and copies Codex's project files: `AGENTS.md`, which tells the Codex PM to call `read` and load `diarchy-pm` at session start, and the five subagents in `.codex/agents/`. An existing `AGENTS.md` is kept; append `templates/AGENTS.md` to it. Commit both: each PM works in a git worktree cut from HEAD, and Codex reads them only from its own worktree. Open `api brain` as a vault in Obsidian. The Codex PM runs sandboxed and cannot commit, push, or open a PR, so the Claude PM commits its work and opens its PR, citing only the commit and passing the url in its STATUS body. The Codex PM then posts the `pr` evidence itself, because the first agent to cite a PR is its author and the other agent reviews it. `diarchy init --codex-full-access` lifts the sandbox and gives it your full OS permissions ([INSTALL-CODEX.md](INSTALL-CODEX.md) section 5).
 
 ## 3. Kick off
 
@@ -72,4 +72,4 @@ For a deadlock: `diarchy reply "<ruling>" --decision plan` (or `D<n>`). For a sp
 diarchy stop --reason "Out of time today."
 ```
 
-This posts a human BLOCKED message, leaves the goal BLOCKED, and signals the running `diarchy start`. A goal ends on its own when the lead posts DONE: every task is done, every AC has a passing test from a STATUS, every PR has the other agent's approve, and `chat.md` ends with `## → DONE`.
+This posts a human BLOCKED message, leaves the goal BLOCKED, and signals the running `diarchy start`. A goal ends on its own when the lead posts DONE: every task is done, every AC has a passing test from a STATUS, every PR has the other agent's approve, each implementer has introduced a PR with its own `pr` evidence, and `chat.md` ends with `## → DONE`.

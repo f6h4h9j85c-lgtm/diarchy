@@ -10,11 +10,11 @@ Status: pre-alpha, v0.1.0. Requires Node 20.3 or later on Linux or macOS. Native
 2. PLAN. The lead posts one PROPOSE with `decision_id: plan`: one falsifiable claim and 2 to 6 tasks mapped to acceptance criteria.
 3. The challenger posts at most one CHALLENGE, which must carry a `test` evidence item naming the cheapest check that settles it. Silence is legal.
 4. The lead must DECIDE within 2 messages or 10 minutes: adopt the challenge, reject it on a test it ran, or rule by authority and say why. Deciding `plan` moves the goal to EXECUTE. PLAN is capped at 12 messages.
-5. EXECUTE. The lead ASSIGNs tasks by availability. Each PM works on its branch `diarchy/<goal-id>/<agent>` and posts STATUS with commit, test, and PR evidence. After three messages without a STATUS, only STATUS, BLOCKED, and DONE are accepted.
+5. EXECUTE. The lead ASSIGNs tasks by availability. Each PM works on its branch `diarchy/<goal-id>/<agent>` and posts STATUS with commit, test, and PR evidence. The implementer always posts its own PR's `pr` evidence: when the Claude PM commits and opens a PR for the sandboxed Codex PM, it cites only the commit and passes the url in its STATUS body. After three messages without a STATUS, only STATUS, BLOCKED, and DONE are accepted.
 6. Every PR is ASSIGNed for review to the agent that did not write it. An `approve` from a non-author is the only thing that unlocks merge.
 7. A PM posts BLOCKED `kind: external` for a credential it lacks, a destructive action, or a product call. The goal moves to BLOCKED, the store posts a system ASK_HUMAN, and the launcher exits 2. A deadlock or a spent budget (80 messages or 240 minutes by default) does the same.
 8. The human reads `goal.md`, `chat.md`, and `decisions.md` in Obsidian and answers with `diarchy reply "<text>"`: a DECIDE with `basis: human` recorded in `decisions.md`. The PMs have exited by then, so `diarchy start` (no goal text) re-attaches them and the run continues.
-9. The lead posts DONE once every task is done, every AC has a passing test from a STATUS, every PR has a cross-review, and no thread is open; a DONE cannot certify itself. The launcher exits 0.
+9. The lead posts DONE once every task is done, every AC has a passing test from a STATUS, every PR has a cross-review, each implementer has introduced a PR with its own `pr` evidence, and no thread is open; a DONE cannot certify itself. The launcher exits 0.
 
 The plan being settled, from `docs/samples/chat.md` with blank lines removed:
 
@@ -75,11 +75,12 @@ enabled = true
 [mcp_servers.diarchy]
 command = "node"
 args = ["/abs/path/to/diarchy/bin/diarchy.js", "mcp", "--agent", "codex"]
+env_vars = ["DIARCHY_PROJECT"]
 startup_timeout_sec = 20
 tool_timeout_sec = 1800
 ```
 
-Skills load from `.agents/skills/`. Trust the project (start `codex` in it once and accept the prompt, or add `[projects."/abs/path/to/project"]` with `trust_level = "trusted"`) so the subagents in `.codex/agents/` load, then run `/hooks` and approve the plugin's three diarchy hooks (`hooks/codex-hooks.json`): Codex records trust per hook hash, so approve them again after a diarchy update changes them. Headless `codex exec` skips untrusted hooks silently; the launcher passes `--dangerously-bypass-hook-trust` by default. The launcher keeps the Codex sandbox on, so the Codex PM cannot commit, push, or open a PR; `diarchy init --codex-full-access` lifts the sandbox and gives it your full OS permissions. `diarchy init` copies the subagents and `templates/AGENTS.md` into the project; commit both before `diarchy start`. Verify: `/mcp` lists `diarchy`, `/hooks` shows all three hooks trusted, and the `read` tool answers `NO_GOAL`. Details: `docs/INSTALL-CODEX.md`.
+Skills load from `.agents/skills/`. Trust the project (start `codex` in it once and accept the prompt, or add `[projects."/abs/path/to/project"]` with `trust_level = "trusted"`) so the subagents in `.codex/agents/` load, then run `/hooks` and approve the plugin's three diarchy hooks (`hooks/codex-hooks.json`): Codex records trust per hook hash, so approve them again after a diarchy update changes them. Headless `codex exec` skips untrusted hooks silently; the launcher passes `--dangerously-bypass-hook-trust` by default. `env_vars` passes the launcher's `DIARCHY_PROJECT` through Codex, which gives an MCP server only a fixed set of variables plus the ones it names. The launcher keeps the Codex sandbox on, so the Codex PM cannot commit, push, or open a PR (the Claude PM commits for it; the Codex PM still posts the `pr` evidence); `diarchy init --codex-full-access` lifts the sandbox and gives it your full OS permissions. `diarchy init` copies the subagents and `templates/AGENTS.md` into the project; commit both before `diarchy start`. Verify: `/mcp` lists `diarchy`, `/hooks` shows all three hooks trusted, and the `read` tool answers `NO_GOAL`. Details: `docs/INSTALL-CODEX.md`.
 
 ## Quickstart
 

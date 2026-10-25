@@ -503,7 +503,11 @@ export function doneMissing(message: Message, state: GoalState): string[] {
   for (const task of Object.values(state.tasks)) {
     if (task.status !== "done") missing.push(`task ${task.id} is ${task.status}`);
     else if (state.review_required && task.kind !== "review" && !authoredPr(state, task.assignee)) {
-      missing.push(`task ${task.id} has no pr evidence from ${task.assignee ?? "an assignee"}`);
+      // 9.1: the implementer posts the pr evidence itself, even when another PM opened the PR for it.
+      const who = task.assignee ?? "its assignee";
+      missing.push(
+        `task ${task.id} has no pr evidence from ${who} (${who} must post STATUS with pr evidence for ${task.id}, citing a PR url no other agent cited first)`,
+      );
     }
   }
   if (state.review_required && Object.keys(state.prs).length === 0) missing.push("no PR is registered");

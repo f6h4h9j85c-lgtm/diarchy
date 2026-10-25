@@ -50,7 +50,7 @@ Consciously kept:
 - **Code spans for shas, branches, commands, paths only.** Monospace is data here, not a house voice; prose, labels, and the fields line stay in the body face.
 - **Mandated 7-column decisions table and 5-column tasks table.** Both will scroll horizontally on a phone. Kept because the columns are mandated; proposed changes are listed below.
 - **No "latest" section.** Duplicating blocks breaks "one block per message", doubles every search hit, and costs a screen; the strip's third paragraph plus the outline headings do the job.
-- **Faithful AC statuses in `goal-blocked.md`.** All three ACs read `open` at 14:35 even though the plan DECIDE's replica-count test failed. The first draft of PROTOCOL 2.3 set AC status from any `test` evidence citing the AC, which would have shown `**failing**` before any code existed; proposed change 1 below limited it to STATUS and DONE, so a probe test in a CHALLENGE or DECIDE never moves an AC (PROTOCOL 2.3, RENDERING 4.3).
+- **Faithful AC statuses in `goal-blocked.md`.** All three ACs read `open` at 14:35 even though the plan DECIDE's replica-count test failed. The first draft of PROTOCOL 2.3 set AC status from any `test` evidence citing the AC, which would have shown `**failing**` before any code existed; proposed change 1 below limited it to work evidence, applied as a STATUS accepted in EXECUTE, so a probe test in a CHALLENGE or DECIDE (or the DONE's own attestation) never moves an AC (PROTOCOL 2.3, RENDERING 4.3).
 
 ## Proposed changes to PROTOCOL.md 2.3
 

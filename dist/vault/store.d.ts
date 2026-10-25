@@ -40,7 +40,7 @@ export declare class VaultStore {
     /** Time-based transitions (DEADLOCK deadline, WALL_CLOCK) land before anything else. Call under the lock. */
     private tickLocked;
     private postOk;
-    /** Messages after this agent's cursor, excluding its own; advances the cursor. */
+    /** Goal text, ACs with status, and messages after this agent's cursor, excluding its own; advances the cursor. */
     read(options?: {
         since?: string;
     }): ReadResult | null;

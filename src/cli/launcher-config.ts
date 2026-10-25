@@ -47,8 +47,24 @@ export const DEFAULT_AGENT_LAUNCH: Record<string, AgentLaunch> = {
   // the launcher is automation for a project whose hook sources the operator has
   // read. Set agents.codex.args in diarchy.config.json without it to require
   // persisted trust instead.
+  //
+  // The sandbox stays on: the PM edits and tests in its worktree but cannot
+  // commit, push, or open a PR, because workspace-write keeps the gitdir
+  // read-only and the network off and `codex exec` never escalates. Full access
+  // is an explicit opt-in (`diarchy init --codex-full-access`, docs/INSTALL-CODEX.md 5).
   codex: { command: "codex", args: ["exec", "--sandbox", "workspace-write", HOOK_TRUST_BYPASS] },
 };
+
+/** Codex flag that turns off the sandbox and approvals: the PM runs with the user's full OS permissions. */
+export const SANDBOX_BYPASS = "--dangerously-bypass-approvals-and-sandbox";
+
+/** `agents.codex.args` written by `diarchy init --codex-full-access`. */
+export const CODEX_FULL_ACCESS_ARGS: readonly string[] = ["exec", SANDBOX_BYPASS, HOOK_TRUST_BYPASS];
+
+/** True when these launch args keep Codex in the workspace-write sandbox (`--sandbox workspace-write`, `-s`, or `-c sandbox_mode=`). */
+export function runsInWorkspaceWrite(args: readonly string[]): boolean {
+  return !args.includes(SANDBOX_BYPASS) && args.some((arg) => arg.includes("workspace-write"));
+}
 
 export const DEFAULT_LAUNCHER: LauncherKnobs = {
   poll_ms: 1000,

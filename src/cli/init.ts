@@ -5,14 +5,25 @@ import { join, resolve } from "node:path";
 import { AGENT_ID_PATTERN, DEFAULT_LIMITS } from "../protocol/index.js";
 import { CONFIG_FILENAME, defaultVault } from "../vault/index.js";
 import { CliError, EXIT_ERROR, EXIT_OK } from "./common.js";
-import { DEFAULT_LAUNCHER, agentLaunch } from "./launcher-config.js";
+import { CODEX_FULL_ACCESS_ARGS, DEFAULT_LAUNCHER, agentLaunch } from "./launcher-config.js";
 import { isGitRepo } from "./worktrees.js";
 
 export interface InitOptions {
   vault?: string;
   agents?: string;
   force?: boolean;
+  /** Launch the Codex PM without its sandbox (`CODEX_FULL_ACCESS_ARGS`). */
+  codexFullAccess?: boolean;
 }
+
+/** Printed after `diarchy init --codex-full-access` writes the config. */
+export const CODEX_FULL_ACCESS_WARNING = [
+  "warning: --codex-full-access launches the Codex PM with --dangerously-bypass-approvals-and-sandbox. It then",
+  "runs with your full OS permissions and no approval prompts: it can read, change, or delete any file your user",
+  "can, anywhere on the machine, and reach the network; its worktree is a convention, not a wall. Use it only on",
+  "a machine or container you are willing to let it change. To restore the sandbox, set agents.codex.args in",
+  `${CONFIG_FILENAME} back to the default or rerun diarchy init --force without the flag (docs/INSTALL-CODEX.md 5).`,
+].join("\n");
 
 const GITIGNORE_LINE = ".diarchy/";
 
@@ -40,9 +51,10 @@ function parseAgents(option: string | undefined): string[] {
   return unique;
 }
 
-export function buildConfig(projectDir: string, agentIds: string[], vault: string): Record<string, unknown> {
+export function buildConfig(projectDir: string, agentIds: string[], vault: string, options: { codexFullAccess?: boolean } = {}): Record<string, unknown> {
   const agents: Record<string, { command: string; args: string[] }> = {};
   for (const id of agentIds) agents[id] = agentLaunch(id, undefined);
+  if (options.codexFullAccess === true && agents.codex !== undefined) agents.codex.args = [...CODEX_FULL_ACCESS_ARGS];
   return {
     protocol_version: 1,
     vault,
@@ -76,6 +88,8 @@ function nextSteps(projectDir: string, vaultPath: string, ignored: boolean | nul
 
 export function runInit(projectDir: string, options: InitOptions): number {
   const agentIds = parseAgents(options.agents);
+  const fullAccess = options.codexFullAccess === true;
+  if (fullAccess && !agentIds.includes("codex")) throw new CliError("--codex-full-access needs an agent named codex in --agents");
   const configPath = join(projectDir, CONFIG_FILENAME);
   const exists = existsSync(configPath);
   let vault = options.vault ?? defaultVault(projectDir);
@@ -87,10 +101,12 @@ export function runInit(projectDir: string, options: InitOptions): number {
   mkdirSync(vaultPath, { recursive: true });
   const ignored = isGitRepo(projectDir) ? ensureGitignore(projectDir) : null;
   if (exists && options.force !== true) {
-    console.error(`diarchy: ${CONFIG_FILENAME} already exists in ${projectDir}; pass --force to rewrite it (vault and ignore file were checked)`);
+    const skipped = fullAccess ? "; --codex-full-access was not applied" : "";
+    console.error(`diarchy: ${CONFIG_FILENAME} already exists in ${projectDir}${skipped}; pass --force to rewrite it (vault and ignore file were checked)`);
     return EXIT_ERROR;
   }
-  writeFileSync(configPath, `${JSON.stringify(buildConfig(projectDir, agentIds, vault), null, 2)}\n`);
+  writeFileSync(configPath, `${JSON.stringify(buildConfig(projectDir, agentIds, vault, { codexFullAccess: fullAccess }), null, 2)}\n`);
   console.log(nextSteps(projectDir, vaultPath, ignored));
+  if (fullAccess) console.error(CODEX_FULL_ACCESS_WARNING);
   return EXIT_OK;
 }

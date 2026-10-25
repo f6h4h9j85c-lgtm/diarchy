@@ -116,11 +116,52 @@ codex exec --sandbox workspace-write --dangerously-bypass-hook-trust "Call the d
 codex exec --sandbox workspace-write --dangerously-bypass-hook-trust resume <SESSION_ID>
 ```
 
-Fresh approval prompts fail in headless mode, so trust the project first (step
-3) and keep `--sandbox workspace-write`: the PM must write to its worktree under
-`.diarchy/worktrees/codex` and run the project's tests.
+This is the form the diarchy launcher uses: `diarchy init` writes it to
+`agents.codex` in `diarchy.config.json`, and the launcher appends `resume <id>`
+on a restart and the prompt last. Fresh approval prompts fail in headless mode,
+so trust the project first (step 3).
 
-`codex exec` never shows the `/hooks` review prompt either, and it prints no
+### The sandbox stays on: the Codex PM cannot commit
+
+With the default the Codex PM edits files and runs tests in its worktree under
+`.diarchy/worktrees/codex`, but it cannot commit, push, or open a PR, so its
+work is committed by the Claude PM or by you. `codex exec` runs with approvals
+set to `never`, so a sandbox denial goes back to the model with nobody to
+escalate to, and `--sandbox workspace-write` keeps the worktree's `.git` file
+and the git directory it points at (`.git/worktrees/codex` in the main
+checkout) read-only and the network off. `git commit` fails with a read-only
+file system error on the index lock, and `git push` and `gh pr create` never
+reach the network (verified on Codex 0.164.0; turning on `network_access` alone
+does not help, the git directory stays read-only). When the Codex PM reports a
+finished task, commit and push `.diarchy/worktrees/codex` from outside the
+sandbox and open its PR. `diarchy start` prints a one-line notice whenever the
+codex args contain `workspace-write`.
+
+### Opt in to full access
+
+```
+diarchy init --codex-full-access
+```
+
+This writes `["exec", "--dangerously-bypass-approvals-and-sandbox",
+"--dangerously-bypass-hook-trust"]` to `agents.codex.args` and prints a
+warning. The risk: the Codex PM then runs with your full OS permissions and no
+approval prompts. It can read, change, or delete any file your user can,
+anywhere on the machine, and reach the network; the worktree becomes a
+convention the `diarchy-pm` skill enforces, not a wall. In exchange it can
+commit, push, and open PRs itself. Use it only on a machine or container you
+are willing to let it change.
+
+Like plain `init`, the flag refuses to touch an existing `diarchy.config.json`
+unless you add `--force`, which rewrites the whole file: pass `--vault` again if
+your vault is not the default, and reapply any budget or launcher edits. You
+can also edit `agents.codex.args` by hand; the array replaces the default
+verbatim, so keep `exec` first. Put the default args back to restore the
+sandbox.
+
+### Hook trust
+
+`codex exec` never shows the `/hooks` review prompt, and it prints no
 warning: hooks that are not yet trusted are skipped silently, so the session
 has no inbox brief and the turn ends without the Stop gate. Either approve the
 hooks interactively once (step 3) or pass `--dangerously-bypass-hook-trust`,

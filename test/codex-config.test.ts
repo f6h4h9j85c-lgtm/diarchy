@@ -444,7 +444,7 @@ describe("codex-config: skills", () => {
     const plan = text.slice(text.indexOf("## PLAN phase"), text.indexOf("## EXECUTE phase"));
     expect(plan).toContain("After two `{ timeout: true }` with none, or once the challenger posts something else, DECIDE.");
     expect(plan).toContain("`authority` when no CHALLENGE came");
-    expect(plan).toContain("after 4 quiet minutes the lead decides");
+    expect(plan).toContain("the lead decides after two of its `wait_for_reply` timeouts");
   });
 
   it("diarchy-review checks out the PR detached and keeps a request_changes STATUS from marking ACs passing", () => {

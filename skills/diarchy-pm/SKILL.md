@@ -41,7 +41,7 @@ Challenger:
 
 1. `wait_for_reply` for the PROPOSE.
 2. Find the cheapest fact that would change the plan: a failing test, a replica count, a missing dependency, an uncovered AC. Run it if you can.
-3. Post at most one CHALLENGE with a `test` evidence item (`result: pending` is allowed in PLAN), or post nothing. Silence is legal and common; after 4 quiet minutes the lead decides.
+3. Post at most one CHALLENGE with a `test` evidence item (`result: pending` is allowed in PLAN), or post nothing. Silence is legal and common; the lead decides after two of its `wait_for_reply` timeouts.
 
 At the 12-message cap only the lead's DECIDE is accepted.
 

@@ -77,7 +77,7 @@ YAML frontmatter, then body.
 | phase | enum | all | phase at acceptance, before any transition the message causes; store-assigned |
 | claim | string | PROPOSE, CHALLENGE, DECIDE | one sentence: 1 to 40 whitespace-split words, last character `.` `!` or `?`, no other `.` `!` `?` followed by whitespace |
 | evidence | list | STATUS, DONE, CHALLENGE | items per 3.1 |
-| decision_id | string | PROPOSE, CHALLENGE, DECIDE | `plan` or `D<n>`; store-assigned on PROPOSE and on superseding DECIDE |
+| decision_id | string | PROPOSE, CHALLENGE, DECIDE; optional on ASK_HUMAN | `plan` or `D<n>`; store-assigned on PROPOSE, on a superseding DECIDE, and on a human DECIDE that names none; a deadlock ASK_HUMAN carries the stalled decision's id |
 | ts | ISO 8601 UTC | all | `2026-10-25T14:30:12Z`; store-assigned; readers MUST treat it as a string (no YAML timestamp coercion) |
 
 Type-specific fields. DECIDE: `basis` (`test|authority|adopted-challenge|human`), `supersedes` (decision_id), `tasks` (list; `plan` only), `ac_add` (list; `plan` only; appended as `AC<n+1>..`, never removed or reworded), `budgets` (partial limits; human only). ASSIGN: exactly one of `task` (task id) or `new_task` (string); `kind` (`implement|review`); `worktree` and `branch` (implement); `pr` (review); `reason` (`availability|continuity|load-balance`, optional). STATUS: `task`, `task_status` (`in_progress|done`), optional. BLOCKED: `kind` (`external|internal`).
@@ -335,7 +335,7 @@ Anything else on an open thread is rejected (TWO_ROUNDS). One CHALLENGE per `dec
 
 The lead's DECIDE does exactly one of: adopt (`basis: adopted-challenge`; claim restates the challenger's position); reject on evidence (`basis: test`; `evidence` includes a `test` item with `result` pass or fail); rule by authority (`basis: authority`; only when the test cannot be run, body says why).
 
-Reopening a decided thread: a CHALLENGE on it needs new evidence; the lead replies with a DECIDE carrying `supersedes: <old id>` and no `decision_id` (store assigns the next `D<n>`). It MAY restate the old claim (challenge rejected) or change it. DECISION_IMMUTABLE requires new evidence in the DECIDE's own `evidence` or in the CHALLENGE it `reply_to`s. A human DECIDE never requires evidence.
+In EXECUTE every thread is already decided, so an EXECUTE DECIDE is always a superseding one. Reopening a decided thread: a CHALLENGE on it needs new evidence; the lead replies with a DECIDE carrying `supersedes: <old id>` and no `decision_id` (store assigns the next `D<n>`). It MAY restate the old claim (challenge rejected) or change it. DECISION_IMMUTABLE requires new evidence in the DECIDE's own `evidence` or in the CHALLENGE it `reply_to`s. A human DECIDE never requires evidence.
 
 ## 8. Budgets and configuration
 

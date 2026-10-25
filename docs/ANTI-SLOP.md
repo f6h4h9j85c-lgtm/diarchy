@@ -49,7 +49,7 @@ Placeholders in braces are filled by the store at rejection time.
 
 ### Fixture convention
 
-`tests/fixtures/<fixture>/` holds `state.json` (a `budget.json` snapshot), `goal.md`, `chat/` (prior messages, possibly empty), `input.json` (the tool call), and `expected.json` (`{ "rule": "<ID>" }`, or `{ "ok": true }`). Every rule has at least one rejecting fixture (named above) and one accepting near-miss with the `_ok` suffix (for example `word_cap_121_ok` has a 120-word body). Error strings are compared after placeholder substitution.
+Fixtures live in `test/fixtures/protocol/`: `slop/*.yaml` (one or more per rejecting rule, named `<rule_id>-<case>.yaml` in lowercase), `valid/*.yaml` (accepted messages, including near-misses such as `word_cap-120-words-ok.yaml`), `bases/*.yaml` (GoalState snapshots derived by replaying the PROTOCOL.md examples through the engine), and `examples/*.md` (the nine PROTOCOL.md 3.2 messages verbatim). A fixture holds `description`, `state` (a base name plus shallow overrides), optional `caller`, `now`, and `prior` messages, the `message` under test, and `expect` (`ok`, `rule`, `phase_after`, partial `effects` and `state` matchers). `test/protocol.test.ts` runs every fixture and also checks that the rule table above and the evaluation order match the code.
 
 ## What this does NOT prevent
 

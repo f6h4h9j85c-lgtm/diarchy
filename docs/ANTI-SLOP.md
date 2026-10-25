@@ -60,6 +60,7 @@ Fixtures live in `test/fixtures/protocol/`: `slop/*.yaml` (one or more per rejec
 - Counter resets with trivial STATUS. Any STATUS with any evidence item resets `talk_since_work`.
 - Density gaming. 120 words of compressed jargon still fit the cap.
 - Work done outside the protocol. Subagent chatter inside a CLI, PR comments on GitHub, and direct file edits are invisible to the store. Only vault messages are governed.
+- A PM posting as the human. `human` is the identity the store is configured with when the launcher runs `diarchy reply` or `diarchy stop`, not a credential: any process of the same OS user, a PM included, can run those commands and post a human DECIDE that resumes the goal or raises a budget. Two mitigations, neither a prevention: the system ASK_HUMAN body never carries the reply command (goal.md, `diarchy status`, and the launcher show it), and the plugins' PreToolUse hook denies a PM's shell call that runs `diarchy reply` or `diarchy stop`. A subagent or script outside the hook, a CLI without hook support, or a spelling the hook's pattern misses is not caught; such a DECIDE is visible in decisions.md only as a `human` row. Separating the two would need the MCP server to run as a different OS user from the PM, which v1 does not do.
 - Bad acceptance criteria. If the ACs are vague, DONE can be legitimately reached on a goal the human did not want.
 
 ## Tuning

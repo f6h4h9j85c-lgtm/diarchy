@@ -13,7 +13,7 @@ message:
   phase: BLOCKED
   ts: 2026-10-25T14:35:01Z
   body: |
-    codex is BLOCKED (external): staging REDIS_URL missing. Answer with `diarchy reply "<text>"`.
+    codex is BLOCKED (external): staging REDIS_URL missing. The human has been paged; goal.md says how to answer.
   type: ASK_HUMAN
 expect:
   ok: true

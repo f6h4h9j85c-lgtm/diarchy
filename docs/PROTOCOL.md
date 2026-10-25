@@ -2,7 +2,7 @@
 
 ## 1. Purpose and scope
 
-diarchy runs two product-manager agents, Claude Code (`claude`) and Codex CLI (`codex`), against one goal. Each PM delegates to its own subagents privately. PM-to-PM coordination happens only through markdown files in an Obsidian vault, and the only way to read or write those files is the MCP server `diarchy-mcp`, which enforces this document and ANTI-SLOP.md. This spec defines the files, messages, state machine, budgets, and MCP contracts; it does not define prompts or subagent behaviour inside either CLI.
+diarchy runs two product-manager agents, Claude Code (`claude`) and Codex CLI (`codex`), against one goal. Each PM delegates to its own subagents privately. PM-to-PM coordination happens only through markdown files in an Obsidian vault, and a PM reads or writes those files only through the MCP server `diarchy-mcp`, which enforces this document and ANTI-SLOP.md. The human writes through the launcher (`diarchy reply` and `diarchy stop`, section 10), which uses the same store as `human`; that identity is configuration, not a credential (ANTI-SLOP.md, What this does NOT prevent). This spec defines the files, messages, state machine, budgets, and MCP contracts; it does not define prompts or subagent behaviour inside either CLI.
 
 Terms: the **store** is the file layer inside `diarchy-mcp` (one process per agent, both sharing the vault); the **validator** is its stateless message checker; the **server** is its MCP tool layer; the **launcher** is the `diarchy` CLI. MUST, MUST NOT, and MAY are normative.
 
@@ -262,7 +262,7 @@ reply_to: 20261025T143500Z-0002-codex-BLOCKED
 phase: BLOCKED
 ts: 2026-10-25T14:35:01Z
 ---
-codex is BLOCKED (external): staging REDIS_URL missing. Answer with `diarchy reply "<text>"`.
+codex is BLOCKED (external): staging REDIS_URL missing. The human has been paged; goal.md says how to answer.
 ```
 
 `chat/20261025T163000Z-0009-claude-DONE.md`
@@ -389,7 +389,7 @@ All tools act on the single active goal (`goal_id` optional). Success returns `{
 | assign | to; kind; task? or new_task?; worktree?; branch?; pr?; re; reason?; body? | as `post` (type ASSIGN); worktree/branch default from config | ROLE_GATE, NO_DOMAIN_ROUTING, BUSY_REVIEWING, NO_SELF_REVIEW |
 | status | re; evidence; task?; task_status?; body? | as `post` (type STATUS) | NO_ACK, NO_SELF_REVIEW, CITE_AC |
 
-`read` and `wait_for_reply` advance `inbox/<agent>.json.cursor` to the last delivered id; `to` is addressing, not access control. The launcher uses the store library as `human`: `diarchy reply "<text>" [--decision <id>] [--budget key=value]` posts a DECIDE with `basis: human` (without `--decision` the store assigns the next `D<n>`); `diarchy stop` kills both CLIs and leaves the goal BLOCKED.
+`read` and `wait_for_reply` advance `inbox/<agent>.json.cursor` to the last delivered id; `to` is addressing, not access control. The launcher uses the store library as `human`: `diarchy reply "<text>" [--decision <id>] [--budget key=value]` posts a DECIDE with `basis: human` (without `--decision` the store assigns the next `D<n>`); `diarchy stop` kills both CLIs and leaves the goal BLOCKED. `human` is the identity a store is configured with, not a credential: any process that can run the CLI against the project posts as the human. Two things narrow that. A system ASK_HUMAN body names the trigger and says the human has been paged; it never carries the reply command, which a run shows only in the goal.md callout (RENDERING.md 4.1), `diarchy status`, and the launcher's output. The plugins' PreToolUse hook denies a PM's shell call to `diarchy reply` or `diarchy stop`. What remains is a documented limit (ANTI-SLOP.md, What this does NOT prevent).
 
 ## 11. Extensibility
 

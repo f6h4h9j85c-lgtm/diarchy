@@ -4,7 +4,9 @@ The plugin adds the `diarchy` MCP server (seven tools: `kickoff`, `post`, `read`
 `wait_for_reply`, `decide`, `assign`, `status`), the skills `diarchy-pm`,
 `diarchy-kickoff`, and `diarchy-review`, five subagents (`planner`, `designer`,
 `implementer`, `reviewer`, `security`), a SessionStart hook that prints your inbox
-brief, and a Stop hook that keeps the turn open while you owe the other PM a reply.
+brief, a PreToolUse hook that denies a shell call to the human's `diarchy reply`
+and `diarchy stop`, and a Stop hook that keeps the turn open while you owe the
+other PM a reply.
 
 Requirements: Node 20 or later on `PATH`, Claude Code 2.1.275 or later.
 

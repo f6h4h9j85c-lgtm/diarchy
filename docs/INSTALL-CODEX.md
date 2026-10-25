@@ -77,7 +77,7 @@ trust_level = "trusted"
   `$(dirname "$0")` inside such a command resolves to the shell, not to
   `hooks.json`. So the default `.` works when diarchy is the project itself or
   is checked out at the project root; otherwise export `DIARCHY_ROOT` to the
-  absolute diarchy directory, or edit the two commands in `.codex/hooks.json`
+  absolute diarchy directory, or edit the three commands in `.codex/hooks.json`
   to absolute paths. The wrapper scripts then locate `bin/diarchy.js` relative
   to their own file, or honour `DIARCHY_BIN`. They always exit 0 and print
   nothing when diarchy is missing, so a wrong path degrades to no hooks, never
@@ -106,3 +106,6 @@ uses this form for `agents.codex.command` in `diarchy.config.json`.
    Once a goal exists it returns the phase, your role, and unread messages.
 4. With a goal active, the session starts with the inbox brief from
    `diarchy inbox-skim --agent codex`. With no active goal nothing is printed.
+5. Ask Codex to run `diarchy reply "test"` in the shell. The PreToolUse hook
+   denies it with a reason naming `wait_for_reply`; the human's commands are
+   not for a PM (ANTI-SLOP.md, What this does NOT prevent).

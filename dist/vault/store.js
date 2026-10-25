@@ -4,7 +4,7 @@
  * Rules live in the protocol engine; this module owns locking, ids, files,
  * cursors, and rendering.
  */
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, watch } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, watch } from "node:fs";
 import { join, resolve } from "node:path";
 import { AGENT_HUMAN, AGENT_SYSTEM, BODY_MAX_WORDS, GOAL_ID_PATTERN, allowedTypes, assignId, checkMessageShape, evaluate, initialState, isoSeconds, parseGoalState, parseKickoffFile, parseMessageFile, parseMessageId, roleOf, serializeMessageFile, tick, wordCount, } from "../protocol/index.js";
 import { resolveVaultPaths, vaultPaths } from "./config.js";
@@ -23,6 +23,8 @@ const LOCK_RETRY_MS = 20;
 const AC_MAX_WORDS = 40;
 /** A directory touched this recently is re-scanned even if its mtime looks unchanged (coarse mtime clocks). */
 const RECENT_MS = 2_000;
+/** Under chat/: where crash recovery moves message files budget.json never recorded (PROTOCOL.md 2.2). */
+const ORPHANS_DIR = ".orphans";
 const reject = (rule, message) => ({ ok: false, rule, message });
 /** Non-empty bodies end with exactly one newline, as in the PROTOCOL.md examples. */
 function normalizeBody(body) {
@@ -40,6 +42,8 @@ export class VaultStore {
     sleep;
     renderOptions;
     pollIntervalMs;
+    /** Per goal directory: chat/ files the open transaction wrote since its last budget.json commit. */
+    uncommitted = new Map();
     constructor(options) {
         this.agent = options.agent;
         this.projectDir = resolve(options.projectDir);
@@ -92,7 +96,7 @@ export class VaultStore {
     }
     listMessages() {
         const goal = this.currentGoal();
-        return goal === null ? [] : this.readMessages(goal.paths);
+        return goal === null ? [] : this.readMessages(goal.paths, this.loadState(goal.paths));
     }
     readKickoff() {
         const goal = this.currentGoal();
@@ -147,17 +151,24 @@ export class VaultStore {
         atomicWrite(paths.kickoff, serializeKickoff(kickoff));
         const state = initialState(kickoff, this.config, now);
         return this.withLock(paths, async () => {
-            this.persist(paths, state);
-            const draft = { type: "KICKOFF", to: "all", re: Object.keys(state.acs), body: kickoff.goal_text };
-            const outcome = await this.accept(paths, state, draft);
-            if (!outcome.ok) {
-                rmSync(paths.goal, { recursive: true, force: true });
-                return outcome;
+            let committed = false;
+            try {
+                this.persist(paths, state);
+                const draft = { type: "KICKOFF", to: "all", re: Object.keys(state.acs), body: kickoff.goal_text };
+                const outcome = await this.accept(paths, state, draft);
+                if (!outcome.ok)
+                    return outcome;
+                const final = await this.applyEffects(paths, outcome.transition);
+                this.persist(paths, final);
+                committed = true;
+                this.renderFiles(paths, kickoff, final);
+                return { ...this.postOk(outcome.message, final), goal_id: goalId, lead, challenger: kickoff.challenger, kickoff_id: outcome.message.id };
             }
-            const final = await this.applyEffects(paths, outcome.transition);
-            this.persist(paths, final);
-            this.renderFiles(paths, kickoff, final);
-            return { ...this.postOk(outcome.message, final), goal_id: goalId, lead, challenger: kickoff.challenger, kickoff_id: outcome.message.id };
+            finally {
+                // Until its KICKOFF commits, the goal is a placeholder: a rejection or a failure removes all of it.
+                if (!committed)
+                    rmSync(paths.goal, { recursive: true, force: true });
+            }
         });
     }
     kickoffProblem(input, agents) {
@@ -194,7 +205,7 @@ export class VaultStore {
     // -------------------------------------------------------------------------
     // post
     // -------------------------------------------------------------------------
-    /** One transaction (PROTOCOL.md 2.2): lock, tick, evaluate, write, persist, effects, render. */
+    /** One transaction (PROTOCOL.md 2.2): lock, recover, tick, evaluate, write, effects, persist (the commit), render. */
     async post(draft) {
         const goal = this.requireGoal();
         return this.withLock(goal.paths, async () => {
@@ -304,7 +315,7 @@ export class VaultStore {
     /** `read` without its side effect: what a read would deliver now, and the cursor that delivery commits. */
     peek(goal, since) {
         const state = this.loadState(goal.paths);
-        const all = this.readMessages(goal.paths);
+        const all = this.readMessages(goal.paths, state);
         const cursor = since ?? this.loadCursor(goal.paths);
         const messages = all.filter((message) => (cursor === null || message.id > cursor) && message.from !== this.agent);
         const last = all[all.length - 1];
@@ -424,7 +435,7 @@ export class VaultStore {
         this.requireHuman("reply");
         const goal = this.requireGoal();
         const state = this.loadState(goal.paths);
-        const ask = lastOfType(this.readMessages(goal.paths), "ASK_HUMAN");
+        const ask = lastOfType(this.readMessages(goal.paths, state), "ASK_HUMAN");
         const ruling = text.trim();
         const draft = {
             type: "DECIDE",
@@ -497,13 +508,43 @@ export class VaultStore {
     // -------------------------------------------------------------------------
     // Lock (PROTOCOL.md 2.2)
     // -------------------------------------------------------------------------
+    /**
+     * Writing budget.json commits a transaction (PROTOCOL.md 2.2). A throw removes
+     * the chat/ files written since the last commit; a crash's leftovers are moved
+     * aside by the next transaction before it reads anything.
+     */
     async withLock(paths, body) {
         await this.acquireLock(paths.lock);
+        const written = [];
+        this.uncommitted.set(paths.goal, written);
         try {
+            this.recoverOrphans(paths);
             return await body();
         }
+        catch (error) {
+            for (const path of written)
+                rmSync(path, { force: true });
+            throw error;
+        }
         finally {
+            this.uncommitted.delete(paths.goal);
             rmSync(paths.lock, { recursive: true, force: true });
+        }
+    }
+    /** Under the lock: a chat/ file whose id budget.json does not record never committed; move it to chat/.orphans/. */
+    recoverOrphans(paths) {
+        if (!existsSync(paths.budget) || !existsSync(paths.chatDir))
+            return;
+        const committed = committedIds(this.loadState(paths));
+        const orphans = join(paths.chatDir, ORPHANS_DIR);
+        for (const name of readdirSync(paths.chatDir)) {
+            if (!name.endsWith(".md") || committed.has(name.slice(0, -3)))
+                continue;
+            mkdirSync(orphans, { recursive: true });
+            let target = join(orphans, name);
+            for (let n = 1; existsSync(target); n += 1)
+                target = join(orphans, `${name.slice(0, -3)}.${n}.md`);
+            renameSync(join(paths.chatDir, name), target);
         }
     }
     async acquireLock(lock) {
@@ -542,20 +583,25 @@ export class VaultStore {
         if (existsSync(path))
             throw new Error(`refusing to overwrite message file ${path}`);
         atomicWrite(path, serializeMessageFile(message));
+        this.uncommitted.get(paths.goal)?.push(path);
     }
-    readMessages(paths) {
+    /** The committed messages: chat/ files whose id `state` records, in (ts, seq) order. Nothing else is read or rendered. */
+    readMessages(paths, state) {
         if (!existsSync(paths.chatDir))
             return [];
+        const committed = committedIds(state);
         return readdirSync(paths.chatDir)
-            .filter((name) => name.endsWith(".md"))
+            .filter((name) => name.endsWith(".md") && committed.has(name.slice(0, -3)))
             .sort()
             .map((name) => parseMessageFile(readFileSync(join(paths.chatDir, name), "utf8")));
     }
     loadState(paths) {
         return parseGoalState(readJson(paths.budget));
     }
+    /** The commit point: every chat/ file written so far is now accepted. */
     persist(paths, state) {
         atomicWrite(paths.budget, `${JSON.stringify(state, null, 2)}\n`);
+        this.uncommitted.get(paths.goal)?.splice(0);
     }
     loadKickoff(paths) {
         return parseKickoffFile(readFileSync(paths.kickoff, "utf8"));
@@ -572,7 +618,7 @@ export class VaultStore {
         atomicWrite(paths.inbox(this.agent), `${JSON.stringify(inbox, null, 2)}\n`);
     }
     renderFiles(paths, kickoff, state) {
-        const messages = this.readMessages(paths);
+        const messages = this.readMessages(paths, state);
         atomicWrite(paths.goalMd, renderGoal(messages, state, kickoff, this.renderOptions));
         atomicWrite(paths.chatMd, renderChat(messages, state, kickoff, this.renderOptions));
         atomicWrite(paths.decisionsMd, renderDecisions(messages, state, kickoff));
@@ -583,6 +629,9 @@ export class VaultStore {
 // ---------------------------------------------------------------------------
 function schemaText(field, problem) {
     return `Field "${field}": ${problem}. Fix it per PROTOCOL.md section 3 and post again.`;
+}
+function committedIds(state) {
+    return new Set(state.messages.map((ref) => ref.id));
 }
 function singleKickoff(goalId, phase) {
     return reject("SINGLE_KICKOFF", `Goal ${goalId} is already active (phase ${phase}). Call read instead of kickoff.`);

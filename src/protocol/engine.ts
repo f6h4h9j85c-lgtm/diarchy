@@ -209,6 +209,11 @@ function applyDecide(state: GoalState, message: Message, effects: Effect[]): voi
     }
     state.decisions[id] = { ...newDecision("decided", message.from), supersedes: message.supersedes, evidence: keys };
     effects.push({ kind: "decision_closed", id, supersedes: message.supersedes });
+  } else if (human) {
+    id = nextDecisionId(state);
+    message.decision_id = id;
+    state.decisions[id] = { ...newDecision("decided", message.from), evidence: keys };
+    effects.push({ kind: "decision_closed", id, supersedes: null });
   }
   const watch = state.deadlock_watch;
   if (watch !== null && (human || watch.decision_id === id || watch.decision_id === message.supersedes)) {

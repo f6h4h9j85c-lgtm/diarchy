@@ -7,6 +7,7 @@ import { z } from "zod";
 
 import { wordCount } from "./text.js";
 import {
+  AGENT_HUMAN,
   AGENT_ID_PATTERN,
   ASSIGN_KINDS,
   BLOCKED_KINDS,
@@ -245,8 +246,9 @@ function hasConclusiveTest(message: Message): boolean {
   );
 }
 
+/** PROTOCOL.md section 10: a human DECIDE may omit both; the store assigns the next D<n>. */
 function decideProblem(message: Message): FieldProblem | null {
-  if (message.decision_id === undefined && message.supersedes === undefined) {
+  if (message.decision_id === undefined && message.supersedes === undefined && message.from !== AGENT_HUMAN) {
     return { field: "decision_id", problem: "required unless supersedes is set" };
   }
   if (message.basis === "test" && !hasConclusiveTest(message)) {

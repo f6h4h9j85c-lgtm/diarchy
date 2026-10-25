@@ -4,9 +4,10 @@
  * `{ "pid": n, "started": "...", "children": { "<agent>": { "pid": n, "started": "..." } } }`.
  *
  * `started` is the process start time (`/proc/<pid>/stat` on Linux, `ps -o
- * lstart=` elsewhere). A recorded pid counts as the same process only while
- * the process holding that pid has the same start time, so after the kernel
- * recycles a stale pid nothing here refuses to start on it or signals it.
+ * lstart=` in the C locale and UTC elsewhere). A recorded pid counts as the
+ * same process only while the process holding that pid has the same start
+ * time, so after the kernel recycles a stale pid nothing here refuses to start
+ * on it or signals it.
  * The children are recorded so `diarchy stop` and the next `diarchy start`
  * can reach PMs a supervisor left behind when it died without cleaning up
  * (SIGKILL, OOM, a crash).
@@ -45,7 +46,18 @@ export function processStartTime(pid: number): string | null {
     }
   }
   if (process.platform === "win32") return null;
-  const ps = spawnSync("ps", ["-o", "lstart=", "-p", String(pid)], { encoding: "utf8" });
+  return psStartTime(pid);
+}
+
+/**
+ * `ps -o lstart=` for `pid` (macOS and other systems without /proc). BSD ps
+ * prints lstart in local time and the caller's locale, so it runs with a fixed
+ * locale and zone: a `diarchy stop` from a shell with another TZ or LC_TIME
+ * must read the same start time as the `diarchy start` that recorded it.
+ */
+export function psStartTime(pid: number): string | null {
+  const env = { ...process.env, LC_ALL: "C", TZ: "UTC" };
+  const ps = spawnSync("ps", ["-o", "lstart=", "-p", String(pid)], { encoding: "utf8", env });
   const out = ps.status === 0 ? (ps.stdout ?? "").trim() : "";
   return out === "" ? null : out;
 }
@@ -118,17 +130,27 @@ export function runningSupervisor(projectDir: string): number | null {
 
 /**
  * Claim the record for this process. The link fails when the file exists, so
- * of two starts racing past the pre-flight check only one gets it.
+ * of two starts racing past the pre-flight check only one gets it. On a
+ * filesystem without hard links (exFAT, some network or 9p mounts) an
+ * exclusive create keeps the claim, at the cost of a reader briefly seeing
+ * an empty file.
  */
 export function claimRunRecord(projectDir: string): RunRecord {
   const record: RunRecord = { ...identify(process.pid), children: {} };
-  mkdirSync(dirname(pidPath(projectDir)), { recursive: true });
+  const path = pidPath(projectDir);
+  mkdirSync(dirname(path), { recursive: true });
   const temp = writeTemp(projectDir, record);
   try {
-    linkSync(temp, pidPath(projectDir));
+    try {
+      linkSync(temp, path);
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code !== "EPERM" && code !== "ENOTSUP" && code !== "EOPNOTSUPP") throw error;
+      writeFileSync(path, serialize(record), { flag: "wx" });
+    }
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-    throw new CliError(`another diarchy start claimed ${pidPath(projectDir)} first; run diarchy stop first`);
+    throw new CliError(`another diarchy start claimed ${path} first; run diarchy stop first`);
   } finally {
     rmSync(temp, { force: true });
   }

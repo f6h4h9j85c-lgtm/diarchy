@@ -9,6 +9,13 @@ export interface RunRecord extends ProcessIdentity {
 export declare function pidPath(projectDir: string): string;
 /** When `pid` started, as an opaque string comparable only on this host; null if unknown. */
 export declare function processStartTime(pid: number): string | null;
+/**
+ * `ps -o lstart=` for `pid` (macOS and other systems without /proc). BSD ps
+ * prints lstart in local time and the caller's locale, so it runs with a fixed
+ * locale and zone: a `diarchy stop` from a shell with another TZ or LC_TIME
+ * must read the same start time as the `diarchy start` that recorded it.
+ */
+export declare function psStartTime(pid: number): string | null;
 export declare function identify(pid: number): ProcessIdentity;
 /** True when `id.pid` is alive, signalable by us, and is still the process that was recorded. */
 export declare function isSameProcess(id: ProcessIdentity): boolean;
@@ -18,7 +25,10 @@ export declare function readRunRecord(projectDir: string): RunRecord | null;
 export declare function runningSupervisor(projectDir: string): number | null;
 /**
  * Claim the record for this process. The link fails when the file exists, so
- * of two starts racing past the pre-flight check only one gets it.
+ * of two starts racing past the pre-flight check only one gets it. On a
+ * filesystem without hard links (exFAT, some network or 9p mounts) an
+ * exclusive create keeps the claim, at the cost of a reader briefly seeing
+ * an empty file.
  */
 export declare function claimRunRecord(projectDir: string): RunRecord;
 /** Rewrite the record this process claimed (after a child spawns). */

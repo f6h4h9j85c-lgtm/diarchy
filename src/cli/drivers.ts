@@ -21,8 +21,9 @@
  *   (the `--json` event stream) or a `session id: <uuid>` banner line, and a
  *   restart runs `codex exec <flags> resume <id> "<prompt>"`.
  * - anything else: no resume.
- * A resumed child that exits non-zero within a few seconds drops its session
- * file so the next spawn starts fresh.
+ * A resumed child that starts and then exits non-zero within a few seconds
+ * drops its session file so the next spawn starts fresh; a spawn that fails
+ * before the CLI runs (exec error, EAGAIN) keeps it.
  *
  * `codex exec` refuses to run outside a git repository, so when the agent's cwd
  * is not in one the launcher adds `--skip-git-repo-check`.

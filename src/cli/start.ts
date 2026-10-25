@@ -3,6 +3,7 @@
  * agent, and supervise them until the goal is DONE or BLOCKED.
  *
  * Exit codes: 0 DONE, 2 BLOCKED, 1 error (every agent dead, bad input, signal).
+ * On SIGINT, SIGTERM, or SIGHUP it stops both PMs and removes `.diarchy/start.pid` first.
  */
 import { spawn, type ChildProcess } from "node:child_process";
 import { createInterface } from "node:readline";
@@ -39,6 +40,9 @@ export interface StartOptions extends KickoffCliOptions {
 
 /** A resumed child that dies this fast is treated as a failed resume, not a crash. */
 const FAST_FAIL_MS = 5_000;
+
+/** The signals on which the supervisor stops its PMs and removes its run record before exiting. */
+const STOP_SIGNALS: readonly NodeJS.Signals[] = ["SIGINT", "SIGTERM", "SIGHUP"];
 
 /** The kickoff inputs given on the command line; they only mean something when no goal is active. */
 function newGoalArgs(goalText: string | undefined, options: KickoffCliOptions): string[] {
@@ -187,15 +191,16 @@ class Supervisor {
       const phase = this.readState()?.phase;
       void this.finish(phase === "BLOCKED" ? EXIT_BLOCKED : EXIT_ERROR, `received ${signal}`);
     };
-    process.on("SIGINT", onSignal);
-    process.on("SIGTERM", onSignal);
+    // SIGHUP too: Node resets an inherited SIG_IGN for SIGHUP at startup, so
+    // even under nohup a closed terminal would kill this process outright and
+    // orphan both PMs. Trapped, a hangup stops them like SIGTERM does.
+    for (const signal of STOP_SIGNALS) process.on(signal, onSignal);
     try {
       for (const agent of this.input.agents) this.spawnChild(this.child(agent));
       void this.loop();
       return await finished;
     } finally {
-      process.off("SIGINT", onSignal);
-      process.off("SIGTERM", onSignal);
+      for (const signal of STOP_SIGNALS) process.off(signal, onSignal);
       releaseRunRecord(projectDir, record);
     }
   }
@@ -302,9 +307,12 @@ class Supervisor {
 
   private onExit(child: Child, code: number | null, signal: NodeJS.Signals | null): void {
     if (this.stopping) return;
+    // Node's "exit" always carries a code or a signal; neither means the spawn itself failed.
+    const started = code !== null || signal !== null;
     const how = signal !== null ? `signal ${signal}` : code !== null ? `code ${code}` : "never started";
     this.log(`${child.agent} exited (${how})`);
-    if (child.plan?.resumed === true && code !== 0 && Date.now() - child.spawnedAt < FAST_FAIL_MS) {
+    // A CLI that never ran says nothing about its saved session, so only a started one can fail a resume.
+    if (started && child.plan?.resumed === true && code !== 0 && Date.now() - child.spawnedAt < FAST_FAIL_MS) {
       clearSession(this.input.projectDir, child.agent);
       this.log(`${child.agent} resume failed fast; dropped the saved session, next start is fresh`);
     }

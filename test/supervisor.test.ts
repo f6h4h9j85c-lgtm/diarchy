@@ -1,22 +1,22 @@
 /**
  * `diarchy start` supervision and portability: the run record in
- * `.diarchy/start.pid`, PMs left behind by a supervisor that died, children
- * that cannot be spawned, revival of a PM left dead, the Codex git check, and
- * the supported-platform statement. The CLI runs from source as in e2e.test.ts,
+ * `.diarchy/start.pid`, PMs left behind by a supervisor that died, a hangup,
+ * children that cannot be spawned, revival of a PM left dead, the Codex git
+ * check, and the supported-platform statement. The CLI runs from source as in e2e.test.ts,
  * with small stand-in PM scripts instead of model calls.
  */
 import { spawn, type ChildProcess } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { delimiter, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { afterAll, afterEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
 
-import { fakePlan, realPlan, SKIP_GIT_REPO_CHECK } from "../src/cli/drivers.js";
+import { fakePlan, loadSession, realPlan, saveSession, SKIP_GIT_REPO_CHECK } from "../src/cli/drivers.js";
 import { DEFAULT_AGENT_LAUNCH } from "../src/cli/launcher-config.js";
 import { platformProblem } from "../src/cli/preflight.js";
-import { claimRunRecord, identify, pidPath, readRunRecord, reapLeftovers, runningSupervisor } from "../src/cli/run-record.js";
+import { claimRunRecord, identify, pidPath, psStartTime, readRunRecord, reapLeftovers, runningSupervisor } from "../src/cli/run-record.js";
 import { VaultStore, loadConfig } from "../src/vault/index.js";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
@@ -186,12 +186,55 @@ describe("start.pid identity", () => {
     expect(existsSync(pidPath(dir))).toBe(false);
   });
 
+  it("ps reads the start time in the C locale and UTC, whatever the caller's TZ and locale", () => {
+    const bin = tempDir();
+    writeFileSync(join(bin, "ps"), '#!/bin/sh\nprintf \'%s %s\\n\' "$LC_ALL" "$TZ"\n');
+    chmodSync(join(bin, "ps"), 0o755);
+    const saved = { PATH: process.env.PATH, TZ: process.env.TZ, LC_ALL: process.env.LC_ALL };
+    process.env.PATH = `${bin}${delimiter}${saved.PATH ?? ""}`;
+    process.env.TZ = "Asia/Kolkata";
+    process.env.LC_ALL = "de_DE.UTF-8";
+    try {
+      expect(psStartTime(process.pid)).toBe("C UTC");
+    } finally {
+      for (const [key, value] of Object.entries(saved)) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+    }
+  });
+
   it("reapLeftovers leaves a live supervisor's record alone", async () => {
     const dir = tempDir();
     mkdirSync(join(dir, ".diarchy"));
     writeFileSync(pidPath(dir), JSON.stringify({ ...identify(process.pid), children: { claude: identify(process.pid) } }));
     expect(await reapLeftovers(dir)).toEqual([]);
     expect(existsSync(pidPath(dir))).toBe(true);
+  });
+});
+
+describe("claimRunRecord on a filesystem without hard links", () => {
+  afterEach(() => {
+    vi.doUnmock("node:fs");
+    vi.resetModules();
+  });
+
+  it.each(["EPERM", "ENOTSUP"])("falls back to an exclusive create when link fails with %s", async (code) => {
+    vi.resetModules();
+    vi.doMock("node:fs", async (importOriginal) => {
+      const fs = await importOriginal<typeof import("node:fs")>();
+      const linkSync = (): never => {
+        throw Object.assign(new Error(`${code}: link not supported`), { code });
+      };
+      return { ...fs, default: { ...fs, linkSync }, linkSync };
+    });
+    const records = await import("../src/cli/run-record.js");
+    const dir = tempDir();
+    const record = records.claimRunRecord(dir);
+    expect(record.pid).toBe(process.pid);
+    expect(records.readRunRecord(dir)).toEqual(record);
+    expect(() => records.claimRunRecord(dir)).toThrow(/another diarchy start claimed/);
+    expect(readdirSync(join(dir, ".diarchy"))).toEqual(["start.pid"]);
   });
 });
 
@@ -245,6 +288,29 @@ describe("PMs left behind by a killed supervisor", () => {
 });
 
 // ---------------------------------------------------------------------------
+// A hangup (closed terminal, nohup included: Node resets SIGHUP's SIG_IGN)
+// ---------------------------------------------------------------------------
+
+describe("a hangup", () => {
+  it("SIGHUP to the supervisor alone stops both PMs and removes start.pid", async () => {
+    const dir = await initProject("hangup");
+    const standin = tempDir();
+    const script = sleeperScript();
+    const run = launch(["start", "Survive no hangup", "--ac", "Nothing is orphaned.", "--lead", "claude", "--driver", "fake", "--fake-script", script, "--no-worktrees", "--project", dir], { STANDIN_DIR: standin });
+    await until("both PMs recorded", () => Object.keys(readRunRecord(dir)?.children ?? {}).length === 2 && pids(standin, "claude").length === 1 && pids(standin, "codex").length === 1);
+    const children = [...pids(standin, "claude"), ...pids(standin, "codex")];
+    strays.push(...children);
+
+    run.proc.kill("SIGHUP");
+    const result = await run.done;
+    expect(result.code, result.stdout + result.stderr).toBe(1);
+    expect(result.stdout).toContain("received SIGHUP: stopping claude, codex");
+    expect(children.some(alive)).toBe(false);
+    expect(existsSync(pidPath(dir))).toBe(false);
+  }, 30_000);
+});
+
+// ---------------------------------------------------------------------------
 // Agent commands that cannot be spawned (F029)
 // ---------------------------------------------------------------------------
 
@@ -277,6 +343,30 @@ describe("start --driver real with an agent command that cannot run", () => {
     expect(run.stdout).toContain("codex will not be restarted (3 restarts used)");
     expect(run.stdout).toContain("every agent exited while the goal is still PLAN");
     expect(existsSync(pidPath(dir))).toBe(false);
+  }, 30_000);
+
+  it("keeps the saved session when a resumed spawn fails before the CLI runs", async () => {
+    const bin = tempDir();
+    // Named claude so the plan resumes the saved session with --resume.
+    const broken = join(bin, "claude");
+    writeFileSync(broken, "#!/nonexistent/interpreter\n");
+    chmodSync(broken, 0o755);
+    const dir = await initProject("resume-never-ran", (config) => {
+      config.agents.claude = { command: broken, args: [] };
+      config.agents.codex = { command: broken, args: [] };
+      config.launcher.max_restarts = 0;
+    });
+    expect((await cli(["kickoff", "Keep the session", "--ac", "The session survives.", "--project", dir])).code).toBe(0);
+    const goalId = new VaultStore({ projectDir: dir, config: loadConfig(dir), agent: "human" }).activeGoal()?.goalId ?? "";
+    const sessionId = "0f8fad5b-d9cb-469f-a165-70867728950e";
+    saveSession(dir, { agent: "claude", goal: goalId, session_id: sessionId, source: "captured", updated: "" });
+
+    const run = await cli(["start", "--driver", "real", "--no-worktrees", "--project", dir]);
+    expect(run.code, run.stdout + run.stderr).toBe(1);
+    expect(run.stdout).toContain("claude started (resumed session)");
+    expect(run.stdout).toContain("claude exited (never started)");
+    expect(run.stdout).not.toContain("resume failed fast");
+    expect(loadSession(dir, "claude", goalId)?.session_id).toBe(sessionId);
   }, 30_000);
 });
 

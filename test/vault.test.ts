@@ -500,9 +500,20 @@ describe("store-owned files", () => {
     if (state === null) throw new Error("no goal");
     const next = assignId(state, "claude", "PROPOSE", h.clock.now());
     const path = join(h.goalDir(), "chat", `${next.id}.md`);
-    writeFileSync(path, "planted\n");
+    // Planted while the store sleeps to the next second, after crash recovery has run under the lock.
+    const claude = new VaultStore({
+      projectDir: h.projectDir,
+      config: CONFIG,
+      agent: "claude",
+      now: h.clock.now,
+      sleep: async (ms) => {
+        writeFileSync(path, "planted\n");
+        h.clock.advance(ms);
+      },
+      localTz: TZ,
+    });
     await expect(
-      h.claude.post({ type: "PROPOSE", to: "all", re: ["AC1"], decision_id: "plan", claim: "Collide.", body: "This must not overwrite." }),
+      claude.post({ type: "PROPOSE", to: "all", re: ["AC1"], decision_id: "plan", claim: "Collide.", body: "This must not overwrite." }),
     ).rejects.toThrow(/refusing to overwrite/);
     expect(readFileSync(path, "utf8")).toBe("planted\n");
     expect(existsSync(join(h.goalDir(), ".lock"))).toBe(false);
@@ -544,6 +555,84 @@ describe("lock", () => {
     rmSync(lock, { recursive: true });
     ok(await pending);
     expect(existsSync(lock)).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Crash safety: writing budget.json commits a transaction (PROTOCOL.md 2.2)
+// ---------------------------------------------------------------------------
+
+describe("crash safety", () => {
+  const BLOCKED = RUN[BLOCKED_INDEX - 1];
+  const ASK_HUMAN = RUN[BLOCKED_INDEX];
+
+  it("a post that throws after writing its message file removes it; the retry lands with the same id", async () => {
+    const h = harness();
+    await replay(h, BLOCKED_INDEX - 1);
+    const chat = join(h.goalDir(), "chat");
+    const before = readdirSync(chat);
+    const budget = h.file("budget.json");
+    const dying = new VaultStore({
+      projectDir: h.projectDir,
+      config: CONFIG,
+      agent: "codex",
+      now: h.clock.now,
+      sleep: () => Promise.reject(new Error("interrupted while waiting for the ASK_HUMAN second")),
+      localTz: TZ,
+    });
+    h.clock.set(BLOCKED.ts);
+    await expect(dying.post(toDraft(BLOCKED))).rejects.toThrow(/interrupted/);
+    expect(readdirSync(chat)).toEqual(before);
+    expect(h.file("budget.json")).toBe(budget);
+    expect(existsSync(join(h.goalDir(), ".lock"))).toBe(false);
+    const retry = await h.codex.post(toDraft(BLOCKED));
+    ok(retry);
+    expect(retry).toMatchObject({ id: BLOCKED.id, phase: "BLOCKED" });
+    expect(h.claude.listMessages().slice(-2).map((message) => message.id)).toEqual([BLOCKED.id, ASK_HUMAN.id]);
+  });
+
+  it("a message file a crash left before budget.json is never shown, and the next transaction moves it to chat/.orphans/", async () => {
+    const h = harness();
+    await replay(h, BLOCKED_INDEX - 1);
+    expect(h.claude.read()?.messages.length).toBeGreaterThan(0);
+    const chatMd = h.file("chat.md");
+    const goalMd = h.file("goal.md");
+    // What SIGKILL leaves while the store sleeps for the system ASK_HUMAN second: the file, the old budget.json, a stale lock.
+    const ghost = readFileSync(join(SAMPLE_RUN, `${BLOCKED.id}.md`), "utf8");
+    writeFileSync(join(h.goalDir(), "chat", `${BLOCKED.id}.md`), ghost);
+    const lock = join(h.goalDir(), ".lock");
+    mkdirSync(lock);
+    const old = (Date.now() - 60_000) / 1000;
+    utimesSync(lock, old, old);
+    h.clock.set(BLOCKED.ts);
+
+    expect(h.claude.read()?.messages).toEqual([]);
+    expect(h.claude.listMessages().map((message) => message.id)).not.toContain(BLOCKED.id);
+    h.claude.render();
+    expect(h.file("chat.md")).toBe(chatMd);
+    expect(h.file("goal.md")).toBe(goalMd);
+
+    const retry = await h.codex.post(toDraft(BLOCKED));
+    ok(retry);
+    expect(retry).toMatchObject({ id: BLOCKED.id, seq: 2, phase: "BLOCKED" });
+    expect(readFileSync(join(h.goalDir(), "chat", ".orphans", `${BLOCKED.id}.md`), "utf8")).toBe(ghost);
+    expect(h.claude.read()?.messages.map((message) => message.id)).toEqual([BLOCKED.id, ASK_HUMAN.id]);
+    const state = h.claude.state();
+    expect(state?.messages.map((ref) => ref.id)).toEqual(h.claude.listMessages().map((message) => message.id));
+    expect(existsSync(lock)).toBe(false);
+  });
+
+  it("a kickoff that throws before its KICKOFF commits leaves no goal behind, so kickoff can be retried", async () => {
+    const h = harness();
+    const input = { goal: "Add per-API-key rate limiting to the public API.", acceptance_criteria: ["Requests over the limit get 429."], slug: "rate-limit" };
+    const chat = join(h.goalDir(), "chat");
+    mkdirSync(chat, { recursive: true });
+    writeFileSync(join(chat, "20261025T140000Z-0001-human-KICKOFF.md"), "planted\n");
+    await expect(h.human.kickoff(input)).rejects.toThrow(/refusing to overwrite/);
+    expect(existsSync(h.goalDir())).toBe(false);
+    expect(h.human.activeGoal()).toBeNull();
+    ok(await h.human.kickoff(input));
+    expect(h.human.state()?.messages.map((ref) => ref.id)).toEqual(["20261025T140000Z-0001-human-KICKOFF"]);
   });
 });
 

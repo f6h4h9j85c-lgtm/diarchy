@@ -16,8 +16,9 @@ Terms: the **store** is the file layer inside `diarchy-mcp` (one process per age
     goals/<goal-id>/
       kickoff.md         start signal; written once, atomically
       goal.md            goal, ACs, tasks, status; store-rendered
-      chat/              one file per message; writer-owned; never edited or deleted
+      chat/              one file per accepted message; writer-owned; never edited or deleted
         20261025T143012Z-0007-claude-PROPOSE.md
+        .orphans/        files a crash left uncommitted (2.2); store-internal
       chat.md            merged transcript; store-rendered
       decisions.md       decision ledger; store-rendered
       budget.json        counters and machine state; store-owned
@@ -43,6 +44,8 @@ Terms: the **store** is the file layer inside `diarchy-mcp` (one process per age
 ### 2.2 Transaction
 
 One accepted message is one transaction: acquire `.lock/` by `mkdir` (a lock older than 30 s is stale and MAY be removed); run validator, then store checks against `budget.json`; write `chat/<id>.md` via temp file plus rename; update `budget.json`, `goal.md`, `chat.md`, `decisions.md`; release.
+
+Writing `budget.json` commits the transaction. A `chat/` file whose id `budget.json` does not record was never accepted: reads and renders skip it, a store that fails before the commit removes the files it wrote, and the next transaction moves any file a crash left this way to `chat/.orphans/` before it reads anything.
 
 ### 2.3 Store-owned files
 

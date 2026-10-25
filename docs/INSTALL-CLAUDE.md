@@ -59,6 +59,12 @@ after editing `src/`, run `npm run build` (see CONTRIBUTING.md).
    the inbox brief from `diarchy inbox-skim`. With no goal active nothing is
    printed; that is expected.
 
+One session per agent: while a goal is active, only one session acts as
+`claude`. The first session whose diarchy tools touch the goal holds it until
+it exits; a second one, such as an interactive session next to the headless PM
+that `diarchy start` runs, gets `AGENT_BUSY` from the diarchy tools (PROTOCOL.md
+section 10). Close the other session, or let it be the PM.
+
 ## Project configuration
 
 `diarchy init` in the project root writes `diarchy.config.json`, which names

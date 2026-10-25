@@ -1,17 +1,23 @@
 /** `diarchy status [--json]`: phase, roles, budgets, open assignments, last message, and what the human must do. */
+import { existsSync } from "node:fs";
+import { join } from "node:path";
 import { FIELD_MAX_CHARS, oneLine } from "../protocol/index.js";
+import { CONFIG_FILENAME, loadConfig, vaultPaths } from "../vault/index.js";
 import { budgetLine, sortMessages } from "../vault/render/shared.js";
 import { blockSummary, openAssignments, replyHint } from "./brief.js";
-import { EXIT_OK, currentGoal, headerLine, humanStore, printJson } from "./common.js";
+import { EXIT_OK, currentGoal, headerLine, humanStore, noGoalText, printJson } from "./common.js";
 export function runStatus(projectDir, options) {
     const store = humanStore(projectDir);
     const goal = currentGoal(store);
     const state = goal === null ? null : store.state();
     if (goal === null || state === null) {
-        if (options.json === true)
-            printJson({ goal: null, phase: null, human_needed: false, reply_command: null });
+        if (options.json === true) {
+            const vault = vaultPaths(projectDir, loadConfig(projectDir)).vault;
+            const config = existsSync(join(projectDir, CONFIG_FILENAME)) ? join(projectDir, CONFIG_FILENAME) : null;
+            printJson({ goal: null, phase: null, human_needed: false, reply_command: null, vault, config });
+        }
         else
-            console.log("no goal in this vault");
+            console.log(noGoalText(projectDir));
         return EXIT_OK;
     }
     const messages = sortMessages(store.listMessages());

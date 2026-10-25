@@ -9,7 +9,7 @@ import { spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
@@ -20,6 +20,8 @@ import { GENERATED, VaultStore, loadConfig, type GoalPaths, type MessageDraft } 
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const CLI = join(ROOT, "src", "cli", "index.ts");
+/** tsx by path, so the CLI also runs from a cwd outside this checkout. */
+const TSX = pathToFileURL(join(ROOT, "node_modules", "tsx", "dist", "loader.mjs")).href;
 const RUN_TIMEOUT = 45_000;
 
 const GIT_ENV = {
@@ -36,12 +38,12 @@ interface Run {
 }
 
 /** Run the CLI from source; stdin is always closed so hook commands see end-of-input. */
-function cli(args: string[], options: { input?: string } = {}): Promise<Run> {
+function cli(args: string[], options: { input?: string; cwd?: string } = {}): Promise<Run> {
   return new Promise((resolve, reject) => {
     const env: NodeJS.ProcessEnv = { ...process.env, ...GIT_ENV };
     delete env.DIARCHY_PROJECT;
     delete env.DIARCHY_FAKE_MODE;
-    const child = spawn(process.execPath, ["--import", "tsx", CLI, ...args], { cwd: ROOT, env, stdio: ["pipe", "pipe", "pipe"] });
+    const child = spawn(process.execPath, ["--import", TSX, CLI, ...args], { cwd: options.cwd ?? ROOT, env, stdio: ["pipe", "pipe", "pipe"] });
     let stdout = "";
     let stderr = "";
     child.stdout.on("data", (chunk: Buffer) => (stdout += chunk.toString()));
@@ -205,6 +207,38 @@ describe("diarchy init", () => {
     expect(other.code, other.stderr).toBe(0);
     expect(existsSync(join(pair, "AGENTS.md"))).toBe(false);
     expect(existsSync(join(pair, ".codex"))).toBe(false);
+  });
+
+  it("commands run below the project root find its diarchy.config.json; init stays in the cwd", async () => {
+    const dir = await initProject("deep", false);
+    const kick = await cli(["kickoff", "Rate limit the API.", "--ac", "Over-limit requests get 429.", "--slug", "deep", "--project", dir]);
+    expect(kick.code, kick.stderr).toBe(0);
+    const src = join(dir, "src", "lib");
+    mkdirSync(src, { recursive: true });
+    const status = await cli(["status"], { cwd: src });
+    expect(status.code, status.stderr).toBe(0);
+    expect(status.stdout).toMatch(/^goal \d{8}-deep · PLAN · lead /);
+    expect(existsSync(join(src, "lib brain"))).toBe(false);
+
+    const nested = join(dir, "packages", "web");
+    mkdirSync(nested, { recursive: true });
+    const init = await cli(["init"], { cwd: nested });
+    expect(init.code, init.stderr).toBe(0);
+    expect(existsSync(join(nested, "diarchy.config.json"))).toBe(true);
+    expect(existsSync(join(nested, "web brain", "diarchy"))).toBe(true);
+  });
+
+  it("status in a directory with no diarchy.config.json names the vault it checked and says how to fix it", async () => {
+    const dir = makeProject("bare", false);
+    const status = await cli(["status"], { cwd: dir });
+    expect(status.code, status.stderr).toBe(0);
+    const vault = join(dir, "bare brain", "diarchy");
+    expect(status.stdout).toBe(
+      `no goal in ${vault}; no diarchy.config.json in ${dir} or above it, so the default vault was checked (run diarchy init there, or pass --project <dir>)\n`,
+    );
+    const json = await cli(["status", "--json", "--project", dir]);
+    expect(JSON.parse(json.stdout)).toEqual({ goal: null, phase: null, human_needed: false, reply_command: null, vault, config: null });
+    expect(existsSync(join(dir, "bare brain"))).toBe(false);
   });
 
   it("rejects fewer or more than two agents", async () => {

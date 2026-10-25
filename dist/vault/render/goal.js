@@ -1,4 +1,4 @@
-import { GENERATED, SEP, budgetLine, budgetTrigger, byId, cell, challengerList, code, decisionCount, escapeBlockStarts, hms, humanSlot, italic, lastOfType, localHint, sortMessages, tableRow, tableSeparator, utcDate, } from "./shared.js";
+import { GENERATED, SEP, blockTrigger, budgetLine, budgetTrigger, byId, cell, challengerList, code, decisionCount, escapeBlockStarts, hms, humanSlot, italic, localHint, sortMessages, tableRow, tableSeparator, utcDate, } from "./shared.js";
 export function renderGoal(messages, state, kickoff, opts = {}) {
     const ordered = sortMessages(messages);
     const chunks = [`${GENERATED}\n# ${kickoff.goal}`];
@@ -61,19 +61,9 @@ function nested(body) {
         .map((line) => (line === "" ? ">" : `> ${line}`))
         .join("\n");
 }
-/** The message that put the run into BLOCKED: the latest ASK_HUMAN, or a later human BLOCKED (`diarchy stop`). */
-function trigger(messages) {
-    const ask = lastOfType(messages, "ASK_HUMAN");
-    const stop = [...messages].reverse().find((message) => message.type === "BLOCKED" && message.from === "human");
-    if (ask === undefined)
-        return stop;
-    if (stop === undefined)
-        return ask;
-    return stop.ts > ask.ts ? stop : ask;
-}
 function questionCallout(messages, state, opts) {
     const ids = byId(messages);
-    const cause = trigger(messages) ?? messages[messages.length - 1];
+    const cause = blockTrigger(messages) ?? messages[messages.length - 1];
     const from = state.blocked_from ?? cause.phase;
     const since = `**Human needed** since ${hms(cause.ts)} UTC ${localHint(cause.ts, opts.localTz)}. The run is BLOCKED (from ${from}); nothing moves until you answer.`;
     const replyTo = cause.type === "ASK_HUMAN" && cause.reply_to !== undefined ? ids.get(cause.reply_to) : undefined;

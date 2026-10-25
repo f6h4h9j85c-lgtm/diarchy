@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -31,9 +31,11 @@ import {
   renderGoal,
   resolveVaultPaths,
   slugify,
+  suffixSlug,
   type MessageDraft,
   type PostResult,
 } from "../src/vault/index.js";
+import { LOCK_HOST, inspectLock, isStale, lockOwner, reapIfSame, releaseLock, touchLock, tryLock } from "../src/vault/lock.js";
 import { budgetLine, code, escapeBlockStarts, italic, linkText, localHint } from "../src/vault/render/shared.js";
 
 const FIXTURES = fileURLToPath(new URL("./fixtures/", import.meta.url));
@@ -41,6 +43,7 @@ const SAMPLE_RUN = join(FIXTURES, "vault", "sample-run");
 const EXAMPLES = join(FIXTURES, "protocol", "examples");
 const WRITER = join(FIXTURES, "vault", "concurrent-writer.ts");
 const SAMPLES = fileURLToPath(new URL("../docs/samples/", import.meta.url));
+const PROTOCOL_MD = fileURLToPath(new URL("../docs/PROTOCOL.md", import.meta.url));
 
 /** The samples assume a store host at UTC-4 on 2026-10-25. */
 const TZ = "America/New_York";
@@ -123,6 +126,13 @@ function harness(start = T0): Harness {
 
 function ok(result: PostResult): asserts result is Extract<PostResult, { ok: true }> {
   if (!result.ok) throw new Error(`${result.rule}: ${result.message}`);
+}
+
+/** Rewrite a goal's phase in budget.json, as a finished run would leave it. */
+function setPhase(h: Harness, goalId: string, phase: GoalState["phase"]): void {
+  const path = join(h.goalDir(goalId), "budget.json");
+  const state = parseGoalState(JSON.parse(readFileSync(path, "utf8")));
+  writeFileSync(path, `${JSON.stringify({ ...state, phase }, null, 2)}\n`);
 }
 
 function listFiles(dir: string): string[] {
@@ -541,6 +551,73 @@ describe("lock", () => {
     expect(existsSync(lock)).toBe(false);
   });
 
+  it("takes over at once a lock whose owner is a dead process on this host", async () => {
+    const h = harness();
+    await replay(h, 1);
+    const lock = join(h.goalDir(), ".lock");
+    const dead = spawnSync(process.execPath, ["-e", ""]).pid;
+    mkdirSync(lock);
+    writeFileSync(join(lock, "owner"), `${JSON.stringify({ pid: dead, host: LOCK_HOST, token: "crashed" })}\n`);
+    h.clock.advance(1_000);
+    const started = Date.now();
+    ok(await h.claude.post(PROPOSE));
+    expect(Date.now() - started).toBeLessThan(5_000);
+    expect(existsSync(lock)).toBe(false);
+  });
+
+  it("a holder whose lock was taken over leaves the new holder's lock in place on release", async () => {
+    const h = harness();
+    await replay(h, 1);
+    const lock = join(h.goalDir(), ".lock");
+    const successor = { pid: process.pid, host: LOCK_HOST, token: "successor" };
+    // While the store sleeps to the next second under the lock, another writer takes the lock over.
+    const claude = new VaultStore({
+      projectDir: h.projectDir,
+      config: CONFIG,
+      agent: "claude",
+      now: h.clock.now,
+      sleep: async (ms) => {
+        rmSync(lock, { recursive: true, force: true });
+        mkdirSync(lock);
+        writeFileSync(join(lock, "owner"), `${JSON.stringify(successor)}\n`);
+        h.clock.advance(ms);
+      },
+      localTz: TZ,
+    });
+    h.clock.advance(500);
+    ok(await claude.post(PROPOSE));
+    expect(lockOwner(lock)).toEqual(successor);
+    rmSync(lock, { recursive: true });
+  });
+
+  it("stale-lock takeover is exclusive: a reaper never removes a lock that replaced the one it judged stale", () => {
+    const root = mkdtempSync(join(tmpdir(), "diarchy-lock-"));
+    temps.push(root);
+    const lock = join(root, ".lock");
+    mkdirSync(lock);
+    const old = (Date.now() - 60_000) / 1000;
+    utimesSync(lock, old, old);
+    // Two writers both stat the abandoned lock and judge it stale.
+    const seenByA = inspectLock(lock);
+    const seenByB = inspectLock(lock);
+    if (seenByA === null || seenByB === null) throw new Error("no lock");
+    expect(isStale(seenByA) && isStale(seenByB)).toBe(true);
+    // A reaps it and takes the lock; B's late reap must leave A's lock alone.
+    expect(reapIfSame(lock, seenByA)).toBe(true);
+    const tokenA = tryLock(lock);
+    expect(tokenA).not.toBeNull();
+    expect(reapIfSame(lock, seenByB)).toBe(false);
+    expect(lockOwner(lock)?.token).toBe(tokenA);
+    expect(tryLock(lock)).toBeNull();
+    expect(readdirSync(root)).toEqual([".lock"]);
+    // Only the owner refreshes or releases it.
+    expect(touchLock(lock, "not-a")).toBe(false);
+    expect(releaseLock(lock, "not-a")).toBe(false);
+    expect(touchLock(lock, tokenA ?? "")).toBe(true);
+    expect(releaseLock(lock, tokenA ?? "")).toBe(true);
+    expect(readdirSync(root)).toEqual([]);
+  });
+
   it("waits on a fresh lock instead of failing", async () => {
     const h = harness();
     await replay(h, 1);
@@ -622,6 +699,30 @@ describe("crash safety", () => {
     const state = h.claude.state();
     expect(state?.messages.map((ref) => ref.id)).toEqual(h.claude.listMessages().map((message) => message.id));
     expect(existsSync(lock)).toBe(false);
+  });
+
+  it("a goal whose budget.json does not parse is skipped with one warning naming the file; the rest of the vault keeps working", async () => {
+    const h = harness();
+    ok(await h.human.kickoff({ goal: "Old goal.", acceptance_criteria: ["It shipped."], lead: "claude", slug: "old" }));
+    setPhase(h, "20261025-old", "DONE");
+    h.clock.advance(60_000);
+    ok(await h.human.kickoff({ goal: "New goal.", acceptance_criteria: ["It ships."], lead: "claude", slug: "new" }));
+    const oldBudget = join(h.goalDir("20261025-old"), "budget.json");
+    writeFileSync(oldBudget, "");
+    const log = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      expect(h.claude.activeGoal()?.goalId).toBe("20261025-new");
+      expect(h.claude.read()?.messages.map((message) => message.type)).toEqual(["KICKOFF"]);
+      h.clock.advance(1_000);
+      ok(await h.claude.post({ type: "PROPOSE", to: "all", re: ["AC1"], decision_id: "plan", claim: "One step ships it.", body: "Nothing to split." }));
+      // Once per store, however often it lists the goals.
+      expect(log).toHaveBeenCalledOnce();
+      expect(log.mock.calls[0][0]).toContain(`skipping goal 20261025-old: ${oldBudget} does not parse`);
+      expect(h.human.listGoals().map((goal) => goal.goalId)).toEqual(["20261025-new"]);
+      expect(log).toHaveBeenCalledTimes(2);
+    } finally {
+      log.mockRestore();
+    }
   });
 
   it("a kickoff that throws before its KICKOFF commits leaves no goal behind, so kickoff can be retried", async () => {
@@ -730,6 +831,61 @@ describe("kickoff", () => {
     expect(h.human.listGoals()).toHaveLength(1);
   });
 
+  it("two kickoffs racing each other: one goal starts, the other is SINGLE_KICKOFF", async () => {
+    const h = harness();
+    const [claude, codex] = await Promise.all([
+      h.claude.kickoff({ ...INPUT, slug: "claude-thing" }),
+      h.codex.kickoff({ ...INPUT, slug: "codex-thing" }),
+    ]);
+    expect(claude.ok).toBe(true);
+    expect(codex).toEqual({
+      ok: false,
+      rule: "SINGLE_KICKOFF",
+      message: "Goal 20261025-claude-thing is already active (phase PLAN). Call read instead of kickoff.",
+    });
+    expect(h.human.listGoals().map((goal) => goal.goalId)).toEqual(["20261025-claude-thing"]);
+    expect(existsSync(h.goalDir("20261025-codex-thing"))).toBe(false);
+    const same = harness();
+    const both = await Promise.all([same.claude.kickoff({ ...INPUT, slug: "same" }), same.codex.kickoff({ ...INPUT, slug: "same" })]);
+    expect(both.map((result) => result.ok).sort()).toEqual([false, true]);
+    expect(readdirSync(join(same.goalDir("20261025-same"), "chat"))).toEqual(["20261025T140000Z-0001-claude-KICKOFF.md"]);
+    expect(readdirSync(join(same.goalDir(), ".."))).toEqual(["20261025-same"]);
+  });
+
+  it("a new goal whose id is taken by a finished goal gets the next free suffix instead of SINGLE_KICKOFF", async () => {
+    const h = harness();
+    const first = await h.human.kickoff(INPUT);
+    ok(first);
+    expect(first.goal_id).toBe("20261025-add-per-api-key-rate-limiting-to-the-pub");
+    setPhase(h, first.goal_id, "DONE");
+    h.clock.advance(60_000);
+    const second = await h.human.kickoff({ ...INPUT, goal: "Add per-API-key rate limiting to the public API v2." });
+    ok(second);
+    expect(second.goal_id).toBe("20261025-add-per-api-key-rate-limiting-to-the-p-2");
+    setPhase(h, second.goal_id, "DONE");
+    h.clock.advance(60_000);
+    const third = await h.human.kickoff({ ...INPUT, slug: "add-per-api-key-rate-limiting-to-the-pub" });
+    ok(third);
+    expect(third.goal_id).toBe("20261025-add-per-api-key-rate-limiting-to-the-p-3");
+    setPhase(h, third.goal_id, "DONE");
+    h.clock.set("2026-10-25T15:04:05Z");
+    const japanese = await h.human.kickoff({ ...INPUT, goal: "レート制限を追加する" });
+    ok(japanese);
+    expect(japanese.goal_id).toBe("20261025-goal-150405");
+    setPhase(h, japanese.goal_id, "DONE");
+    const russian = await h.human.kickoff({ ...INPUT, goal: "Ограничить частоту запросов" });
+    ok(russian);
+    expect(russian.goal_id).toBe("20261025-goal-150405-2");
+    setPhase(h, russian.goal_id, "DONE");
+    expect(await h.human.kickoff({ ...INPUT, goal_id: "20261025-goal-150405" })).toEqual({
+      ok: false,
+      rule: "SCHEMA",
+      message: 'Field "goal_id": 20261025-goal-150405 already exists; pick another id. Fix it per PROTOCOL.md section 3 and post again.',
+    });
+    expect(h.human.listGoals()).toHaveLength(5);
+    expect(h.human.activeGoal()).toBeNull();
+  });
+
   it("allows a new goal once the previous one is DONE, alternating the lead", async () => {
     const h = harness();
     await replay(h);
@@ -748,6 +904,12 @@ describe("kickoff", () => {
     expect(slugify("!!!")).toBe("goal");
     expect(slugify(`${"a".repeat(39)}-b`)).toBe("a".repeat(39));
     expect(slugify("Ship v2.0")).toBe("ship-v2-0");
+    expect(slugify("Café crème brûlée")).toBe("cafe-creme-brulee");
+    expect(slugify("レート制限を追加する")).toBe("goal");
+    expect(slugify("レート制限を追加する", "goal-140000")).toBe("goal-140000");
+    expect(suffixSlug("rate-limit", 2)).toBe("rate-limit-2");
+    expect(suffixSlug("add-per-api-key-rate-limiting-to-the-pub", 12)).toBe("add-per-api-key-rate-limiting-to-the-12");
+    expect(suffixSlug(`${"a".repeat(37)}-bc`, 2)).toBe(`${"a".repeat(37)}-2`);
     const h = harness();
     expect((await h.human.kickoff({ ...INPUT, goal_id: "bad id" })).ok).toBe(false);
     expect((await h.human.kickoff({ ...INPUT, goal_id: "bad id" }))).toMatchObject({ rule: "SCHEMA" });
@@ -1060,7 +1222,10 @@ describe("reply and stop as human", () => {
     expect(parseMessageFile(h.file(`chat/${result.id}.md`))).toMatchObject({ from: "human", type: "BLOCKED", kind: "external", phase: "EXECUTE", re: ["AC1", "AC2", "AC3"] });
     const goal = h.file("goal.md");
     expect(goal).toContain("> **Human needed** since 15:20:00 UTC (11:20 local). The run is BLOCKED (from EXECUTE); nothing moves until you answer.\n>\n> **human is blocked (external), re AC1, AC2, AC3:**\n>\n> > Out of time for today.\n>\n> **To answer:**");
+    // The budget line names the stop, not the earlier ASK_HUMAN the human already answered (14:35:01).
+    expect(goal).toContain(" · **human needed** since 15:20:00 UTC\n");
     const chat = h.file("chat.md");
+    expect(chat).toContain("> **BLOCKED** from EXECUTE · **human needed** since 15:20:00 UTC · lead claude · challenger codex");
     expect(chat).toContain("✕ **human → all · BLOCKED · re AC1, AC2, AC3 · 15:20:00**\n\nkind: external · the human is paged\n\nOut of time for today.\n");
     expect(chat.trimEnd().endsWith("## → BLOCKED · 15:20:00")).toBe(true);
     expect(h.claude.read()?.allowed_types).toEqual([]);
@@ -1068,6 +1233,12 @@ describe("reply and stop as human", () => {
     ok(await h.human.stop("Still stopped."));
     expect(h.human.state()).toMatchObject({ phase: "BLOCKED", blocked_from: "EXECUTE" });
     expect(await h.human.stop("   ")).toMatchObject({ ok: false, rule: "SCHEMA" });
+    // PROTOCOL.md sections 4 and 6 allow exactly this: a human BLOCKED from diarchy stop, BLOCKED with no ASK_HUMAN.
+    expect(h.human.listMessages().filter((message) => message.type === "ASK_HUMAN").map((message) => message.ts)).toEqual(["2026-10-25T14:35:01Z"]);
+    const spec = readFileSync(PROTOCOL_MD, "utf8");
+    expect(spec).toContain("| BLOCKED | any PM; `human` via `diarchy stop` (`kind: external`) |");
+    expect(spec).toContain("| PLAN, EXECUTE, BLOCKED | human BLOCKED (`diarchy stop`) | BLOCKED (`blocked_from` recorded, or kept when already BLOCKED; no ASK_HUMAN) |");
+    expect(spec).toContain("written at every transition into BLOCKED except `diarchy stop`");
   });
 
   it("stop is rejected after DONE; reply and stop throw for agent stores", async () => {

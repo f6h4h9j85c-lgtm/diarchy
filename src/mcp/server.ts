@@ -1,6 +1,7 @@
 /**
  * diarchy-mcp: the MCP tool layer of docs/PROTOCOL.md section 10 over one
- * VaultStore. One server posts as one agent. Every tool answers with the
+ * VaultStore. One server posts as one agent, and only one live server per
+ * agent acts on a goal: the others answer AGENT_BUSY. Every tool answers with the
  * store's result as JSON text plus structuredContent; a protocol rejection
  * (docs/ANTI-SLOP.md `{ ok: false, rule, message }`) sets isError so the
  * calling agent reads the rule and does what the message says.
@@ -28,12 +29,14 @@ import {
   type Rejection,
 } from "../protocol/index.js";
 import {
+  AgentLease,
   CorruptVaultFileError,
   MAX_WAIT_MS,
   NoGoalError,
   VaultStore,
   loadConfig,
   type GoalRef,
+  type LockOwner,
   type MessageDraft,
   type WaitProgress,
 } from "../vault/index.js";
@@ -47,7 +50,7 @@ export interface McpServerOptions {
 }
 
 /** Error codes the server adds to the protocol's RuleId set (PROTOCOL.md section 10). */
-export const SERVER_ERRORS = ["NO_GOAL", "WRONG_TOOL", "INTERNAL"] as const;
+export const SERVER_ERRORS = ["NO_GOAL", "WRONG_TOOL", "AGENT_BUSY", "INTERNAL"] as const;
 export type ServerErrorCode = (typeof SERVER_ERRORS)[number];
 
 export interface ServerError {
@@ -113,6 +116,10 @@ function currentGoal(store: VaultStore): GoalRef | null {
   return store.activeGoal() ?? store.listGoals().at(-1) ?? null;
 }
 
+function agentBusyText(agent: AgentId, holder: LockOwner): string {
+  return `Another diarchy server already acts as ${agent} on this goal (pid ${holder.pid}). One session per agent: end that session, or stop here; this server takes over once that one exits.`;
+}
+
 // ---------------------------------------------------------------------------
 // Input fields shared by several tools
 // ---------------------------------------------------------------------------
@@ -148,6 +155,18 @@ export function createMcpServer(options: McpServerOptions): McpServer {
     return runTool(body);
   };
 
+  const lease = new AgentLease(agent);
+  server.server.onclose = () => lease.release();
+
+  /** AGENT_BUSY while another live server acts as this agent on the current goal; claims the goal otherwise. */
+  const busy = (): ServerError | null => {
+    const goal = currentGoal(store);
+    const holder = goal === null ? null : lease.claim(goal.paths);
+    return holder === null ? null : serverError("AGENT_BUSY", agentBusyText(agent, holder));
+  };
+  /** Run a tool body as this agent: refused with AGENT_BUSY unless this server holds the goal. */
+  const asAgent = (body: () => Promise<object> | object): Promise<CallToolResult> => run(() => busy() ?? body());
+
   server.registerTool(
     "kickoff",
     {
@@ -161,7 +180,13 @@ export function createMcpServer(options: McpServerOptions): McpServer {
         slug: z.string().optional().describe("[a-z0-9-]{1,40} for the goal id; default derived from the goal text."),
       },
     },
-    (args) => run(() => store.kickoff(args)),
+    // kickoff is serialized by the vault lock; the new goal is claimed for this server right away.
+    (args) =>
+      run(async () => {
+        const result = await store.kickoff(args);
+        if (result.ok) busy();
+        return result;
+      }),
   );
 
   server.registerTool(
@@ -183,7 +208,7 @@ export function createMcpServer(options: McpServerOptions): McpServer {
       },
     },
     (args) =>
-      run(() => {
+      asAgent(() => {
         const tool = DEDICATED_TOOL[args.type];
         if (tool !== undefined) return serverError("WRONG_TOOL", `${args.type} goes through the ${tool} tool, not post. Call ${tool} with the same fields.`);
         return store.post({ ...args, re: args.re ?? [] });
@@ -209,7 +234,7 @@ export function createMcpServer(options: McpServerOptions): McpServer {
         body,
       },
     },
-    (args) => run(() => store.post({ ...args, type: "DECIDE", to: "all", re: args.re ?? [] })),
+    (args) => asAgent(() => store.post({ ...args, type: "DECIDE", to: "all", re: args.re ?? [] })),
   );
 
   server.registerTool(
@@ -232,7 +257,7 @@ export function createMcpServer(options: McpServerOptions): McpServer {
       },
     },
     (args) =>
-      run(() => {
+      asAgent(() => {
         const draft: MessageDraft = { ...args, type: "ASSIGN", re: args.re ?? [] };
         if (args.kind === "implement") {
           draft.worktree ??= posix.join(config.worktrees.root, args.to);
@@ -257,7 +282,7 @@ export function createMcpServer(options: McpServerOptions): McpServer {
         body,
       },
     },
-    (args) => run(() => store.post({ ...args, type: "STATUS", to: "all", re: args.re ?? [] })),
+    (args) => asAgent(() => store.post({ ...args, type: "STATUS", to: "all", re: args.re ?? [] })),
   );
 
   server.registerTool(
@@ -268,7 +293,7 @@ export function createMcpServer(options: McpServerOptions): McpServer {
         "Return the goal text (goal_text), every acceptance criterion with its text and status open, passing, or failing (acs), messages from the other agent, the human, and the system since your inbox cursor, plus phase, your role, the types you may post now, budgets, lead, and challenger. Plan against goal_text and acs. Call it first in every turn and after any rejection. Advances the cursor; pass since (a message id) to re-read from a point. Returns NO_GOAL when nothing was kicked off.",
       inputSchema: { since: z.string().optional().describe("Message id to read after; default: your inbox cursor.") },
     },
-    (args) => run(() => store.read(args) ?? serverError("NO_GOAL", NO_GOAL_TEXT)),
+    (args) => asAgent(() => store.read(args) ?? serverError("NO_GOAL", NO_GOAL_TEXT)),
   );
 
   server.registerTool(
@@ -280,7 +305,7 @@ export function createMcpServer(options: McpServerOptions): McpServer {
       inputSchema: { timeout_ms: z.number().int().positive().optional().describe(`Milliseconds to wait; default and cap ${MAX_WAIT_MS}.`) },
     },
     (args, extra) =>
-      run(() => {
+      asAgent(() => {
         const timeoutMs = Math.min(args.timeout_ms ?? MAX_WAIT_MS, MAX_WAIT_MS);
         const mine = new AbortController();
         waiting = mine;

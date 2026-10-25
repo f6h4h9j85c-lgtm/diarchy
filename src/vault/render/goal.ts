@@ -3,6 +3,7 @@ import type { GoalState, Kickoff, Message, Phase, TaskState } from "../../protoc
 import {
   GENERATED,
   SEP,
+  blockTrigger,
   budgetLine,
   budgetTrigger,
   byId,
@@ -14,7 +15,6 @@ import {
   hms,
   humanSlot,
   italic,
-  lastOfType,
   localHint,
   sortMessages,
   tableRow,
@@ -110,18 +110,9 @@ function nested(body: string): string {
     .join("\n");
 }
 
-/** The message that put the run into BLOCKED: the latest ASK_HUMAN, or a later human BLOCKED (`diarchy stop`). */
-function trigger(messages: Message[]): Message | undefined {
-  const ask = lastOfType(messages, "ASK_HUMAN");
-  const stop = [...messages].reverse().find((message) => message.type === "BLOCKED" && message.from === "human");
-  if (ask === undefined) return stop;
-  if (stop === undefined) return ask;
-  return stop.ts > ask.ts ? stop : ask;
-}
-
 function questionCallout(messages: Message[], state: GoalState, opts: RenderOptions): string {
   const ids = byId(messages);
-  const cause = trigger(messages) ?? messages[messages.length - 1];
+  const cause = blockTrigger(messages) ?? messages[messages.length - 1];
   const from: Phase = state.blocked_from ?? cause.phase;
   const since = `**Human needed** since ${hms(cause.ts)} UTC ${localHint(cause.ts, opts.localTz)}. The run is BLOCKED (from ${from}); nothing moves until you answer.`;
   const replyTo = cause.type === "ASK_HUMAN" && cause.reply_to !== undefined ? ids.get(cause.reply_to) : undefined;

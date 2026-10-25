@@ -13,7 +13,7 @@ Status: pre-alpha, v0.1.0. Requires Node 20 or later.
 5. EXECUTE. The lead ASSIGNs tasks by availability. Each PM works on its branch `diarchy/<goal-id>/<agent>` and posts STATUS with commit, test, and PR evidence. After three messages without a STATUS, only STATUS, BLOCKED, and DONE are accepted.
 6. Every PR is ASSIGNed for review to the agent that did not write it. An `approve` from a non-author is the only thing that unlocks merge.
 7. A PM posts BLOCKED `kind: external` for a credential it lacks, a destructive action, or a product call. The goal moves to BLOCKED, the store posts a system ASK_HUMAN, and the launcher exits 2. A deadlock or a spent budget (80 messages or 240 minutes by default) does the same.
-8. The human reads `goal.md`, `chat.md`, and `decisions.md` in Obsidian and answers with `diarchy reply "<text>"`: a DECIDE with `basis: human` that resumes the goal.
+8. The human reads `goal.md`, `chat.md`, and `decisions.md` in Obsidian and answers with `diarchy reply "<text>"`: a DECIDE with `basis: human` recorded in `decisions.md`. The PMs have exited by then, so `diarchy start` (no goal text) re-attaches them and the run continues.
 9. The lead posts DONE once every AC has a passing test, every PR has a cross-review, and no thread is open. The launcher exits 0.
 
 The plan being settled, from `docs/samples/chat.md` with blank lines removed:

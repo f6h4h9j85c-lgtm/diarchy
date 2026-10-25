@@ -4,7 +4,7 @@
  */
 import { Document, isSeq, parse as parseYaml, visit } from "yaml";
 import { z } from "zod";
-import { wordCount } from "./text.js";
+import { FIELD_MAX_CHARS, hasControlChars, wordCount } from "./text.js";
 import { AGENT_HUMAN, AGENT_ID_PATTERN, ASSIGN_KINDS, BLOCKED_KINDS, DECISION_BASES, MAX_AGENTS, MESSAGE_TYPES, PHASES, REVIEW_VERDICTS, STATUS_TASK_STATUSES, TASK_STATUSES, TEST_RESULTS, } from "./types.js";
 // ---------------------------------------------------------------------------
 // Identifiers
@@ -41,6 +41,21 @@ const decisionId = z.string().regex(DECISION_ID_PATTERN, "must be plan or D<n>")
 const isoTs = z.string().regex(ISO_TS_PATTERN, "must be an ISO 8601 UTC timestamp");
 const url = z.url();
 const wordsMax = (max) => z.string().min(1).refine((text) => wordCount(text) <= max, `at most ${max} words`);
+const ONE_LINE = "must be one line with no control characters";
+/** Free text embedded in single-line contexts (briefs, hook reasons, tables): one line, 1 to `max` words. */
+const oneLineWords = (max) => wordsMax(max).refine((text) => !hasControlChars(text), ONE_LINE);
+/** A worktree or file path: one line, at most FIELD_MAX_CHARS. */
+const pathText = z
+    .string()
+    .min(1)
+    .max(FIELD_MAX_CHARS, `at most ${FIELD_MAX_CHARS} characters`)
+    .refine((text) => !hasControlChars(text), ONE_LINE);
+/** Git-ref-safe: letters, digits, `. _ / -`; no `..`; no leading `-`. */
+const BRANCH_PATTERN = /^(?!-)(?!.*\.\.)[A-Za-z0-9._/-]+$/;
+const branchName = z
+    .string()
+    .max(FIELD_MAX_CHARS, `at most ${FIELD_MAX_CHARS} characters`)
+    .regex(BRANCH_PATTERN, 'must be a branch name of letters, digits, and . _ / - with no ".." and no leading "-"');
 // ---------------------------------------------------------------------------
 // Evidence (PROTOCOL.md 3.1)
 // ---------------------------------------------------------------------------
@@ -51,9 +66,9 @@ export const evidenceItemSchema = z.discriminatedUnion("kind", [
         kind: z.literal("test"),
         test: wordsMax(40),
         result: z.enum(TEST_RESULTS),
-        log: z.string().min(1).optional(),
+        log: pathText.optional(),
     }),
-    z.strictObject({ kind: z.literal("file"), path: z.string().min(1) }),
+    z.strictObject({ kind: z.literal("file"), path: pathText }),
     z.strictObject({ kind: z.literal("review"), url, verdict: z.enum(REVIEW_VERDICTS) }),
     z.strictObject({ kind: z.literal("human"), id: messageId }),
     z.strictObject({ kind: z.literal("external"), url, note: wordsMax(20).optional() }),
@@ -109,7 +124,7 @@ export const messageSchemas = {
         decision_id: decisionId.optional(),
         supersedes: decisionId.optional(),
         evidence: evidenceList.optional(),
-        tasks: z.array(z.string().min(1)).optional(),
+        tasks: z.array(oneLineWords(40)).optional(),
         ac_add: z.array(wordsMax(40)).optional(),
         budgets: partialBudgetsSchema.optional(),
     }),
@@ -117,10 +132,10 @@ export const messageSchemas = {
         ...base,
         type: z.literal("ASSIGN"),
         task: taskId.optional(),
-        new_task: z.string().min(1).optional(),
+        new_task: oneLineWords(40).optional(),
         kind: z.enum(ASSIGN_KINDS),
-        worktree: z.string().min(1).optional(),
-        branch: z.string().min(1).optional(),
+        worktree: pathText.optional(),
+        branch: branchName.optional(),
         pr: url.optional(),
         reason: z.string().optional(),
     }),

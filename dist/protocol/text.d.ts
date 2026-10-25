@@ -16,5 +16,17 @@ export declare const ACK_PATTERNS: readonly ["agreed", "sounds good", "great poi
  * phrase. A body identical to the claim counts as empty.
  */
 export declare function isAck(body: string, claim?: string): boolean;
+/** Longest branch, worktree, or path a message may carry (PROTOCOL.md 3). */
+export declare const FIELD_MAX_CHARS = 200;
+/** Longest agent-authored text `oneLine` lets into a brief or hook reason by default. */
+export declare const ONE_LINE_MAX_CHARS = 80;
+/** True when `text` holds a line break or any other control character. */
+export declare function hasControlChars(text: string): boolean;
+/**
+ * Agent-authored text made safe for a one-line terminal or hook context:
+ * control characters become spaces, whitespace collapses, and text longer
+ * than `maxChars` is cut with an ellipsis.
+ */
+export declare function oneLine(text: string, maxChars?: number): string;
 /** First `max` whitespace-split tokens, with an ellipsis when cut. */
 export declare function truncateWords(text: string, max: number): string;

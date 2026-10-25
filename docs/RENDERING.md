@@ -359,5 +359,5 @@ All three files are rewritten inside the transaction of every accepted message (
 - A STATUS with both a task update and review evidence for another PR renders all of it; the fields line names the task, the evidence names the review.
 - Multiple BLOCKED cycles produce multiple `## → BLOCKED` and `## → EXECUTE` headings; the strip always reflects the current state.
 - A superseding DECIDE shows the new `D<n>` in its header and `supersedes: <old>` on its fields line; `decisions.md` strikes the old id.
-- Three or more agents: the strip and `## Status` list challengers comma-separated; nothing else changes.
+- Three or more agents: protocol_version 1 refuses a third agent (PROTOCOL 11), so the strip and `## Status` always name one lead and one challenger.
 - If `budget.json` is missing or unreadable, the renderer still writes the transcript and replaces the budget line with `budget unavailable`; it never omits the strip.

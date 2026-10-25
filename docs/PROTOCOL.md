@@ -391,7 +391,7 @@ The store checks recorded state only, so a DONE cannot certify itself: (b) needs
 
 All tools act on the vault's current goal (the active one, else the newest); no tool takes a goal id. One server posts as the one agent it was started for, so no tool takes `from` or `lead`: the caller of `kickoff` is the lead. The MCP layer drops input fields a tool does not declare, and refuses a declared field of the wrong shape with `isError` and a plain-text message before the store sees it.
 
-A posting tool (`kickoff`, `post`, `decide`, `assign`, `status`) answers `{ ok: true, id, ts, seq, phase, allowed_types, budgets: { used, limits }, decision_id? }`; `kickoff` adds `goal_id, lead, challenger, kickoff_id`. `read` answers `{ goal, phase, role, allowed_types, budgets: { used, limits }, lead, challenger, messages, cursor }`, with no `ok`. Every failure answers `{ ok: false, rule: "<RULE_ID>", message: "<what to do instead>" }` with `isError` set; `rule` is a rule id from ANTI-SLOP.md or one of these server codes, which are not protocol rules:
+A posting tool (`kickoff`, `post`, `decide`, `assign`, `status`) answers `{ ok: true, id, ts, seq, phase, allowed_types, budgets: { used, limits }, decision_id? }`; `kickoff` adds `goal_id, lead, challenger, kickoff_id`. `read` answers `{ goal, phase, role, allowed_types, budgets: { used, limits }, lead, challenger, messages, cursor }`, with no `ok`. Every store or server rejection answers `{ ok: false, rule: "<RULE_ID>", message: "<what to do instead>" }` with `isError` set; `rule` is a rule id from ANTI-SLOP.md or one of these server codes, which are not protocol rules:
 
 | Code | When | Message |
 |---|---|---|

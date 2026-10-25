@@ -389,23 +389,33 @@ The store checks recorded state only, so a DONE cannot certify itself: (b) needs
 
 ## 10. MCP tools
 
-All tools act on the single active goal (`goal_id` optional). Success returns `{ ok: true, phase, role, allowed_types, budget: { used, limits }, ... }`. Rejection returns `{ ok: false, rule: "<RULE_ID>", message: "<what to do instead>" }`, `rule` taken from ANTI-SLOP.md.
+All tools act on the vault's current goal (the active one, else the newest); no tool takes a goal id. One server posts as the one agent it was started for, so no tool takes `from` or `lead`: the caller of `kickoff` is the lead. The MCP layer drops input fields a tool does not declare, and refuses a declared field of the wrong shape with `isError` and a plain-text message before the store sees it.
 
-| Tool | Input (field: type) | Output extras | Typical errors |
+A posting tool (`kickoff`, `post`, `decide`, `assign`, `status`) answers `{ ok: true, id, ts, seq, phase, allowed_types, budgets: { used, limits }, decision_id? }`; `kickoff` adds `goal_id, lead, challenger, kickoff_id`. `read` answers `{ goal, phase, role, allowed_types, budgets: { used, limits }, lead, challenger, messages, cursor }`, with no `ok`. Every failure answers `{ ok: false, rule: "<RULE_ID>", message: "<what to do instead>" }` with `isError` set; `rule` is a rule id from ANTI-SLOP.md or one of these server codes, which are not protocol rules:
+
+| Code | When | Message |
+|---|---|---|
+| NO_GOAL | any tool but `kickoff` before the first goal in this vault is kicked off | No goal in this vault. Call kickoff first. |
+| WRONG_TOOL | `post` with type KICKOFF, DECIDE, or ASSIGN | {type} goes through the {tool} tool, not post. Call {tool} with the same fields. |
+| INTERNAL | an unexpected exception, also logged to stderr | {error} |
+
+| Tool | Input (field: type) | Output | Typical errors |
 |---|---|---|---|
-| kickoff | goal: string (120 words max); acceptance_criteria: string[] (1+, 40 words each); lead?: agent id; budgets?: object; slug?: string | goal_id, lead, challenger, kickoff_id | SINGLE_KICKOFF, SCHEMA, WORD_CAP |
-| post | type; to; re: string[]; body?; claim?; evidence?: item[]; reply_to?; decision_id?; kind?; from? (must match server identity) | id, ts, seq, decision_id | any rule |
-| read | since?: id (default: inbox cursor) | messages: [{frontmatter..., body}] excluding the caller's own; cursor | SCHEMA |
-| wait_for_reply | timeout_ms?: int (default and hard cap 110000) | as `read`, or `{ timeout: true }` (also when cancelled or overtaken by a later call); MCP progress notification every 15 s; runs the store tick | SCHEMA |
-| decide | claim; basis; re; decision_id?; supersedes?; evidence?; reply_to?; tasks?; ac_add?; body? | as `post` (type DECIDE) | ROLE_GATE, TWO_ROUNDS, DECISION_IMMUTABLE, PHASE_GATE |
-| assign | to; kind; task? or new_task?; worktree?; branch?; pr?; re; reason?; body? | as `post` (type ASSIGN); worktree/branch default from config | ROLE_GATE, NO_DOMAIN_ROUTING, BUSY_REVIEWING, NO_SELF_REVIEW |
-| status | re; evidence; task?; task_status?; body? | as `post` (type STATUS) | NO_ACK, NO_SELF_REVIEW, CITE_AC |
+| kickoff | goal: string (120 words max); acceptance_criteria: string[] (1+, 40 words each); budgets?: object; slug?: `[a-z0-9-]{1,40}`, default derived from the goal text | posting result plus goal_id, lead, challenger, kickoff_id | SINGLE_KICKOFF, SCHEMA, WORD_CAP |
+| post | type: message type; to?: agent id or all (default all); re?: string[]; body?; claim?; evidence?: item[]; reply_to?; decision_id?; kind? | posting result | WRONG_TOOL, any rule |
+| read | since?: id (default: inbox cursor) | read result: messages [{frontmatter..., body}] excluding the caller's own; cursor | NO_GOAL |
+| wait_for_reply | timeout_ms?: int (default and hard cap 110000) | read result, or `{ timeout: true }` (also when cancelled or overtaken by a later call); MCP progress notification every 15 s; runs the store tick | NO_GOAL |
+| decide | claim; basis; re?; decision_id?; supersedes?; evidence?; reply_to?; tasks?; ac_add?; body? | posting result (type DECIDE) | ROLE_GATE, DECISION_IMMUTABLE, PHASE_GATE |
+| assign | to; kind; task? (exactly one of task and new_task); new_task?; worktree?; branch?; pr?; re?; reason?; body? | posting result (type ASSIGN); worktree/branch default from config | ROLE_GATE, NO_DOMAIN_ROUTING, BUSY_REVIEWING, NO_SELF_REVIEW |
+| status | re?; evidence; task?; task_status?; body? | posting result (type STATUS) | NO_ACK, NO_SELF_REVIEW, CITE_AC |
+
+`re` is optional in every input schema only so that an empty one reaches the store and is rejected with CITE_AC and its guidance.
 
 `read` and `wait_for_reply` advance `inbox/<agent>.json.cursor` to the last delivered id, `wait_for_reply` only when it hands messages to a live call: a wait cancelled through MCP `notifications/cancelled`, or still running when the same agent's next tool call arrives (a client-side tool timeout that sends no cancel), returns `{ timeout: true }` and leaves the cursor alone, so the reply reaches that agent's next `read` or `wait_for_reply` instead of a call nobody is reading. `to` is addressing, not access control. The launcher uses the store library as `human`: `diarchy reply "<text>" [--decision <id>] [--budget key=value]` posts a DECIDE with `basis: human` (without `--decision` the store assigns the next `D<n>`); `diarchy stop` kills both CLIs and leaves the goal BLOCKED. `human` is the identity a store is configured with, not a credential: any process that can run the CLI against the project posts as the human. Two things narrow that. A system ASK_HUMAN body names the trigger and says the human has been paged; it never carries the reply command, which a run shows only in the goal.md callout (RENDERING.md 4.1), `diarchy status`, and the launcher's output. The plugins' PreToolUse hook denies a PM's shell call to `diarchy reply` or `diarchy stop`. What remains is a documented limit (ANTI-SLOP.md, What this does NOT prevent).
 
 ## 11. Extensibility
 
-Agent ids are strings `[a-z][a-z0-9-]{1,15}` declared in `config.agents`; a third agent (`cursor`, `grok`) is added there with no format change. Every per-agent artefact is keyed by id: filename segment, `seq`, inbox file, worktree, branch. With three or more agents, `challenger` in kickoff.md becomes a list, `challenges_per_decision` applies per challenger, cross-review requires reviewer not equal to author, and deadlock fires on any unanswered CHALLENGE.
+Agent ids are strings `[a-z][a-z0-9-]{1,15}` declared in `config.agents`. protocol_version 1 runs exactly two agents, one lead and one challenger: loading a `diarchy.config.json` that declares more than two fails, `diarchy init --agents` accepts exactly two ids, and `kickoff` fails with fewer than two. Every per-agent artefact is already keyed by id (filename segment, `seq`, inbox file, worktree, branch), so a third agent (`cursor`, `grok`) needs no new file layout. Adding one is reserved for a later protocol_version, with a list-valued `challenger` in kickoff.md, `challenges_per_decision` counted per challenger, cross-review requiring reviewer not equal to author, and deadlock on any unanswered CHALLENGE.
 
 ## 12. Versioning
 

@@ -2,7 +2,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 
-import { AGENT_ID_PATTERN, DEFAULT_LIMITS } from "../protocol/index.js";
+import { AGENT_ID_PATTERN, DEFAULT_LIMITS, MAX_AGENTS } from "../protocol/index.js";
 import { CONFIG_FILENAME, defaultVault } from "../vault/index.js";
 import { CliError, EXIT_ERROR, EXIT_OK } from "./common.js";
 import { CODEX_FULL_ACCESS_ARGS, DEFAULT_LAUNCHER, agentLaunch } from "./launcher-config.js";
@@ -47,7 +47,9 @@ function parseAgents(option: string | undefined): string[] {
   for (const id of unique) {
     if (!AGENT_ID_PATTERN.test(id)) throw new CliError(`agent id "${id}" must match ${AGENT_ID_PATTERN.source}`);
   }
-  if (unique.length < 2) throw new CliError("--agents needs at least two comma-separated ids");
+  if (unique.length !== MAX_AGENTS) {
+    throw new CliError(`--agents needs exactly ${MAX_AGENTS} comma-separated ids: protocol_version 1 runs one lead and one challenger`);
+  }
   return unique;
 }
 

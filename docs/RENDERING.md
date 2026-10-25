@@ -111,7 +111,7 @@ Paragraph 1, state:
 
 - `<PHASE>` is the literal phase. In BLOCKED it is `**BLOCKED** from <blocked_from>`.
 - `<human slot>` is `no action needed` in PLAN, EXECUTE, DONE, and `**human needed** since <HH:MM:SS> UTC` in BLOCKED, using the ts of the latest ASK_HUMAN.
-- With three or more agents, `challenger` lists them comma-separated.
+- `<challenger>` is the agent that is not the lead; protocol_version 1 runs exactly two agents (PROTOCOL 11).
 
 Paragraph 2, budget line (1.4).
 
@@ -211,7 +211,7 @@ A phase change is marked by an H2 placed immediately after the `---` that follow
 ## → <PHASE> · HH:MM:SS
 ```
 
-with that message's time. One heading per transition, in this order of causes: KICKOFF → `## → PLAN`; `plan` DECIDE → `## → EXECUTE`; `BLOCKED kind: external`, deadlock, or budget exhaustion → `## → BLOCKED` (after the last accepted message; the system ASK_HUMAN then follows the heading); human DECIDE → `## → <blocked_from>`; DONE → `## → DONE`, which is then the last line of the file.
+with that message's time. One heading per transition, in this order of causes: KICKOFF → `## → PLAN`; `plan` DECIDE → `## → EXECUTE`; `BLOCKED kind: external`, deadlock, or budget exhaustion → `## → BLOCKED` (after the last accepted message; the system ASK_HUMAN then follows the heading); human DECIDE → `## → <blocked_from>`, except that a human `plan` ruling, which restores PLAN and closes it in one acceptance, gets only `## → EXECUTE`; DONE → `## → DONE`, which is then the last line of the file.
 
 Headings are the only H2s in the file, so the Obsidian outline reads as the run's timeline: `→ PLAN`, `→ EXECUTE`, `→ BLOCKED`, `→ EXECUTE`, `→ DONE`.
 
@@ -313,7 +313,7 @@ Final paragraph, how to answer. The human never edits a vault file; the launcher
 - external: `` **To answer:** run `diarchy reply "<your answer>"`. It is posted as a DECIDE with basis human, recorded in decisions.md, and EXECUTE resumes. `diarchy stop` ends the run and leaves it BLOCKED. ``
 - deadlock: `` **To answer:** run `diarchy reply "<ruling>" --decision <decision_id>`. Your ruling closes <decision_id> as a DECIDE with basis human and <blocked_from> resumes. `diarchy stop` ends the run. ``
 
-When the stalled decision is `plan` and another thread is still open, the command is `diarchy reply "<ruling>"` without `--decision` (a `plan` ruling would be rejected by PHASE_GATE); the paragraph then says the ruling is recorded as a new DECIDE and that the lead must DECIDE plan next.
+When the stalled decision is `plan` and another thread is still open, the command is `diarchy reply "<ruling>"` without `--decision` (a `plan` ruling would be rejected by PHASE_GATE); the paragraph then says the ruling is recorded as a new DECIDE and that the lead must DECIDE plan next. When the stalled decision is `plan` and no other thread is open, the human ruling closes PLAN at once but carries no `tasks`, so the paragraph reads: `` **To answer:** run `diarchy reply "<ruling>" --decision plan`. Your ruling closes plan as a DECIDE with basis human, and EXECUTE begins with no tasks: <lead> must ASSIGN each task with new_task. `diarchy stop` ends the run. ``
 - budget: `` **To answer:** run `diarchy reply "continue" --budget <counter>=<suggested>` to raise the limit and resume <blocked_from>, or `diarchy stop` to end the run. `` where `<suggested>` is twice the current limit.
 
 The word `EXECUTE` in the external variant is `<blocked_from>` when the block happened in PLAN.

@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -18,7 +18,8 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { TOOL_NAMES, createMcpServer } from "../src/mcp/index.js";
+import { SERVER_ERRORS, TOOL_NAMES, createMcpServer } from "../src/mcp/index.js";
+import { RULE_IDS } from "../src/protocol/index.js";
 import {
   CONFIG_FILENAME,
   GENERATED,
@@ -185,6 +186,105 @@ describe("tools/list", () => {
       expect(tool.description?.length ?? 0, tool.name).toBeGreaterThan(0);
       expect(tool.description, tool.name).not.toContain("—");
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// PROTOCOL.md section 10 is the wire contract: parsed so the doc and the server cannot drift
+// ---------------------------------------------------------------------------
+
+const PROTOCOL = readFileSync(join(ROOT, "docs", "PROTOCOL.md"), "utf8");
+const SECTION_10 = PROTOCOL.slice(PROTOCOL.indexOf("## 10. MCP tools"), PROTOCOL.indexOf("## 11."));
+
+function tableRows(text: string): string[][] {
+  return text
+    .split("\n")
+    .filter((line) => line.startsWith("|") && !/^\|\s*-+/.test(line))
+    .map((line) => line.split("|").slice(1, -1).map((cell) => cell.trim()));
+}
+
+const TOOL_ROWS = new Map(tableRows(SECTION_10).filter(([name]) => (TOOL_NAMES as readonly string[]).includes(name)).map((cells) => [cells[0], cells]));
+const CODE_ROWS = tableRows(SECTION_10).filter((cells) => cells.length === 3 && /^[A-Z_]+$/.test(cells[0]));
+
+interface Shape {
+  required: string[];
+  optional: string[];
+}
+
+/** `name: type; other?: type` or `{ a, b: { c }, d? }`: top-level names, `?` marking the optional ones. */
+function fields(list: string, separator: string): Shape {
+  const shape: Shape = { required: [], optional: [] };
+  for (const part of list.split(separator)) {
+    const match = /^\s*([a-z_]+)(\?)?/.exec(part);
+    if (match === null) throw new Error(`no field name in "${part}"`);
+    (match[2] === "?" ? shape.optional : shape.required).push(match[1]);
+  }
+  return shape;
+}
+
+function documentedShape(pattern: RegExp): Shape {
+  const match = pattern.exec(SECTION_10);
+  if (match === null) throw new Error(`PROTOCOL.md section 10 has no shape matching ${pattern.source}`);
+  let inner = match[1].trim().replace(/^\{|\}$/g, "");
+  while (/\{[^{}]*\}/.test(inner)) inner = inner.replace(/\{[^{}]*\}/g, "");
+  return fields(inner, ",");
+}
+
+function expectShape(result: object, shape: Shape, label: string): void {
+  const keys = Object.keys(result);
+  for (const key of shape.required) expect(keys, `${label} has ${key}`).toContain(key);
+  for (const key of keys) expect([...shape.required, ...shape.optional], `${label} documents ${key}`).toContain(key);
+}
+
+describe("PROTOCOL.md section 10", () => {
+  it("documents each tool's input fields exactly, with ? on the optional ones", async () => {
+    const h = await harness();
+    const { tools } = await h.claude.listTools();
+    expect([...TOOL_ROWS.keys()].sort()).toEqual(SORTED_TOOLS);
+    for (const tool of tools) {
+      const row = TOOL_ROWS.get(tool.name) ?? [];
+      const doc = fields(row[1] ?? "", ";");
+      const properties = Object.keys(tool.inputSchema.properties ?? {});
+      const required = tool.inputSchema.required ?? [];
+      expect([...doc.required, ...doc.optional].sort(), tool.name).toEqual([...properties].sort());
+      expect([...doc.required].sort(), `${tool.name} required`).toEqual([...required].sort());
+    }
+  });
+
+  it("lists the server codes with the server's messages, and every typical error is a known code", async () => {
+    expect(CODE_ROWS.map(([code]) => code).sort()).toEqual([...SERVER_ERRORS].sort());
+    const message = (code: string): string => CODE_ROWS.find(([name]) => name === code)?.[2] ?? "";
+    expect(message("NO_GOAL")).toBe(NO_GOAL.message);
+    const h = await harness();
+    await h.kickoff();
+    const wrong = await rejected(h.claude, "post", { ...PROPOSE, type: "DECIDE" });
+    expect(wrong.rule).toBe("WRONG_TOOL");
+    const template = message("WRONG_TOOL").split(/\{[a-z_]+\}/).map((part) => part.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+    expect(wrong.message).toMatch(new RegExp(`^${template.join(".+?")}$`));
+
+    const known = new Set<string>([...RULE_IDS, ...SERVER_ERRORS]);
+    for (const [name, , , errors] of TOOL_ROWS.values()) {
+      for (const code of errors.split(",").map((part) => part.trim())) {
+        if (code !== "any rule") expect(known.has(code), `${name} lists ${code}`).toBe(true);
+      }
+    }
+    // TWO_ROUNDS gates only PROPOSE and CHALLENGE (rules.ts twoRounds); the happy path decides after both.
+    expect(TOOL_ROWS.get("decide")?.[3]).not.toContain("TWO_ROUNDS");
+  });
+
+  it("posting and read results carry exactly the documented keys", async () => {
+    const posting = documentedShape(/answers `(\{ ok: true[^`]*\})`/);
+    const kickoffExtras = fields(/`kickoff` adds `([^`]+)`/.exec(SECTION_10)?.[1] ?? "", ",");
+    const read = documentedShape(/`read` answers `(\{[^`]*\})`/);
+    expect(read.required).not.toContain("ok");
+
+    const h = await harness();
+    const kick = await h.kickoff();
+    expectShape(kick, { required: [...posting.required, ...kickoffExtras.required], optional: posting.optional }, "kickoff");
+    expectShape(await accepted(h.claude, "post", PROPOSE), posting, "post");
+    expectShape(await accepted(h.codex, "read"), read, "read");
+    await accepted(h.claude, "status", { re: ["AC1"], evidence: [{ kind: "file", path: "docs/plan.md" }], body: "Plan notes written down." });
+    expectShape(await accepted(h.codex, "wait_for_reply", { timeout_ms: 1_000 }), read, "wait_for_reply");
   });
 });
 

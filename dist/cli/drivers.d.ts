@@ -39,7 +39,11 @@ export interface RealPlanInput {
     cwd: string;
     worktree: string | null;
     session: SessionRecord | null;
+    /** False when `cwd` is not inside a git repository. */
+    inGitRepo?: boolean;
 }
+/** The `codex exec` flag that lets it run in a directory that is not a git repository. */
+export declare const SKIP_GIT_REPO_CHECK = "--skip-git-repo-check";
 export interface RealPlan extends SpawnPlan {
     flavor: Flavor;
     /** A session the launcher minted for this spawn (claude) that must be saved. */

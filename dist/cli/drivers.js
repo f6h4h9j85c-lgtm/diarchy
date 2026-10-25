@@ -21,8 +21,12 @@
  *   (the `--json` event stream) or a `session id: <uuid>` banner line, and a
  *   restart runs `codex exec <flags> resume <id> "<prompt>"`.
  * - anything else: no resume.
- * A resumed child that exits non-zero within a few seconds drops its session
- * file so the next spawn starts fresh.
+ * A resumed child that starts and then exits non-zero within a few seconds
+ * drops its session file so the next spawn starts fresh; a spawn that fails
+ * before the CLI runs (exec error, EAGAIN) keeps it.
+ *
+ * `codex exec` refuses to run outside a git repository, so when the agent's cwd
+ * is not in one the launcher adds `--skip-git-repo-check`.
  *
  * Fake driver: `node [--import tsx] <fake-script> <mode>` with the same env plus
  * DIARCHY_FAKE_MODE; used by the e2e test to exercise launcher, store, and
@@ -32,7 +36,7 @@ import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { basename, dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { runsInWorkspaceWrite } from "./launcher-config.js";
 export function sessionPath(projectDir, agent) {
     return join(projectDir, ".diarchy", "sessions", `${agent}.json`);
@@ -107,6 +111,8 @@ export function sandboxNotice(agent, launch) {
     return (`note: ${agent} runs in the Codex workspace-write sandbox, so it can edit and test in its worktree but cannot commit, push, or open a PR; ` +
         "the other PM or you must commit its work (full access: diarchy init --codex-full-access, docs/INSTALL-CODEX.md 5)");
 }
+/** The `codex exec` flag that lets it run in a directory that is not a git repository. */
+export const SKIP_GIT_REPO_CHECK = "--skip-git-repo-check";
 function baseEnv(input) {
     const env = {
         ...process.env,
@@ -124,6 +130,8 @@ export function realPlan(input) {
     const flavor = flavorOf(input.launch.command);
     const prompt = buildPrompt(input.agent, input.goalId);
     const args = [...input.launch.args];
+    if (flavor === "codex" && input.inGitRepo === false && !args.includes(SKIP_GIT_REPO_CHECK))
+        args.push(SKIP_GIT_REPO_CHECK);
     let resumed = false;
     let minted = null;
     if (input.session !== null && flavor === "claude") {
@@ -153,9 +161,10 @@ export function defaultFakeScript() {
     const ext = here.endsWith(".ts") ? ".ts" : ".js";
     return join(dirname(here), `fake-pm${ext}`);
 }
+/** The tsx loader as a file URL: `--import` takes a URL or specifier, and a Windows path is neither. */
 function tsxLoader() {
     const require = createRequire(import.meta.url);
-    return join(dirname(require.resolve("tsx/package.json")), "dist", "loader.mjs");
+    return pathToFileURL(join(dirname(require.resolve("tsx/package.json")), "dist", "loader.mjs")).href;
 }
 export function fakePlan(input) {
     const args = input.script.endsWith(".ts") ? ["--import", tsxLoader(), input.script, input.mode] : [input.script, input.mode];

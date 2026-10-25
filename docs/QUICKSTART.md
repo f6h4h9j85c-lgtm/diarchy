@@ -1,6 +1,6 @@
 # Quickstart: a first diarchy run in ten minutes
 
-You need Claude Code and Codex CLI installed and signed in, Node 20.3 or later, and a git repository with at least one commit.
+You need Claude Code and Codex CLI installed and signed in, Node 20.3 or later on Linux or macOS (native Windows is untested and `diarchy start --driver real` refuses to run there; use WSL), and a git repository with at least one commit.
 
 ## 1. Install the plugin in both CLIs
 

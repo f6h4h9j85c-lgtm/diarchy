@@ -34,7 +34,7 @@ function logError(error) {
     console.error(`diarchy-mcp: ${error instanceof Error ? (error.stack ?? error.message) : String(error)}`);
 }
 /** Run a tool body; NoGoalError becomes NO_GOAL, anything else INTERNAL. The server never crashes on a bad input. */
-async function run(body) {
+async function runTool(body) {
     try {
         return toolResult(await body());
     }
@@ -67,6 +67,19 @@ export function createMcpServer(options) {
     const config = loadConfig(projectDir);
     const store = options.store ?? new VaultStore({ projectDir, config, agent, ...(options.now === undefined ? {} : { now: options.now }) });
     const server = new McpServer({ name: "diarchy", version: VERSION }, { capabilities: { logging: {} }, instructions: INSTRUCTIONS });
+    /** The wait_for_reply this server has in flight, if any: one agent, one wait. */
+    let waiting = null;
+    /**
+     * Every tool call ends an earlier wait before it runs. The agent is
+     * sequential, so a new call means nobody reads that wait's result any more
+     * (its client timed out without sending notifications/cancelled); left
+     * running it would consume the reply and move the cursor past it.
+     */
+    const run = (body) => {
+        waiting?.abort();
+        waiting = null;
+        return runTool(body);
+    };
     server.registerTool("kickoff", {
         title: "Kick off a goal",
         description: "Start the one goal this vault will run; you become lead and the other agent challenger. Use only when read returns NO_GOAL and a human gave you a goal. Goal text 120 words max, each criterion 40 words max; criteria become AC1.. and are never reworded. Rejected with SINGLE_KICKOFF while a goal is PLAN, EXECUTE, or BLOCKED. Then post a PROPOSE with decision_id plan.",
@@ -157,11 +170,22 @@ export function createMcpServer(options) {
     }, (args) => run(() => store.read(args) ?? serverError("NO_GOAL", NO_GOAL_TEXT)));
     server.registerTool("wait_for_reply", {
         title: "Wait for a reply",
-        description: `Block until the other agent, the human, or the system posts, then return the same result as read. Use it instead of polling read. timeout_ms defaults to and is capped at ${MAX_WAIT_MS}; on expiry it returns { timeout: true } and you call it again (the goal may also have moved to BLOCKED by deadline, which arrives as a system ASK_HUMAN). Sends a progress notification every 15 s.`,
+        description: `Block until the other agent, the human, or the system posts, then return the same result as read. Use it instead of polling read. timeout_ms defaults to and is capped at ${MAX_WAIT_MS}; on expiry it returns { timeout: true } and you call it again (the goal may also have moved to BLOCKED by deadline, which arrives as a system ASK_HUMAN). Sends a progress notification every 15 s. A wait that is cancelled, or overtaken by your next call, also returns { timeout: true } and leaves your inbox cursor alone, so the reply arrives on that next call.`,
         inputSchema: { timeout_ms: z.number().int().positive().optional().describe(`Milliseconds to wait; default and cap ${MAX_WAIT_MS}.`) },
     }, (args, extra) => run(() => {
         const timeoutMs = Math.min(args.timeout_ms ?? MAX_WAIT_MS, MAX_WAIT_MS);
-        return store.waitForReply({ timeoutMs, onProgress: (progress) => void notifyProgress(server, extra, timeoutMs, progress).catch(logError) });
+        const mine = new AbortController();
+        waiting = mine;
+        return store
+            .waitForReply({
+            timeoutMs,
+            signal: AbortSignal.any([extra.signal, mine.signal]),
+            onProgress: (progress) => void notifyProgress(server, extra, timeoutMs, progress).catch(logError),
+        })
+            .finally(() => {
+            if (waiting === mine)
+                waiting = null;
+        });
     }));
     const view = (title, uri, file, description) => {
         server.registerResource(title, uri, { title, description, mimeType: "text/markdown" }, (url) => {

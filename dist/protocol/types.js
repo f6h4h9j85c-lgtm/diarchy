@@ -8,6 +8,8 @@ export const AGENT_HUMAN = "human";
 export const AGENT_SYSTEM = "system";
 /** PROTOCOL.md section 11: agent ids are `[a-z][a-z0-9-]{1,15}`. */
 export const AGENT_ID_PATTERN = /^[a-z][a-z0-9-]{1,15}$/;
+/** PROTOCOL.md section 11: protocol_version 1 runs exactly two agents, one lead and one challenger. */
+export const MAX_AGENTS = 2;
 export const MESSAGE_TYPES = [
     "KICKOFF",
     "PROPOSE",

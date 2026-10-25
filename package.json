@@ -6,7 +6,7 @@
   "license": "MIT",
   "author": "Samuel Sullivan",
   "engines": {
-    "node": ">=20"
+    "node": ">=20.3"
   },
   "bin": {
     "diarchy": "./bin/diarchy.js"
@@ -32,7 +32,7 @@
     ".mcp.json",
     "README.md",
     "LICENSE",
-    "plugin.json",
+    ".codex-plugin",
     "mcp.json",
     "templates",
     "scripts"

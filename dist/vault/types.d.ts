@@ -76,6 +76,8 @@ export interface WaitProgress {
 export interface WaitOptions {
     timeoutMs?: number;
     onProgress?: (progress: WaitProgress) => void;
+    /** Aborting it ends the wait with `{ timeout: true }` without moving the inbox cursor: nobody is left to read the result. */
+    signal?: AbortSignal;
 }
 export type WaitResult = ReadResult | {
     timeout: true;

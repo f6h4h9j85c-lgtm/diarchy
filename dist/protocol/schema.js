@@ -5,7 +5,7 @@
 import { Document, isSeq, parse as parseYaml, visit } from "yaml";
 import { z } from "zod";
 import { wordCount } from "./text.js";
-import { AGENT_HUMAN, AGENT_ID_PATTERN, ASSIGN_KINDS, BLOCKED_KINDS, DECISION_BASES, MESSAGE_TYPES, PHASES, REVIEW_VERDICTS, STATUS_TASK_STATUSES, TASK_STATUSES, TEST_RESULTS, } from "./types.js";
+import { AGENT_HUMAN, AGENT_ID_PATTERN, ASSIGN_KINDS, BLOCKED_KINDS, DECISION_BASES, MAX_AGENTS, MESSAGE_TYPES, PHASES, REVIEW_VERDICTS, STATUS_TASK_STATUSES, TASK_STATUSES, TEST_RESULTS, } from "./types.js";
 // ---------------------------------------------------------------------------
 // Identifiers
 // ---------------------------------------------------------------------------
@@ -419,7 +419,11 @@ export function parseKickoffFile(text) {
 export const configSchema = z.object({
     protocol_version: z.literal(1),
     vault: z.string().min(1),
-    agents: z.record(agentId, z.object({ command: z.string().min(1) })),
+    agents: z
+        .record(agentId, z.object({ command: z.string().min(1) }))
+        .refine((agents) => Object.keys(agents).length <= MAX_AGENTS, {
+        message: `protocol_version 1 runs exactly ${MAX_AGENTS} agents, one lead and one challenger (PROTOCOL.md section 11)`,
+    }),
     budgets: partialBudgetsSchema.default({}),
     worktrees: z
         .object({ root: z.string().min(1), branch_prefix: z.string().min(1) })

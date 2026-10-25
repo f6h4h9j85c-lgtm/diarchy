@@ -45,7 +45,7 @@ Terms: the **store** is the file layer inside `diarchy-mcp` (one process per age
 
 One accepted message is one transaction: acquire `.lock/` by `mkdir` (a lock older than 30 s is stale and MAY be removed); run validator, then store checks against `budget.json`; write `chat/<id>.md` via temp file plus rename; update `budget.json`, `goal.md`, `chat.md`, `decisions.md`; release.
 
-Writing `budget.json` commits the transaction. A `chat/` file whose id `budget.json` does not record was never accepted: reads and renders skip it, a store that fails before the commit removes the files it wrote, and the next transaction moves any file a crash left this way to `chat/.orphans/` before it reads anything.
+Writing `budget.json` commits the transaction. A `chat/` file whose id `budget.json` does not record was never accepted: reads and renders skip it, a store that fails before the commit removes the files it wrote, and the next transaction moves any file a crash left this way to `chat/.orphans/` before it reads anything. Kickoff holds the new goal's lock from its first write and writes `budget.json` only with the KICKOFF recorded, so a goal exists once that write lands. A goal directory without such a `budget.json` is what an interrupted kickoff left: it is no goal (`read` returns NO_GOAL), and the next kickoff of that goal id clears it under the lock and starts over.
 
 ### 2.3 Store-owned files
 

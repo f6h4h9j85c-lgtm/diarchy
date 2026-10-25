@@ -15,7 +15,7 @@ export declare class VaultStore {
     /** Per goal directory: chat/ files the open transaction wrote since its last budget.json commit. */
     private readonly uncommitted;
     constructor(options: VaultStoreOptions);
-    /** Every goal with a budget.json, oldest first. */
+    /** Every goal whose KICKOFF committed, oldest first. */
     listGoals(): GoalRef[];
     /** The one goal in PLAN, EXECUTE, or BLOCKED, if any. */
     activeGoal(): GoalRef | null;
@@ -80,6 +80,12 @@ export declare class VaultStore {
     /** The committed messages: chat/ files whose id `state` records, in (ts, seq) order. Nothing else is read or rendered. */
     private readMessages;
     private loadState;
+    /**
+     * The goal's state once its KICKOFF has committed; null when the directory
+     * holds no goal, or only what a kickoff that died before its commit left
+     * (no budget.json, or one without a KICKOFF from before that write moved).
+     */
+    private committedState;
     /** The commit point: every chat/ file written so far is now accepted. */
     private persist;
     private loadKickoff;

@@ -56,7 +56,7 @@ export class VaultStore {
     // -------------------------------------------------------------------------
     // Goals
     // -------------------------------------------------------------------------
-    /** Every goal with a budget.json, oldest first. */
+    /** Every goal whose KICKOFF committed, oldest first. */
     listGoals() {
         const { goals } = vaultPaths(this.projectDir, this.config);
         if (!existsSync(goals))
@@ -64,9 +64,9 @@ export class VaultStore {
         const refs = [];
         for (const name of readdirSync(goals).sort()) {
             const paths = resolveVaultPaths(this.projectDir, this.config, name);
-            if (!existsSync(paths.budget))
+            const state = this.committedState(paths);
+            if (state === null)
                 continue;
-            const state = this.loadState(paths);
             refs.push({ goalId: name, phase: state.phase, lead: state.lead, challenger: state.challenger, created: state.created, paths });
         }
         return refs.sort((a, b) => (a.created < b.created ? -1 : a.created > b.created ? 1 : 0));
@@ -130,8 +130,9 @@ export class VaultStore {
         if (!GOAL_ID_PATTERN.test(goalId))
             return reject("SCHEMA", schemaText("goal_id", "must be <YYYYMMDD>-<slug> with slug [a-z0-9-]{1,40}"));
         const paths = resolveVaultPaths(this.projectDir, this.config, goalId);
-        if (existsSync(paths.kickoff))
-            return singleKickoff(goalId, existsSync(paths.budget) ? this.loadState(paths).phase : "PLAN");
+        const taken = this.committedState(paths);
+        if (taken !== null)
+            return singleKickoff(goalId, taken.phase);
         const kickoff = {
             protocol_version: 1,
             goal: goalId,
@@ -146,14 +147,23 @@ export class VaultStore {
             goal_text: input.goal.trim(),
             acceptance_criteria: input.acceptance_criteria.map((criterion) => criterion.trim()),
         };
-        mkdirSync(paths.chatDir, { recursive: true });
-        mkdirSync(paths.inboxDir, { recursive: true });
-        atomicWrite(paths.kickoff, serializeKickoff(kickoff));
-        const state = initialState(kickoff, this.config, now);
+        mkdirSync(paths.goal, { recursive: true });
         return this.withLock(paths, async () => {
+            // A kickoff holds the lock from its first write to its commit, so what an
+            // uncommitted goal directory holds now was left by a kickoff that died.
+            const raced = this.committedState(paths);
+            if (raced !== null)
+                return singleKickoff(goalId, raced.phase);
             let committed = false;
             try {
-                this.persist(paths, state);
+                for (const path of [paths.kickoff, paths.budget, paths.chatDir, paths.inboxDir, paths.goalMd, paths.chatMd, paths.decisionsMd]) {
+                    rmSync(path, { recursive: true, force: true });
+                }
+                mkdirSync(paths.chatDir, { recursive: true });
+                mkdirSync(paths.inboxDir, { recursive: true });
+                atomicWrite(paths.kickoff, serializeKickoff(kickoff));
+                // budget.json is first written below, with the KICKOFF recorded: that write commits the goal (PROTOCOL.md 2.2).
+                const state = initialState(kickoff, this.config, now);
                 const draft = { type: "KICKOFF", to: "all", re: Object.keys(state.acs), body: kickoff.goal_text };
                 const outcome = await this.accept(paths, state, draft);
                 if (!outcome.ok)
@@ -577,6 +587,17 @@ export class VaultStore {
     loadState(paths) {
         return parseGoalState(readJson(paths.budget));
     }
+    /**
+     * The goal's state once its KICKOFF has committed; null when the directory
+     * holds no goal, or only what a kickoff that died before its commit left
+     * (no budget.json, or one without a KICKOFF from before that write moved).
+     */
+    committedState(paths) {
+        if (!existsSync(paths.budget))
+            return null;
+        const state = this.loadState(paths);
+        return state.kickoff_id === null ? null : state;
+    }
     /** The commit point: every chat/ file written so far is now accepted. */
     persist(paths, state) {
         atomicWrite(paths.budget, `${JSON.stringify(state, null, 2)}\n`);
@@ -613,6 +634,8 @@ function committedIds(state) {
     return new Set(state.messages.map((ref) => ref.id));
 }
 function singleKickoff(goalId, phase) {
+    if (phase === "DONE")
+        return reject("SINGLE_KICKOFF", `Goal ${goalId} is DONE and its id is not reused. Kick off with another slug.`);
     return reject("SINGLE_KICKOFF", `Goal ${goalId} is already active (phase ${phase}). Call read instead of kickoff.`);
 }
 /** Staleness is judged on the real clock: the lock's mtime comes from the filesystem. */

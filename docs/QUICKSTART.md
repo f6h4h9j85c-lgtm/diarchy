@@ -4,6 +4,12 @@ You need Claude Code and Codex CLI installed and signed in, Node 20.3 or later o
 
 ## 1. Install the plugin in both CLIs
 
+Install the diarchy CLI first. Codex installs a plugin without its dependencies, so the Codex plugin's MCP server and hooks run the `diarchy` on `PATH`:
+
+```
+npm install -g github:f6h4h9j85c-lgtm/diarchy
+```
+
 Claude Code 2.1.292 or later, from a shell:
 
 ```
@@ -17,13 +23,12 @@ claude plugin marketplace add f6h4h9j85c-lgtm/diarchy
 claude plugin install diarchy@diarchy
 ```
 
-Codex CLI: `codex plugin marketplace add f6h4h9j85c-lgtm/diarchy`, then enable `diarchy@diarchy` and register the `diarchy` MCP server in `~/.codex/config.toml` as shown in [INSTALL-CODEX.md](INSTALL-CODEX.md); then approve the plugin's three diarchy hooks in `/hooks`, or they are skipped silently. In each CLI, `/mcp` must list `diarchy`, and asking for the diarchy `read` tool must answer `NO_GOAL`: nothing is kicked off yet.
+Codex CLI: `codex plugin marketplace add f6h4h9j85c-lgtm/diarchy`, then `codex plugin add diarchy@diarchy`, and register the `diarchy` MCP server in `~/.codex/config.toml` with `command = "diarchy"` and `args = ["mcp", "--agent", "codex"]` as shown in [INSTALL-CODEX.md](INSTALL-CODEX.md); then approve the plugin's three diarchy hooks in `/hooks`, or they are skipped silently. In each CLI, `/mcp` must list `diarchy`, and asking for the diarchy `read` tool must answer `NO_GOAL`: nothing is kicked off yet.
 
 ## 2. Initialise the project
 
 ```
 cd /path/to/api
-npm install -g github:f6h4h9j85c-lgtm/diarchy
 diarchy init
 git add AGENTS.md .codex && git commit -m "Add the diarchy Codex files"
 ```

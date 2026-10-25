@@ -7,17 +7,25 @@ the custom subagents in `.codex/agents/*.toml`, which `diarchy init` copies into
 your project because Codex reads subagents only from there.
 
 Requirements: Node 20.3 or later on `PATH`, Codex CLI with plugin and hook
-support (October 2026 or later), and `npm ci` run in the diarchy checkout so that
-`node_modules/` exists (`dist/` is committed, so there is no build step).
+support (October 2026 or later), and the diarchy CLI installed globally on
+`PATH` (section 1).
 Linux or macOS: native Windows is untested and `diarchy start --driver real`
 refuses to run there; use WSL.
 
-## 1. Add the marketplace and enable the plugin
+## 1. Install the CLI, add the marketplace, and enable the plugin
 
 ```
+npm install -g github:f6h4h9j85c-lgtm/diarchy
 codex plugin marketplace add f6h4h9j85c-lgtm/diarchy
 codex plugin add diarchy@diarchy
 ```
+
+Install the CLI first. Codex copies the plugin into its cache
+(`~/.codex/plugins/cache/`) without installing its dependencies, so the
+plugin's `bin/diarchy.js` cannot load `dist/` there and hands every call, from
+the MCP server in `mcp.json` and from the three hooks, to the `diarchy` on
+`PATH`. Without one the MCP server fails to start and each hook exits 1 with a
+line on stderr naming the install command.
 
 `codex plugin add <plugin>@<marketplace>` installs a plugin from a marketplace
 you have added. Instead of it you can enable the plugin from the `/plugins`
@@ -48,15 +56,15 @@ through `DIARCHY_PROJECT`, which `mcp.json` forwards from the environment
 (`env_vars`) and the diarchy launcher sets for its children. Without that
 variable the server falls back to its own working directory, the plugin root,
 which is the right project only when Codex runs inside the diarchy checkout.
+In the plugin cache that `bin/diarchy.js` runs the global `diarchy` (section 1).
 
-For interactive use in any other project, add to `~/.codex/config.toml`,
-replacing the path with the absolute path of your diarchy checkout (or of the
-installed plugin directory):
+For interactive use in any other project, add to `~/.codex/config.toml`, which
+runs the global CLI from section 1 directly:
 
 ```toml
 [mcp_servers.diarchy]
-command = "node"
-args = ["/abs/path/to/diarchy/bin/diarchy.js", "mcp", "--agent", "codex"]
+command = "diarchy"
+args = ["mcp", "--agent", "codex"]
 startup_timeout_sec = 20
 tool_timeout_sec = 1800
 ```
@@ -126,7 +134,10 @@ Stop gate never runs, and nothing denies the PM a shell call to the human's
   `/hooks` in Codex and trust all three diarchy hooks (step 3). The wrapper
   scripts locate `bin/diarchy.js` relative to their own file, or honour
   `DIARCHY_BIN`, and exit 0 printing nothing when `node` or the binary is
-  missing.
+  missing. In the plugin cache that `bin/diarchy.js` runs the global `diarchy`
+  (section 1); when it cannot start one, the script prints nothing on stdout
+  and exits 1 with the reason on stderr, which Codex reports as a failed hook
+  run.
 
 ## 5. Headless runs
 

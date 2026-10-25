@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, expectTypeOf, it, vi } from "vitest";
 
 import {
   assignId,
@@ -29,8 +29,11 @@ import {
   renderGoal,
   resolveVaultPaths,
   slugify,
+  type KickoffInput,
   type MessageDraft,
   type PostResult,
+  type ReplyOptions,
+  type WaitOptions,
 } from "../src/vault/index.js";
 import { budgetLine, code, escapeBlockStarts, italic, linkText, localHint } from "../src/vault/render/shared.js";
 
@@ -483,11 +486,40 @@ describe("store-owned files", () => {
     expect(seen.size).toBe(21);
   });
 
-  it("no public method takes a path; only kickoff, post, read, waitForReply, reply, stop, and render write", () => {
+  it("no public method takes a path; only kickoff, post, read, waitForReply, reply, stop, and render write", async () => {
+    // TypeScript `private` is erased at runtime, so the public surface and its signatures are pinned for npm run typecheck.
+    type Reader = "listGoals" | "activeGoal" | "state" | "listMessages" | "readKickoff";
+    type Writer = "render" | "kickoff" | "post" | "read" | "waitForReply" | "reply" | "stop";
+    expectTypeOf<keyof VaultStore>().toEqualTypeOf<"agent" | Reader | Writer>();
+    expectTypeOf<{ [K in Reader | "render"]: Parameters<VaultStore[K]> }>().toEqualTypeOf<{ [K in Reader | "render"]: [] }>();
+    expectTypeOf<Parameters<VaultStore["kickoff"]>>().toEqualTypeOf<[KickoffInput]>();
+    expectTypeOf<Parameters<VaultStore["post"]>>().toEqualTypeOf<[MessageDraft]>();
+    expectTypeOf<Parameters<VaultStore["read"]>>().toEqualTypeOf<[options?: { since?: string }]>();
+    expectTypeOf<Parameters<VaultStore["waitForReply"]>>().toEqualTypeOf<[options?: WaitOptions]>();
+    expectTypeOf<Parameters<VaultStore["reply"]>>().toEqualTypeOf<[text: string, options?: ReplyOptions]>();
+    expectTypeOf<Parameters<VaultStore["stop"]>>().toEqualTypeOf<[reason: string]>();
+
     const methods = Object.getOwnPropertyNames(VaultStore.prototype).filter((name) => name !== "constructor");
     const publicApi = ["listGoals", "activeGoal", "state", "listMessages", "readKickoff", "render", "kickoff", "post", "read", "waitForReply", "reply", "stop"];
     for (const name of publicApi) expect(methods).toContain(name);
-    expect(methods.some((name) => /path|file|write|save|persist/i.test(name) && !publicApi.includes(name) && !name.startsWith("load") && !name.startsWith("read"))).toBe(true);
+
+    // The readers leave every file in the project as it was, contents and mtimes.
+    const h = harness();
+    await replay(h, BLOCKED_INDEX + 1);
+    const snapshot = () =>
+      listFiles(h.projectDir).map((name) => {
+        const path = join(h.projectDir, name);
+        return name.endsWith("/") ? name : `${name} ${statSync(path).mtimeMs} ${readFileSync(path, "utf8")}`;
+      });
+    const before = snapshot();
+    for (const store of [h.human, h.claude, h.codex]) {
+      expect(store.listGoals()).toHaveLength(1);
+      expect(store.activeGoal()?.phase).toBe("BLOCKED");
+      expect(store.state()?.phase).toBe("BLOCKED");
+      expect(store.listMessages()).toHaveLength(BLOCKED_INDEX + 1);
+      expect(store.readKickoff()?.goal).toBe("20261025-rate-limit");
+    }
+    expect(snapshot()).toEqual(before);
   });
 
   it("rejects a message whose from is another agent with WRITER_OWNED and writes nothing", async () => {

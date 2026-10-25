@@ -219,9 +219,13 @@ instead.
    criterion with its status (`acs`), the phase, your role, and unread messages.
 5. With a goal active, the session starts with the inbox brief from
    `diarchy inbox-skim --agent codex`. With no active goal nothing is printed.
-6. Ask Codex to run `diarchy reply "test"` in the shell. The PreToolUse hook
-   denies it with a reason naming `wait_for_reply`; the human's commands are
-   not for a PM (ANTI-SLOP.md, What this does NOT prevent).
+6. Ask Codex to run `diarchy reply "test" --project /nonexistent` in the
+   shell. The PreToolUse hook denies it with a reason naming `wait_for_reply`;
+   the human's commands are not for a PM (ANTI-SLOP.md, What this does NOT
+   prevent). If Codex is not stopped and the command runs, the hook is not
+   live: nothing was posted, because `/nonexistent` holds no goal (the command
+   exits 1 with "No goal in this vault"), so go back to section 3 and check
+   the global install in section 1.
 
 One session per agent: while a goal is active, only one session acts as
 `codex`. The first session whose diarchy tools touch the goal holds it until

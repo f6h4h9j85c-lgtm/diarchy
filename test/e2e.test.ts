@@ -648,6 +648,25 @@ describe("guard", () => {
     expect(await cli(["guard", "--agent", "codex"], { input: "not json {{{" })).toEqual({ code: 0, stdout: "", stderr: "" });
     expect(await cli(["guard", "--agent", "codex"], { input: "" })).toEqual({ code: 0, stdout: "", stderr: "" });
   });
+
+  it("INSTALL-CODEX's guard check is denied, and run without the hook it posts nothing, even to a BLOCKED goal", async () => {
+    const command = /Ask Codex to run `(diarchy reply [^`]+)`/.exec(readFileSync(join(ROOT, "docs", "INSTALL-CODEX.md"), "utf8"))?.[1] ?? "";
+    expect(command).not.toBe("");
+    const denied = await cli(["guard", "--agent", "codex"], { input: event(command) });
+    expect(JSON.parse(denied.stdout)).toMatchObject({ hookSpecificOutput: { permissionDecision: "deny" } });
+
+    // The check matters exactly when the hook may not be live, and then the command runs: here, in a project whose goal is BLOCKED.
+    const dir = await initProject("guard-check", false);
+    expect((await cli(["kickoff", "Ship the widget", "--ac", "It renders.", "--project", dir])).code).toBe(0);
+    expect((await cli(["stop", "--reason", "Pausing.", "--project", dir])).code).toBe(0);
+    const args = (command.match(/"[^"]*"|\S+/g) ?? []).slice(1).map((arg) => arg.replace(/^"(.*)"$/, "$1"));
+    const ran = await cli(args, { cwd: dir });
+    expect(ran.code).toBe(1);
+    expect(ran.stderr).toContain("No goal in this vault");
+    expect(goalState(dir)).toMatchObject({ phase: "BLOCKED" });
+    const target = args[args.indexOf("--project") + 1] ?? "";
+    expect(existsSync(target)).toBe(false);
+  });
 });
 
 // ---------------------------------------------------------------------------

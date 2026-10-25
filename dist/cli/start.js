@@ -64,11 +64,10 @@ export async function runStart(projectDir, goalText, options) {
     for (const leftover of await reapLeftovers(projectDir)) {
         console.log(`${nowHms()} stopped ${leftover.agent} (pid ${leftover.pid}), left running by an earlier diarchy start`);
     }
-    if (driver === "real") {
-        const missing = missingCommands(launcher.agents, projectDir, process.env.PATH);
-        if (missing.length > 0)
-            throw new CliError(`${missing.join("; ")}; fix diarchy.config.json or install the CLI`);
-    }
+    // Checked here from the project directory, so a CLI that is not installed fails before a goal exists,
+    // and again below from the directory each agent is spawned in.
+    if (driver === "real")
+        checkCommands(launcher, () => projectDir);
     const human = new VaultStore({ projectDir, config, agent: AGENT_HUMAN, pollIntervalMs: Math.min(500, launcher.launcher.poll_ms) });
     let goal = human.activeGoal();
     if (goal === null) {
@@ -89,7 +88,7 @@ export async function runStart(projectDir, goalText, options) {
         console.log(`${nowHms()} attached to ${goal.goalId} (phase ${goal.phase}, lead ${goal.lead})`);
         if (goal.phase === "BLOCKED") {
             const state = human.state();
-            const messages = human.listMessages();
+            const messages = human.listMessages(logCorrupt);
             if (state !== null)
                 console.log(`${nowHms()} human needed: ${blockSummary(state, messages)}. Run: ${replyHint(state, messages) ?? "diarchy reply"}`);
             return EXIT_BLOCKED;
@@ -97,6 +96,7 @@ export async function runStart(projectDir, goalText, options) {
     }
     const worktrees = prepareWorktrees(projectDir, config, goal.goalId, agents, options.worktrees);
     if (driver === "real") {
+        checkCommands(launcher, (agent) => worktrees.get(agent) ?? projectDir);
         for (const agent of agents) {
             const notice = sandboxNotice(agent, launcher.agents[agent]);
             if (notice !== null)
@@ -105,6 +105,16 @@ export async function runStart(projectDir, goalText, options) {
     }
     const supervisor = new Supervisor({ projectDir, config, launcher, human, goal, agents, worktrees, driver, options });
     return supervisor.run();
+}
+/** Fail when an agent's command cannot be spawned from `cwdOf(agent)`, the directory spawn() resolves it against. */
+function checkCommands(launcher, cwdOf) {
+    const missing = missingCommands(launcher.agents, cwdOf, process.env.PATH);
+    if (missing.length > 0)
+        throw new CliError(`${missing.join("; ")}; fix diarchy.config.json or install the CLI`);
+}
+/** A human-facing read leaves out a chat file that will not parse; say which, so the human can fix it. */
+function logCorrupt(error) {
+    console.log(`${nowHms()} ${error.message} It is left out here; diarchy reply and diarchy stop still work.`);
 }
 function prepareWorktrees(projectDir, config, goalId, agents, wanted) {
     const map = new Map();
@@ -139,8 +149,14 @@ class Supervisor {
     lastCount = -1;
     resolveRun = null;
     record = null;
+    /** Resolves on the first stop request (a signal or closed output), which cuts the wall-clock grace short. */
+    stopRequested;
+    requestStop = () => undefined;
     constructor(input) {
         this.input = input;
+        this.stopRequested = new Promise((resolve) => {
+            this.requestStop = () => resolve(true);
+        });
     }
     async run() {
         const { projectDir } = this.input;
@@ -150,6 +166,7 @@ class Supervisor {
             this.resolveRun = resolve;
         });
         const interrupt = (reason) => {
+            this.requestStop();
             const phase = this.readState()?.phase;
             void this.finish(phase === "BLOCKED" ? EXIT_BLOCKED : EXIT_ERROR, reason);
         };
@@ -288,7 +305,12 @@ class Supervisor {
             clearSession(this.input.projectDir, child.agent);
             this.log(`${child.agent} resume failed fast; dropped the saved session, next start is fresh`);
         }
-        this.observe();
+        try {
+            this.observe();
+        }
+        catch (error) {
+            this.warn(error);
+        }
         if (this.stopping)
             return;
         const { max_restarts, restart_backoff_ms } = this.input.launcher.launcher;
@@ -314,18 +336,22 @@ class Supervisor {
     async loop() {
         const pollMs = this.input.launcher.launcher.poll_ms;
         while (!this.stopping) {
-            this.observe();
-            if (this.stopping)
-                return;
+            // A vault read that throws is reported and retried, never left to end this process while it owns the PMs.
             try {
+                this.observe();
+                if (this.stopping)
+                    return;
                 // Doubles as the store tick so WALL_CLOCK and the deadlock deadline fire even when both PMs are idle.
                 await this.input.human.waitForReply({ timeoutMs: pollMs });
             }
             catch (error) {
-                process.stderr.write(`diarchy: ${error instanceof Error ? error.message : String(error)}\n`);
+                this.warn(error);
                 await sleep(pollMs);
             }
         }
+    }
+    warn(error) {
+        process.stderr.write(`diarchy: ${error instanceof Error ? error.message : String(error)}\n`);
     }
     readState() {
         try {
@@ -356,7 +382,7 @@ class Supervisor {
         if (state.phase === "DONE")
             void this.finish(EXIT_OK, "DONE");
         else if (state.phase === "BLOCKED") {
-            const messages = this.input.human.listMessages();
+            const messages = this.input.human.listMessages(logCorrupt);
             const reason = blockReason(state, messages);
             this.log(`BLOCKED: ${blockSummary(state, messages)}. Run: ${replyHint(state, messages) ?? "diarchy reply"}`);
             void this.finish(EXIT_BLOCKED, reason);
@@ -407,8 +433,15 @@ class Supervisor {
         if (alive.length > 0) {
             if (reason === "WALL_CLOCK") {
                 this.log(`wall clock reached; agents have ${Math.round(wall_clock_grace_ms / 60_000)} min to finish before they are killed`);
-                await this.waitForExit(alive, wall_clock_grace_ms);
-                const survivors = this.alive();
+                const stopped = await Promise.race([this.waitForExit(alive, wall_clock_grace_ms).then(() => false), this.stopRequested]);
+                let survivors = this.alive();
+                if (stopped && survivors.length > 0) {
+                    // diarchy stop or a signal during the grace: stop them now, as a normal stop would after its first wait.
+                    this.log(`stop requested: stopping ${survivors.map((child) => child.agent).join(", ")}`);
+                    this.signalAll(survivors, "SIGTERM");
+                    await this.waitForExit(survivors, stop_grace_ms);
+                    survivors = this.alive();
+                }
                 if (survivors.length > 0) {
                     this.log(`killing ${survivors.map((child) => child.agent).join(", ")}`);
                     this.signalAll(survivors, "SIGKILL");

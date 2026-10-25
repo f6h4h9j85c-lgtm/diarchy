@@ -120,9 +120,15 @@ export class VaultStore {
         const goal = this.currentGoal();
         return goal === null ? null : this.loadState(goal.paths);
     }
-    listMessages() {
+    /**
+     * The active goal's committed messages. A committed file that will not parse
+     * throws CorruptVaultFileError, unless `onCorrupt` is given: then the file is
+     * left out and its error handed to `onCorrupt`, so a human-facing reader
+     * (status, watch, the launcher) keeps working and can name the file.
+     */
+    listMessages(onCorrupt) {
         const goal = this.currentGoal();
-        return goal === null ? [] : this.readMessages(goal.paths, this.loadState(goal.paths));
+        return goal === null ? [] : this.readMessages(goal.paths, this.loadState(goal.paths), onCorrupt ?? false);
     }
     readKickoff() {
         const goal = this.currentGoal();
@@ -725,7 +731,7 @@ export class VaultStore {
      * order; nothing else is read or rendered. A committed file that will not
      * parse throws CorruptVaultFileError, unless `skipCorrupt`: the rendered
      * views and the human's recovery paths leave it out so a corrupt file cannot
-     * block them.
+     * block them (a function `skipCorrupt` also receives each error).
      */
     readMessages(paths, state, skipCorrupt = false) {
         if (!existsSync(paths.chatDir))
@@ -737,8 +743,10 @@ export class VaultStore {
                 messages.push(parseStored(join(paths.chatDir, name), parseMessageFile));
             }
             catch (error) {
-                if (!(skipCorrupt && error instanceof CorruptVaultFileError))
+                if (skipCorrupt === false || !(error instanceof CorruptVaultFileError))
                     throw error;
+                if (skipCorrupt !== true)
+                    skipCorrupt(error);
             }
         }
         return messages;

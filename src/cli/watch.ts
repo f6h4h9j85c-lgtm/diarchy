@@ -1,4 +1,5 @@
 /** `diarchy watch`: print each message's header line as it lands; exit on DONE/BLOCKED unless --follow. */
+import type { CorruptVaultFileError } from "../vault/index.js";
 import { sortMessages } from "../vault/render/shared.js";
 import { CliError, EXIT_BLOCKED, EXIT_OK, currentGoal, headerLine, humanStore, noGoalText, sleep } from "./common.js";
 
@@ -12,6 +13,12 @@ export async function runWatch(projectDir: string, options: WatchOptions): Promi
   const store = humanStore(projectDir, 250);
   const seen = new Set<string>();
   let announced: string | null = null;
+  // A chat file that will not parse is left out and named once on stderr, so watch keeps following the goal.
+  const skipCorrupt = (error: CorruptVaultFileError): void => {
+    if (seen.has(error.file)) return;
+    seen.add(error.file);
+    console.error(`diarchy: ${error.message} It is left out here.`);
+  };
   for (;;) {
     const goal = currentGoal(store);
     if (goal === null) {
@@ -24,7 +31,7 @@ export async function runWatch(projectDir: string, options: WatchOptions): Promi
       announced = goal.goalId;
       console.log(`# ${goal.goalId} · lead ${goal.lead} · challenger ${goal.challenger}`);
     }
-    for (const message of sortMessages(store.listMessages())) {
+    for (const message of sortMessages(store.listMessages(skipCorrupt))) {
       if (seen.has(message.id)) continue;
       seen.add(message.id);
       console.log(headerLine(message));

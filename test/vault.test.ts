@@ -8,6 +8,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   assignId,
+  wordCount,
   parseConfig,
   parseGoalState,
   parseKickoffFile,
@@ -18,6 +19,7 @@ import {
   type Message,
 } from "../src/protocol/index.js";
 import {
+  CorruptVaultFileError,
   GENERATED,
   MAX_WAIT_MS,
   PROGRESS_MS,
@@ -640,6 +642,47 @@ describe("crash safety", () => {
 // kickoff
 // ---------------------------------------------------------------------------
 
+/** The Unicode line terminators kickoff.md cannot hold, by name. */
+const TERMINATORS: [string, string][] = [
+  ["CR", "\r"],
+  ["LF", "\n"],
+  ["VT", "\v"],
+  ["FF", "\f"],
+  ["NEL", "\u0085"],
+  ["LS", "\u2028"],
+  ["PS", "\u2029"],
+];
+
+/** Text kickoff.md can hold on one line: no line terminator, and valid UTF-16 (survives a UTF-8 write and read). */
+function oneLineText(text: string): boolean {
+  return TERMINATORS.every(([, terminator]) => !text.includes(terminator)) && Buffer.from(text, "utf8").toString("utf8") === text;
+}
+
+/** mulberry32: a small deterministic PRNG so the property test is reproducible. */
+function seededRandom(seed: number): () => number {
+  let state = seed >>> 0;
+  return () => {
+    state = (state + 0x6d2b79f5) >>> 0;
+    let t = state;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+const PLAIN_TOKENS = ["rate", "limit", "429", "API", "\u00e9t\u00e9", "\u65e5\u672c", "\u{1F600}", "a|b", "#tag", "*x*", "`code`", "---", "- AC1: ", "- AC12: ", "AC1:", "-", ":", "\u0000", "\u001c", "\u00a0", "\ufeff", "\u200b", "\t", " ", "  "];
+const BREAKING_TOKENS = [...TERMINATORS.map(([, terminator]) => terminator), "\r\n", "\uD800", "\uDFFF"];
+
+/** `length` tokens, about one in 25 a line terminator or a lone surrogate half. */
+function randomText(random: () => number, length: number): string {
+  let text = "";
+  for (let index = 0; index < length; index += 1) {
+    const pool = random() < 0.04 ? BREAKING_TOKENS : PLAIN_TOKENS;
+    text += pool[Math.floor(random() * pool.length)];
+  }
+  return text;
+}
+
 describe("kickoff", () => {
   const INPUT = { goal: "Add per-API-key rate limiting to the public API.", acceptance_criteria: ["Requests over the limit get 429.", "Limit is configurable."] };
 
@@ -725,6 +768,80 @@ describe("kickoff", () => {
     expect(result).toMatchObject({ lead: "codex", challenger: "claude", kickoff_id: "20261025T140000Z-0001-codex-KICKOFF" });
     expect(parseKickoffFile(h.file("kickoff.md", result.goal_id)).by).toBe("codex");
     expect(listFiles(h.goalDir(result.goal_id)).filter((name) => name.includes(".tmp-"))).toEqual([]);
+  });
+
+  it("rejects with SCHEMA a goal or criterion that would not round-trip through kickoff.md: line breaks, or a goal shaped like an AC line", async () => {
+    const h = harness();
+    const injected = { goal: "Real goal text\n- AC1: injected criterion", acceptance_criteria: ["the only real criterion"], slug: "inj" };
+    expect(await h.human.kickoff(injected)).toMatchObject({ ok: false, rule: "SCHEMA", message: expect.stringMatching(/^Field "goal": must be a single line/) });
+    expect(await h.human.kickoff({ ...INPUT, goal: "Line one.\r\nLine two." })).toMatchObject({ ok: false, rule: "SCHEMA" });
+    expect(await h.human.kickoff({ ...INPUT, goal: "- AC1: a goal shaped like a criterion" })).toMatchObject({
+      ok: false,
+      rule: "SCHEMA",
+      message: expect.stringContaining("must not start with `- AC<n>: `"),
+    });
+    expect(await h.human.kickoff({ ...INPUT, acceptance_criteria: ["First line\nsecond line."] })).toMatchObject({
+      ok: false,
+      rule: "SCHEMA",
+      message: expect.stringMatching(/^Field "acceptance_criteria.0": must be a single line/),
+    });
+    expect(await h.claude.kickoff({ ...INPUT, acceptance_criteria: ["Fine.", "Has a\r\nbreak."] })).toMatchObject({ ok: false, rule: "SCHEMA", message: expect.stringContaining('"acceptance_criteria.1"') });
+    expect(h.human.listGoals()).toEqual([]);
+    expect(existsSync(h.goalDir("20261025-inj"))).toBe(false);
+    // Edge whitespace is trimmed before the check, as it is before writing.
+    const result = await h.human.kickoff({ ...INPUT, goal: `${INPUT.goal}\n`, acceptance_criteria: ["Requests over the limit get 429.\n", " Limit is configurable."] });
+    ok(result);
+    expect(h.human.readKickoff()).toMatchObject({ goal_text: INPUT.goal, acceptance_criteria: INPUT.acceptance_criteria });
+  });
+
+  it("rejects with SCHEMA every Unicode line terminator, and an unpaired surrogate, inside the goal or a criterion", async () => {
+    const h = harness();
+    for (const [name, terminator] of TERMINATORS) {
+      const goal = await h.human.kickoff({ ...INPUT, goal: `Add rate limiting${terminator}to the public API.` });
+      expect(goal, name).toMatchObject({ ok: false, rule: "SCHEMA", message: expect.stringMatching(/^Field "goal": must be a single line .*U\+0085, U\+2028, or U\+2029;/) });
+      const criterion = await h.claude.kickoff({ ...INPUT, acceptance_criteria: ["Fine.", `First half${terminator}second half.`] });
+      expect(criterion, name).toMatchObject({ ok: false, rule: "SCHEMA", message: expect.stringMatching(/^Field "acceptance_criteria.1": must be a single line without CR, LF, VT, FF/) });
+    }
+    expect(await h.human.kickoff({ ...INPUT, goal: "Add rate limiting \uD800 to the API." })).toMatchObject({ ok: false, rule: "SCHEMA", message: expect.stringContaining("unpaired surrogate") });
+    expect(await h.human.kickoff({ ...INPUT, acceptance_criteria: ["Ends in a lone low half \uDC00"] })).toMatchObject({ ok: false, rule: "SCHEMA", message: expect.stringContaining('"acceptance_criteria.0"') });
+    expect(h.human.listGoals()).toEqual([]);
+    // A paired surrogate (an emoji) is ordinary text and round-trips.
+    ok(await h.human.kickoff({ goal: "Ship it \u{1F680} today.", acceptance_criteria: ["Done \u{2705}."] }));
+    expect(h.human.readKickoff()).toMatchObject({ goal_text: "Ship it \u{1F680} today.", acceptance_criteria: ["Done \u{2705}."] });
+  });
+
+  it("round-trip property: any kickoff the store accepts parses back from kickoff.md identically, and it accepts exactly the representable ones", async () => {
+    const h = harness();
+    const random = seededRandom(0x5eed);
+    const counts = { accepted: 0, rejected: 0 };
+    for (let run = 0; run < 300; run += 1) {
+      const goal = randomText(random, 1 + Math.floor(random() * 10));
+      const criteria = Array.from({ length: 1 + Math.floor(random() * 3) }, () => randomText(random, 1 + Math.floor(random() * 6)));
+      const slug = `p${run}`;
+      const label = JSON.stringify({ goal, criteria });
+      const result = await h.human.kickoff({ goal, acceptance_criteria: criteria, slug });
+      const representable =
+        wordCount(goal) > 0 &&
+        oneLineText(goal.trim()) &&
+        !/^- AC[1-9][0-9]*: ./.test(goal.trim()) &&
+        criteria.every((criterion) => wordCount(criterion) > 0 && oneLineText(criterion.trim()));
+      expect(result.ok, label).toBe(representable);
+      if (!result.ok) {
+        expect(result.rule, label).toBe("SCHEMA");
+        expect(h.human.listGoals(), label).toEqual([]);
+        counts.rejected += 1;
+        continue;
+      }
+      const expected = { goal_text: goal.trim(), acceptance_criteria: criteria.map((criterion) => criterion.trim()) };
+      expect(parseKickoffFile(h.file("kickoff.md", `20261025-${slug}`)), label).toMatchObject(expected);
+      expect(h.human.readKickoff(), label).toMatchObject(expected);
+      expect(h.human.listMessages().map((message) => message.body), label).toEqual([`${expected.goal_text}\n`]);
+      expect(Object.values(h.human.state()?.acs ?? {}).map((ac) => ac.criterion), label).toEqual(expected.acceptance_criteria);
+      rmSync(h.goalDir(`20261025-${slug}`), { recursive: true });
+      counts.accepted += 1;
+    }
+    expect(counts.accepted).toBeGreaterThan(60);
+    expect(counts.rejected).toBeGreaterThan(60);
   });
 });
 
@@ -960,6 +1077,81 @@ describe("reply and stop as human", () => {
     await expect(h.claude.reply("No.")).rejects.toThrow(/human/);
     await expect(h.codex.stop("No.")).rejects.toThrow(/human/);
     expect(await h.human.reply("Still not allowed.")).toMatchObject({ ok: false, rule: "PHASE_GATE" });
+  });
+
+  it("stop and reply survive a kickoff.md that will not parse or is missing, so the human can retire a wedged goal", async () => {
+    const h = harness();
+    ok(await h.human.kickoff({ goal: "Real goal text.", acceptance_criteria: ["The only real criterion."], slug: "inj" }));
+    // A hand-edited file: a second AC1 line in the criteria block.
+    const path = join(h.goalDir("20261025-inj"), "kickoff.md");
+    writeFileSync(path, readFileSync(path, "utf8").replace("- AC1:", "- AC1: injected criterion\n- AC1:"));
+    expect(() => parseKickoffFile(h.file("kickoff.md", "20261025-inj"))).toThrowError(/AC1 is out of order/);
+    h.clock.advance(60_000);
+    const propose: MessageDraft = { type: "PROPOSE", to: "all", re: ["AC1"], decision_id: "plan", claim: "One step does it.", body: "Nothing to split." };
+    await expect(h.claude.post(propose)).rejects.toThrowError(/AC1 is out of order/);
+    h.clock.advance(60_000);
+    const stopped = await h.human.stop("Retiring the wedged goal.");
+    ok(stopped);
+    expect(h.human.state()).toMatchObject({ phase: "BLOCKED", blocked_from: "PLAN" });
+    const goal = h.file("goal.md", "20261025-inj");
+    expect(goal).toContain("# 20261025-inj\n\n> [!WARNING]");
+    expect(goal).toContain("\nReal goal text.\n");
+    expect(goal).toContain("| AC1 | The only real criterion. | open |");
+    h.clock.advance(60_000);
+    const replied = await h.human.reply("Carry on with the plan.");
+    ok(replied);
+    expect(h.human.state()).toMatchObject({ phase: "PLAN", blocked_from: null });
+    expect(h.file("chat.md", "20261025-inj")).toContain("# Chat: 20261025-inj");
+    rmSync(path);
+    h.clock.advance(60_000);
+    ok(await h.human.stop("Even without kickoff.md."));
+    expect(h.human.state()).toMatchObject({ phase: "BLOCKED", blocked_from: "PLAN" });
+    expect(h.file("goal.md", "20261025-inj")).toContain("\nReal goal text.\n");
+  });
+
+  it("a corrupt kickoff.md names the file for PM posts, yet a PM's BLOCKED kind external still pages the human", async () => {
+    const h = harness();
+    ok(await h.human.kickoff({ goal: "Real goal text.", acceptance_criteria: ["The only real criterion."], slug: "inj", lead: "claude" }));
+    const path = join(h.goalDir("20261025-inj"), "kickoff.md");
+    writeFileSync(path, readFileSync(path, "utf8").replace("- AC1:", "- AC1: injected criterion\n- AC1:"));
+    h.clock.advance(60_000);
+    const propose: MessageDraft = { type: "PROPOSE", to: "all", re: ["AC1"], decision_id: "plan", claim: "One step does it.", body: "Nothing to split." };
+    const error = await h.claude.post(propose).catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(CorruptVaultFileError);
+    expect(error).toMatchObject({ rule: "SCHEMA", file: path, message: `Vault file ${path} is corrupt: Field "body": AC1 is out of order.` });
+    ok(await h.claude.post({ type: "BLOCKED", to: "all", re: ["AC1"], kind: "external", body: `kickoff.md is corrupt: ${path}` }));
+    expect(h.human.state()).toMatchObject({ phase: "BLOCKED", blocked_from: "PLAN" });
+    expect(h.file("goal.md", "20261025-inj")).toContain("**claude is blocked (external), re AC1:**");
+    expect(h.file("goal.md", "20261025-inj")).toContain("\nReal goal text.\n");
+    expect(await h.codex.post({ type: "BLOCKED", to: "all", re: ["AC1"], kind: "internal", body: "Also stuck." }).catch((caught: unknown) => caught)).toBeInstanceOf(CorruptVaultFileError);
+  });
+
+  it("a chat file that will not parse names the file for PM reads, while BLOCKED kind external, stop, reply, and the renders still work", async () => {
+    const h = harness();
+    ok(await h.human.kickoff({ goal: "Real goal text.", acceptance_criteria: ["The only real criterion."], slug: "bad", lead: "claude" }));
+    const chatDir = join(h.goalDir("20261025-bad"), "chat");
+    const corrupt = join(chatDir, readdirSync(chatDir)[0]);
+    writeFileSync(corrupt, readFileSync(corrupt, "utf8").replace("type: KICKOFF", "type: HELLO"));
+    h.clock.advance(60_000);
+    const error = (() => {
+      try {
+        return h.codex.read();
+      } catch (caught) {
+        return caught;
+      }
+    })();
+    expect(error).toBeInstanceOf(CorruptVaultFileError);
+    expect(error).toMatchObject({ rule: "TYPED_ONLY", file: corrupt, message: `Vault file ${corrupt} is corrupt: Unknown type "HELLO".` });
+    ok(await h.claude.post({ type: "BLOCKED", to: "all", re: ["AC1"], kind: "external", body: `A chat file is corrupt: ${corrupt}` }));
+    expect(h.human.state()).toMatchObject({ phase: "BLOCKED", blocked_from: "PLAN" });
+    expect(h.file("goal.md", "20261025-bad")).toContain("**claude is blocked (external), re AC1:**");
+    h.clock.advance(60_000);
+    ok(await h.human.reply("Carry on with the plan."));
+    expect(h.human.state()).toMatchObject({ phase: "PLAN", blocked_from: null });
+    h.clock.advance(60_000);
+    ok(await h.human.stop("Retiring it until the file is fixed."));
+    expect(h.human.state()).toMatchObject({ phase: "BLOCKED", blocked_from: "PLAN" });
+    expect(h.file("chat.md", "20261025-bad")).toContain("Retiring it until the file is fixed.");
   });
 
   it("budget exhaustion blocks with the budget question and reply --budget resumes", async () => {

@@ -3,10 +3,12 @@ export * from "./types.js";
 export * from "./text.js";
 export {
   AC_ID_PATTERN,
+  AC_LINE_PATTERN,
   DECISION_ID_PATTERN,
   FRONTMATTER_KEY_ORDER,
   GOAL_ID_PATTERN,
   ISO_TS_PATTERN,
+  LINE_TERMINATOR,
   MESSAGE_ID_PATTERN,
   TASK_ID_PATTERN,
   SchemaError,

@@ -6,7 +6,9 @@ import { describe, expect, it } from "vitest";
 import { parse as parseYaml } from "yaml";
 
 import {
+  AC_LINE_PATTERN,
   FIELD_MAX_CHARS,
+  LINE_TERMINATOR,
   RULE_IDS,
   RULES_IN_ORDER,
   SchemaError,
@@ -322,6 +324,21 @@ describe("PROTOCOL.md examples", () => {
     expect(accept(example("20261025T143501Z-0001-system-ASK_HUMAN"), blocked).phase).toBe("BLOCKED");
   });
 
+  it("parseKickoffFile takes the trailing run of AC lines as the criteria and keeps an AC-shaped goal line as goal text", () => {
+    const goal = "Add per-API-key rate limiting to the public API.";
+    const criteria = ["Requests over the per-key limit get HTTP 429", "Limit is configurable via RATE_LIMIT_PER_MIN", "Full test suite stays green"];
+    const injected = parseKickoffFile(KICKOFF_MD.replace(`${goal}\n`, `${goal}\n- AC1: injected criterion\n`));
+    expect(injected.goal_text).toBe(`${goal}\n- AC1: injected criterion`);
+    expect(injected.acceptance_criteria).toEqual(criteria);
+    expect(parseKickoffFile(KICKOFF_MD.replace("\n\n- AC1", "\n- AC1"))).toMatchObject({ goal_text: goal, acceptance_criteria: criteria });
+    expect(parseKickoffFile(`${KICKOFF_MD}\n\n`).acceptance_criteria).toEqual(criteria);
+    expect(() => parseKickoffFile(KICKOFF_MD.replace("- AC2:", "- AC3:"))).toThrowError(/^Field "body": AC3 is out of order/);
+    expect(() => parseKickoffFile(KICKOFF_MD.replace("- AC1:", "- AC1: again\n- AC1:"))).toThrowError(/^Field "body": AC1 is out of order/);
+    expect(() => parseKickoffFile(KICKOFF_MD.replace(/- AC\d: .*\n/g, ""))).toThrowError(/^Field "body": needs at least one/);
+    expect(AC_LINE_PATTERN.test("- AC1: x")).toBe(true);
+    expect(AC_LINE_PATTERN.test("- AC0: x")).toBe(false);
+  });
+
   it("parseMessageFile throws SchemaError with TYPED_ONLY for unknown types and SCHEMA otherwise", () => {
     const text = readFileSync(join(exampleDir, "20261025T140000Z-0001-human-KICKOFF.md"), "utf8");
     const unknownType = text.replace("type: KICKOFF", "type: HELLO").replace("human-KICKOFF", "human-HELLO");
@@ -335,7 +352,26 @@ describe("PROTOCOL.md examples", () => {
     } catch (error) {
       expect(error).toBeInstanceOf(SchemaError);
       expect((error as SchemaError).rule).toBe("SCHEMA");
+      expect((error as SchemaError).problem).toBe('Field "protocol_version": Invalid input: expected 1');
     }
+    expect(() => parseMessageFile(unknownType)).toThrowError(expect.objectContaining({ rule: "TYPED_ONLY", field: "type", problem: 'Unknown type "HELLO"' }));
+  });
+
+  it("PROTOCOL.md states the rule a stored file that will not parse surfaces with, and the line terminators kickoff refuses, as the code has them", () => {
+    const protocolMd = readFileSync(join(DOCS, "PROTOCOL.md"), "utf8");
+    const tools = protocolMd.slice(protocolMd.indexOf("## 10. MCP tools"), protocolMd.indexOf("## 11. "));
+    expect(tools).toContain("rule SCHEMA, or TYPED_ONLY for a message file whose `type` is unknown");
+    const kickoffMd = readFileSync(join(exampleDir, "20261025T140000Z-0001-human-KICKOFF.md"), "utf8");
+    expect(() => parseMessageFile(kickoffMd.replace("type: KICKOFF", "type: HELLO"))).toThrowError(expect.objectContaining({ rule: "TYPED_ONLY" }));
+    expect(() => parseMessageFile(kickoffMd.replace("protocol_version: 1", "protocol_version: 2"))).toThrowError(expect.objectContaining({ rule: "SCHEMA" }));
+    expect(() => parseKickoffFile(KICKOFF_MD.replace("- AC2:", "- AC3:"))).toThrowError(expect.objectContaining({ rule: "SCHEMA" }));
+
+    const storeFiles = protocolMd.slice(protocolMd.indexOf("### 2.3 Store-owned files"), protocolMd.indexOf("## 3. "));
+    const named = /line terminator \(([^)]*)\)/.exec(storeFiles)?.[1].split(", ") ?? [];
+    const byName: Record<string, string> = { CR: "\r", LF: "\n", VT: "\v", FF: "\f", "U+0085": "\u0085", "U+2028": "\u2028", "U+2029": "\u2029" };
+    expect(named).toEqual(Object.keys(byName));
+    for (const [name, char] of Object.entries(byName)) expect(LINE_TERMINATOR.test(`a${char}b`), name).toBe(true);
+    for (const char of [" ", "\t", "\u00a0", "\u200b", "\ufeff", "\u001c"]) expect(LINE_TERMINATOR.test(`a${char}b`), JSON.stringify(char)).toBe(false);
   });
 });
 

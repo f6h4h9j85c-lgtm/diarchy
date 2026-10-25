@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -27,6 +27,7 @@ import {
   PROGRESS_MS,
   VaultStore,
   loadConfig,
+  resolveVaultPaths,
   type KickoffOk,
   type PostOk,
   type ReadResult,
@@ -362,6 +363,72 @@ describe("kickoff and read", () => {
     expect(await rejected(h.codex, "read")).toEqual(NO_GOAL);
     expect(await rejected(h.codex, "wait_for_reply", { timeout_ms: 100 })).toEqual(NO_GOAL);
     expect(await rejected(h.claude, "post", PROPOSE)).toEqual(NO_GOAL);
+  });
+
+  it("a kickoff that would not round-trip through kickoff.md is SCHEMA, and a vault file that will not parse surfaces as SCHEMA naming the file, not INTERNAL", async () => {
+    const h = await harness();
+    const multiLine = await rejected(h.claude, "kickoff", { ...KICKOFF_ARGS, goal: "Real goal text\n- AC1: injected criterion" });
+    expect(multiLine).toMatchObject({ rule: "SCHEMA", message: expect.stringMatching(/^Field "goal": must be a single line/) });
+    const multiLineAc = await rejected(h.claude, "kickoff", { ...KICKOFF_ARGS, acceptance_criteria: ["First line\nsecond line."] });
+    expect(multiLineAc).toMatchObject({ rule: "SCHEMA", message: expect.stringContaining('Field "acceptance_criteria.0": must be a single line') });
+    expect(await rejected(h.codex, "read")).toEqual(NO_GOAL);
+    const kick = await h.kickoff();
+    const path = resolveVaultPaths(h.projectDir, loadConfig(h.projectDir), kick.goal_id).kickoff;
+    writeFileSync(path, readFileSync(path, "utf8").replace("- AC1:", "- AC1: injected criterion\n- AC1:"));
+    const log = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      const result = await rejected(h.claude, "post", PROPOSE);
+      expect(result).toEqual({
+        ok: false,
+        rule: "SCHEMA",
+        message: `Vault file ${path} is corrupt: Field "body": AC1 is out of order. The vault is damaged, not your draft, so do not retry. Post BLOCKED with kind external naming that file so the human can fix it or run diarchy stop.`,
+      });
+      expect(result.message).not.toContain("post again");
+      expect(log).toHaveBeenCalledOnce();
+      expect(log.mock.calls[0][0]).toContain(`diarchy-mcp: CorruptVaultFileError: Vault file ${path} is corrupt: Field "body": AC1 is out of order`);
+    } finally {
+      log.mockRestore();
+    }
+    const blocked = await accepted<PostOk>(h.claude, "post", { type: "BLOCKED", re: ["AC1"], kind: "external", body: `kickoff.md is corrupt: ${path}` });
+    expect(blocked.phase).toBe("BLOCKED");
+  });
+
+  it("kickoff rejects every Unicode line terminator in the goal or a criterion with SCHEMA, and its input schema says so", async () => {
+    const h = await harness();
+    const terminators = { CR: "\r", LF: "\n", VT: "\v", FF: "\f", NEL: "\u0085", LS: "\u2028", PS: "\u2029" };
+    for (const [name, terminator] of Object.entries(terminators)) {
+      const goal = await rejected(h.claude, "kickoff", { ...KICKOFF_ARGS, goal: `Add rate limiting${terminator}to the public API.` });
+      expect(goal, name).toMatchObject({ rule: "SCHEMA", message: expect.stringMatching(/^Field "goal": must be a single line/) });
+      const criterion = await rejected(h.claude, "kickoff", { ...KICKOFF_ARGS, acceptance_criteria: [ACS[0], `First half${terminator}second half.`] });
+      expect(criterion, name).toMatchObject({ rule: "SCHEMA", message: expect.stringMatching(/^Field "acceptance_criteria.1": must be a single line/) });
+    }
+    expect(await rejected(h.codex, "read")).toEqual(NO_GOAL);
+    const { tools } = await h.claude.listTools();
+    const properties = tools.find((tool) => tool.name === "kickoff")?.inputSchema.properties as Record<string, { description?: string }> | undefined;
+    for (const field of ["goal", "acceptance_criteria"]) {
+      expect(properties?.[field]?.description, field).toMatch(/CR, LF, VT, FF, U\+0085, U\+2028, or U\+2029.*\(SCHEMA\)/);
+    }
+    expect((await h.kickoff()).ok).toBe(true);
+  });
+
+  it("a chat file that will not parse surfaces on read as TYPED_ONLY naming the file, and BLOCKED kind external still goes through", async () => {
+    const h = await harness();
+    const kick = await h.kickoff();
+    const chatDir = resolveVaultPaths(h.projectDir, loadConfig(h.projectDir), kick.goal_id).chatDir;
+    const corrupt = join(chatDir, readdirSync(chatDir)[0]);
+    writeFileSync(corrupt, readFileSync(corrupt, "utf8").replace("type: KICKOFF", "type: HELLO"));
+    const log = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      expect(await rejected(h.codex, "read")).toEqual({
+        ok: false,
+        rule: "TYPED_ONLY",
+        message: `Vault file ${corrupt} is corrupt: Unknown type "HELLO". The vault is damaged, not your draft, so do not retry. Post BLOCKED with kind external naming that file so the human can fix it or run diarchy stop.`,
+      });
+    } finally {
+      log.mockRestore();
+    }
+    const blocked = await accepted<PostOk>(h.codex, "post", { type: "BLOCKED", re: ["AC1"], kind: "external", body: `A chat file is corrupt: ${corrupt}` });
+    expect(blocked.phase).toBe("BLOCKED");
   });
 
   it("an unexpected exception becomes INTERNAL and is logged to stderr", async () => {

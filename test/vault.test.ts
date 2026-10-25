@@ -720,7 +720,8 @@ describe("read and waitForReply", () => {
     expect(goal).toContain("> **Deadlock on plan, re AC1.** claude did not DECIDE within 2 messages or 10 minutes. The two positions:\n>\n");
     expect(goal).toContain("> 1. claude PROPOSE 14:02:10: *A token-bucket middleware keyed by API key in the existing Redis client satisfies AC1 and AC2.*\n");
     expect(goal).toContain("> 2. codex CHALLENGE 14:04:55: *An in-process bucket meets AC1 with no network hop if the API runs as one replica.* (test `kubectl -n prod get deploy api -o jsonpath='{.spec.replicas}' prints 1` · pending)\n>\n");
-    expect(goal).toContain('> **To answer:** run `diarchy reply "<ruling>" --decision plan`. Your ruling closes plan as a DECIDE with basis human and PLAN resumes. `diarchy stop` ends the run.\n');
+    // A human ruling on plan carries no tasks and closes PLAN at once, so the hint must not promise that PLAN resumes.
+    expect(goal).toContain('> **To answer:** run `diarchy reply "<ruling>" --decision plan`. Your ruling closes plan as a DECIDE with basis human, and EXECUTE begins with no tasks: claude must ASSIGN each task with new_task. `diarchy stop` ends the run.\n');
     expect(goal).toContain("| BLOCKED | claude | codex | 2026-10-25 14:14:55 UTC |");
     const chat = h.file("chat.md");
     expect(chat).toContain("> [!WARNING]\n> **BLOCKED** from PLAN · **human needed** since 14:14:55 UTC · lead claude · challenger codex\n");
@@ -773,7 +774,10 @@ describe("reply and stop as human", () => {
     expect(h.human.state()).toMatchObject({ phase: "EXECUTE", limits: { messages_total: 160 }, decisions: { plan: { status: "decided" } }, deadlock_watch: null });
     const chat = h.file("chat.md");
     expect(chat).toContain("basis: human · replying to system ASK_HUMAN 14:14:55 · budgets: messages_total 160");
-    expect(chat).toContain("## → EXECUTE · 14:30:00");
+    expect(h.human.state()?.tasks).toEqual({});
+    // The ruling restores PLAN and closes it in one acceptance: one heading, not PLAN then EXECUTE.
+    expect(chat).toContain("---\n\n## → EXECUTE · 14:30:00");
+    expect(chat).not.toContain("## → PLAN · 14:30:00");
   });
 
   it("reply --decision on a decided thread supersedes it", async () => {
@@ -849,6 +853,30 @@ describe("reply and stop as human", () => {
 // config
 // ---------------------------------------------------------------------------
 
+describe("docs that quote the sample run", () => {
+  const DOCS = join(SAMPLES, "..");
+
+  it("QUICKSTART's start command yields the goal id and chat.md path it names", () => {
+    const quickstart = readFileSync(join(DOCS, "QUICKSTART.md"), "utf8");
+    const command = quickstart.slice(quickstart.indexOf("## 3. Kick off"), quickstart.indexOf("## 4."));
+    const goal = /diarchy start "([^"]+)"/.exec(command)?.[1] ?? "";
+    const slug = /--slug (\S+)/.exec(command)?.[1] ?? slugify(goal);
+    const goalId = `20261025-${slug}`;
+    const named = [...quickstart.matchAll(/\b2026\d{4}-[a-z0-9-]+/g)].map((match) => match[0]);
+    expect(named.length).toBeGreaterThan(0);
+    expect(new Set(named)).toEqual(new Set([goalId]));
+    expect(quickstart).toContain(`goals/${goalId}/chat.md`);
+  });
+
+  it("RENDERING-DESIGN-NOTES quotes the AC statuses goal-blocked.md renders", () => {
+    const notes = readFileSync(join(DOCS, "RENDERING-DESIGN-NOTES.md"), "utf8");
+    const statuses = [...readFileSync(join(SAMPLES, "goal-blocked.md"), "utf8").matchAll(/^\| AC\d+ \|.*\| ([^|]+) \|$/gm)].map((match) => match[1]);
+    expect(statuses).toHaveLength(3);
+    const quoted = /All three ACs read `([^`]+)`/.exec(notes)?.[1];
+    expect(new Set(statuses)).toEqual(new Set([quoted]));
+  });
+});
+
 describe("config", () => {
   it("loadConfig defaults the vault to '<basename> brain/diarchy' and merges diarchy.config.json", () => {
     const root = mkdtempSync(join(tmpdir(), "diarchy-config-"));
@@ -870,6 +898,16 @@ describe("config", () => {
     expect(loaded).toMatchObject({ vault: "notes/diarchy", budgets: { plan_messages: 6 }, review: { required: false }, agents: { claude: { command: "claude" } } });
     writeFileSync(join(projectDir, "diarchy.config.json"), JSON.stringify({ protocol_version: 2 }));
     expect(() => loadConfig(projectDir)).toThrow();
+  });
+
+  it("rejects a third agent: protocol_version 1 runs exactly two (PROTOCOL.md section 11)", () => {
+    const root = mkdtempSync(join(tmpdir(), "diarchy-config-"));
+    temps.push(root);
+    const agents = { claude: { command: "claude" }, codex: { command: "codex" }, cursor: { command: "cursor" } };
+    writeFileSync(join(root, "diarchy.config.json"), JSON.stringify({ protocol_version: 1, vault: "notes/diarchy", agents }));
+    expect(() => loadConfig(root)).toThrow(/exactly 2 agents/);
+    expect(() => parseConfig({ ...CONFIG, agents })).toThrow(/exactly 2 agents/);
+    expect(parseConfig(CONFIG).agents).toEqual(CONFIG.agents);
   });
 
   it("resolveVaultPaths lays out the goal directory under the vault", () => {

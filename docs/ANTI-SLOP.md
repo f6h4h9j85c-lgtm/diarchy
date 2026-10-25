@@ -15,6 +15,8 @@ Checks run in this order; the first failure is returned.
 | store (needs goal state) | SINGLE_KICKOFF, TOTAL_BUDGET, WALL_CLOCK, PHASE_GATE, ROLE_GATE, PLAN_BUDGET, TALK_WORK_RATIO, CITE_AC, NEW_EVIDENCE, ONE_CHALLENGE, TWO_ROUNDS, DECISION_IMMUTABLE, NO_SELF_REVIEW, BUSY_REVIEWING, DONE_PRECONDITION |
 | store trigger (not a rejection) | DEADLOCK |
 
+The MCP server also answers `{ ok: false, rule, message }` with three codes that are not protocol rules: NO_GOAL (nothing kicked off yet), WRONG_TOOL (`post` used for a type that has its own tool), and INTERNAL (an unexpected exception). PROTOCOL.md section 10 lists their messages.
+
 ## Rules
 
 Placeholders in braces are filled by the store at rejection time.

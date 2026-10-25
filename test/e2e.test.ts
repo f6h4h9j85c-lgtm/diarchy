@@ -155,11 +155,15 @@ describe("diarchy init", () => {
     expect(existsSync(join(dir, "notes", "diarchy"))).toBe(true);
   });
 
-  it("rejects fewer than two agents", async () => {
+  it("rejects fewer or more than two agents", async () => {
     const dir = makeProject("solo", false);
     const result = await cli(["init", "--project", dir, "--agents", "claude"]);
     expect(result.code).toBe(1);
-    expect(result.stderr).toContain("at least two");
+    expect(result.stderr).toContain("exactly 2");
+    const three = await cli(["init", "--project", dir, "--agents", "claude,codex,cursor"]);
+    expect(three.code).toBe(1);
+    expect(three.stderr).toContain("exactly 2");
+    expect(existsSync(join(dir, "diarchy.config.json"))).toBe(false);
   });
 });
 

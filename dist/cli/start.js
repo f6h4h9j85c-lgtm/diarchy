@@ -5,8 +5,6 @@
  * Exit codes: 0 DONE, 2 BLOCKED, 1 error (every agent dead, bad input, signal).
  */
 import { spawn } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
 import { createInterface } from "node:readline";
 import { AGENT_HUMAN } from "../protocol/index.js";
 import { VaultStore, loadConfig } from "../vault/index.js";
@@ -15,28 +13,11 @@ import { CliError, EXIT_BLOCKED, EXIT_ERROR, EXIT_OK, nowHms, sleep } from "./co
 import { clearSession, defaultFakeScript, detectSessionId, fakePlan, loadSession, realPlan, saveSession, } from "./drivers.js";
 import { kickoffInput } from "./kickoff.js";
 import { loadLauncherConfig } from "./launcher-config.js";
+import { missingCommands, platformProblem } from "./preflight.js";
+import { claimRunRecord, identify, reapLeftovers, releaseRunRecord, runningSupervisor, saveRunRecord } from "./run-record.js";
 import { ensureWorktrees, hasCommits, isGitRepo } from "./worktrees.js";
 /** A resumed child that dies this fast is treated as a failed resume, not a crash. */
 const FAST_FAIL_MS = 5_000;
-export function pidPath(projectDir) {
-    return join(projectDir, ".diarchy", "start.pid");
-}
-/** The pid in `.diarchy/start.pid` when that process is still alive. */
-export function runningSupervisor(projectDir) {
-    const path = pidPath(projectDir);
-    if (!existsSync(path))
-        return null;
-    const pid = Number(readFileSync(path, "utf8").trim());
-    if (!Number.isInteger(pid) || pid <= 0)
-        return null;
-    try {
-        process.kill(pid, 0);
-        return pid;
-    }
-    catch {
-        return null;
-    }
-}
 function parseDriver(value) {
     if (value === "real" || value === "fake")
         return value;
@@ -44,12 +25,23 @@ function parseDriver(value) {
 }
 export async function runStart(projectDir, goalText, options) {
     const driver = parseDriver(options.driver);
+    const platform = platformProblem(process.platform, driver);
+    if (platform !== null)
+        throw new CliError(platform);
     const config = loadConfig(projectDir);
     const agents = Object.keys(config.agents);
     const launcher = loadLauncherConfig(projectDir, agents);
     const other = runningSupervisor(projectDir);
     if (other !== null)
         throw new CliError(`another diarchy start is running (pid ${other}); run diarchy stop first`);
+    for (const leftover of await reapLeftovers(projectDir)) {
+        console.log(`${nowHms()} stopped ${leftover.agent} (pid ${leftover.pid}), left running by an earlier diarchy start`);
+    }
+    if (driver === "real") {
+        const missing = missingCommands(launcher.agents, projectDir, process.env.PATH);
+        if (missing.length > 0)
+            throw new CliError(`${missing.join("; ")}; fix diarchy.config.json or install the CLI`);
+    }
     const human = new VaultStore({ projectDir, config, agent: AGENT_HUMAN, pollIntervalMs: Math.min(500, launcher.launcher.poll_ms) });
     let goal = human.activeGoal();
     if (goal === null) {
@@ -107,13 +99,14 @@ class Supervisor {
     lastPhase = null;
     lastCount = -1;
     resolveRun = null;
+    record = null;
     constructor(input) {
         this.input = input;
     }
     async run() {
         const { projectDir } = this.input;
-        mkdirSync(dirname(pidPath(projectDir)), { recursive: true });
-        writeFileSync(pidPath(projectDir), `${process.pid}\n`);
+        const record = claimRunRecord(projectDir);
+        this.record = record;
         const finished = new Promise((resolve) => {
             this.resolveRun = resolve;
         });
@@ -132,7 +125,7 @@ class Supervisor {
         finally {
             process.off("SIGINT", onSignal);
             process.off("SIGTERM", onSignal);
-            rmSync(pidPath(projectDir), { force: true });
+            releaseRunRecord(projectDir, record);
         }
     }
     child(agent) {
@@ -162,22 +155,33 @@ class Supervisor {
             return fakePlan({ projectDir, agent, goalId: goal.goalId, cwd, worktree, script: options.fakeScript ?? defaultFakeScript(), mode });
         }
         const session = loadSession(projectDir, agent, goal.goalId);
-        const plan = realPlan({ projectDir, agent, goalId: goal.goalId, launch: launcher.agents[agent], cwd, worktree, session });
+        const inGitRepo = worktree !== null || isGitRepo(cwd);
+        const plan = realPlan({ projectDir, agent, goalId: goal.goalId, launch: launcher.agents[agent], cwd, worktree, session, inGitRepo });
         if (plan.minted !== null)
             saveSession(projectDir, plan.minted);
         return plan;
     }
     spawnChild(child) {
         const plan = this.planFor(child.agent);
-        const proc = spawn(plan.command, plan.args, { cwd: plan.cwd, env: plan.env, stdio: ["ignore", "pipe", "pipe"] });
         let exitedResolve = () => undefined;
         child.exited = new Promise((resolve) => {
             exitedResolve = resolve;
         });
         child.markExited = exitedResolve;
-        child.proc = proc;
         child.plan = plan;
         child.spawnedAt = Date.now();
+        let proc;
+        try {
+            proc = spawn(plan.command, plan.args, { cwd: plan.cwd, env: plan.env, stdio: ["ignore", "pipe", "pipe"] });
+        }
+        catch (error) {
+            process.stderr.write(`[${child.agent}] spawn error: ${error instanceof Error ? error.message : String(error)}\n`);
+            child.markExited();
+            process.nextTick(() => this.onExit(child, null, null));
+            return;
+        }
+        child.proc = proc;
+        this.recordChild(child.agent, proc);
         this.log(`${child.agent} started${plan.resumed ? " (resumed session)" : ""}: ${plan.command} ${plan.args.length} args, cwd ${plan.cwd}`);
         if (proc.stdout !== null)
             this.forward(child, proc.stdout, process.stdout);
@@ -185,12 +189,30 @@ class Supervisor {
             this.forward(child, proc.stderr, process.stderr);
         proc.on("error", (error) => {
             process.stderr.write(`[${child.agent}] spawn error: ${error.message}\n`);
+            // A process that never started emits no "exit", so count the failure as its exit here.
+            if (proc.pid !== undefined || child.proc !== proc)
+                return;
+            child.proc = null;
+            child.markExited();
+            this.onExit(child, null, null);
         });
         proc.on("exit", (code, signal) => {
             child.proc = null;
             child.markExited();
             this.onExit(child, code, signal);
         });
+    }
+    /** Note the child in `.diarchy/start.pid` so stop and the next start can reach it if this process dies first. */
+    recordChild(agent, proc) {
+        if (this.record === null || proc.pid === undefined)
+            return;
+        this.record.children[agent] = identify(proc.pid);
+        try {
+            saveRunRecord(this.input.projectDir, this.record);
+        }
+        catch (error) {
+            process.stderr.write(`diarchy: could not record ${agent} in start.pid: ${error instanceof Error ? error.message : String(error)}\n`);
+        }
     }
     forward(child, stream, out) {
         const lines = createInterface({ input: stream });
@@ -212,7 +234,7 @@ class Supervisor {
     onExit(child, code, signal) {
         if (this.stopping)
             return;
-        const how = signal !== null ? `signal ${signal}` : `code ${code ?? "?"}`;
+        const how = signal !== null ? `signal ${signal}` : code !== null ? `code ${code}` : "never started";
         this.log(`${child.agent} exited (${how})`);
         if (child.plan?.resumed === true && code !== 0 && Date.now() - child.spawnedAt < FAST_FAIL_MS) {
             clearSession(this.input.projectDir, child.agent);
@@ -272,7 +294,8 @@ class Supervisor {
         if (state === null || state.goal !== this.input.goal.goalId)
             return;
         const count = state.messages.length;
-        if (state.phase !== this.lastPhase || count !== this.lastCount) {
+        const landed = count !== this.lastCount;
+        if (state.phase !== this.lastPhase || landed) {
             if (count !== this.lastCount)
                 for (const child of this.children.values())
                     child.restarts = 0;
@@ -289,6 +312,16 @@ class Supervisor {
             const reason = blockReason(state, messages);
             this.log(`BLOCKED: ${blockSummary(state, messages)}. Run: ${replyHint(state, messages) ?? "diarchy reply"}`);
             void this.finish(EXIT_BLOCKED, reason);
+        }
+        else if (landed) {
+            // A PM left dead after max_restarts may now owe a reply to what landed.
+            for (const child of this.children.values()) {
+                if (!child.dead)
+                    continue;
+                child.dead = false;
+                this.log(`${child.agent} respawning: a message landed`);
+                this.spawnChild(child);
+            }
         }
     }
     // -------------------------------------------------------------------------

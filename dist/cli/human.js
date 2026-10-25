@@ -1,7 +1,7 @@
 /** `diarchy reply` and `diarchy stop`: the two things the human does to a running goal. */
 import { NoGoalError } from "../vault/index.js";
 import { EXIT_ERROR, EXIT_OK, humanStore, parseBudgets, printJson } from "./common.js";
-import { runningSupervisor } from "./start.js";
+import { reapLeftovers, runningSupervisor } from "./run-record.js";
 export async function runReply(projectDir, text, options) {
     const store = humanStore(projectDir);
     const reply = {};
@@ -49,13 +49,17 @@ export async function runStop(projectDir, options) {
             signalled = false;
         }
     }
+    // No live supervisor: stop the PMs a dead one left running and drop its stale start.pid.
+    const leftovers = pid === null ? await reapLeftovers(projectDir) : [];
     if (options.json === true) {
-        printJson({ stopped: stopped.ok, detail: stopped.detail, supervisor_pid: pid, signalled });
+        printJson({ stopped: stopped.ok, detail: stopped.detail, supervisor_pid: pid, signalled, leftovers: leftovers.map(({ agent, pid: child }) => ({ agent, pid: child })) });
     }
     else {
         console.log(stopped.ok ? `goal BLOCKED: ${stopped.detail}` : `goal not changed: ${stopped.detail}`);
         console.log(pid === null ? "no diarchy start is running" : signalled ? `signalled diarchy start (pid ${pid})` : `could not signal pid ${pid}`);
+        for (const leftover of leftovers)
+            console.log(`stopped ${leftover.agent} (pid ${leftover.pid}), left running by an earlier diarchy start`);
     }
-    return stopped.ok || signalled ? EXIT_OK : EXIT_ERROR;
+    return stopped.ok || signalled || leftovers.length > 0 ? EXIT_OK : EXIT_ERROR;
 }
 //# sourceMappingURL=human.js.map

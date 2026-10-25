@@ -8,6 +8,8 @@ in `.codex/agents/*.toml`.
 Requirements: Node 20 or later on `PATH`, Codex CLI with plugin and hook support
 (October 2026 or later), and `npm ci` run in the diarchy checkout so that
 `node_modules/` exists (`dist/` is committed, so there is no build step).
+Linux or macOS: native Windows is untested and `diarchy start --driver real`
+refuses to run there; use WSL.
 
 ## 1. Add the marketplace and enable the plugin
 

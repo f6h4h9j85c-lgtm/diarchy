@@ -8,7 +8,8 @@ brief, a PreToolUse hook that denies a shell call to the human's `diarchy reply`
 and `diarchy stop`, and a Stop hook that keeps the turn open while you owe the
 other PM a reply.
 
-Requirements: Node 20 or later on `PATH`, Claude Code 2.1.275 or later.
+Requirements: Node 20 or later on `PATH`, Claude Code 2.1.275 or later, Linux or macOS.
+Native Windows is untested and `diarchy start --driver real` refuses to run there; use WSL.
 
 ## Path A: from inside Claude Code
 

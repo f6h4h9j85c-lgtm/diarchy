@@ -19,6 +19,9 @@
  * A resumed child that exits non-zero within a few seconds drops its session
  * file so the next spawn starts fresh.
  *
+ * `codex exec` refuses to run outside a git repository, so when the agent's cwd
+ * is not in one the launcher adds `--skip-git-repo-check`.
+ *
  * Fake driver: `node [--import tsx] <fake-script> <mode>` with the same env plus
  * DIARCHY_FAKE_MODE; used by the e2e test to exercise launcher, store, and
  * engine with no model calls.
@@ -27,7 +30,7 @@ import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { basename, dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 import type { AgentLaunch } from "./launcher-config.js";
 
@@ -132,7 +135,12 @@ export interface RealPlanInput {
   cwd: string;
   worktree: string | null;
   session: SessionRecord | null;
+  /** False when `cwd` is not inside a git repository. */
+  inGitRepo?: boolean;
 }
+
+/** The `codex exec` flag that lets it run in a directory that is not a git repository. */
+export const SKIP_GIT_REPO_CHECK = "--skip-git-repo-check";
 
 export interface RealPlan extends SpawnPlan {
   flavor: Flavor;
@@ -156,6 +164,7 @@ export function realPlan(input: RealPlanInput): RealPlan {
   const flavor = flavorOf(input.launch.command);
   const prompt = buildPrompt(input.agent, input.goalId);
   const args = [...input.launch.args];
+  if (flavor === "codex" && input.inGitRepo === false && !args.includes(SKIP_GIT_REPO_CHECK)) args.push(SKIP_GIT_REPO_CHECK);
   let resumed = false;
   let minted: SessionRecord | null = null;
   if (input.session !== null && flavor === "claude") {
@@ -195,9 +204,10 @@ export function defaultFakeScript(): string {
   return join(dirname(here), `fake-pm${ext}`);
 }
 
+/** The tsx loader as a file URL: `--import` takes a URL or specifier, and a Windows path is neither. */
 function tsxLoader(): string {
   const require = createRequire(import.meta.url);
-  return join(dirname(require.resolve("tsx/package.json")), "dist", "loader.mjs");
+  return pathToFileURL(join(dirname(require.resolve("tsx/package.json")), "dist", "loader.mjs")).href;
 }
 
 export function fakePlan(input: FakePlanInput): SpawnPlan {

@@ -85,6 +85,7 @@ program
     .option("--vault <path>", "vault directory, relative to the project (default: <project> brain/diarchy)")
     .option("--agents <ids>", "comma-separated agent ids", "claude,codex")
     .option("--force", "overwrite an existing diarchy.config.json")
+    .option("--codex-full-access", "launch the Codex PM without its sandbox, with your full OS permissions (default: sandboxed, cannot commit)")
     .action((options) => exitWith(() => runInit(projectDir(), options)));
 const kickoffOptions = (command) => command
     .option("--ac <criterion>", "acceptance criterion (repeatable)", collect, [])

@@ -12,7 +12,7 @@ import { AGENT_HUMAN } from "../protocol/index.js";
 import { VaultStore, loadConfig } from "../vault/index.js";
 import { blockReason, blockSummary, replyHint } from "./brief.js";
 import { CliError, EXIT_BLOCKED, EXIT_ERROR, EXIT_OK, nowHms, sleep } from "./common.js";
-import { clearSession, defaultFakeScript, detectSessionId, fakePlan, loadSession, realPlan, saveSession, } from "./drivers.js";
+import { clearSession, defaultFakeScript, detectSessionId, fakePlan, loadSession, realPlan, saveSession, sandboxNotice, } from "./drivers.js";
 import { kickoffInput } from "./kickoff.js";
 import { loadLauncherConfig } from "./launcher-config.js";
 import { ensureWorktrees, hasCommits, isGitRepo } from "./worktrees.js";
@@ -76,6 +76,13 @@ export async function runStart(projectDir, goalText, options) {
         console.log(`${nowHms()} note: goal text and --ac ignored; ${goal.goalId} is already active`);
     }
     const worktrees = prepareWorktrees(projectDir, config, goal.goalId, agents, options.worktrees);
+    if (driver === "real") {
+        for (const agent of agents) {
+            const notice = sandboxNotice(agent, launcher.agents[agent]);
+            if (notice !== null)
+                console.log(`${nowHms()} ${notice}`);
+        }
+    }
     const supervisor = new Supervisor({ projectDir, config, launcher, human, goal, agents, worktrees, driver, options });
     return supervisor.run();
 }

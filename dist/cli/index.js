@@ -99,7 +99,7 @@ kickoffOptions(program.command("start").argument("[goal]", "goal text; omit to a
     .description("Kick off (or attach), create worktrees, spawn both PMs, and supervise until DONE (exit 0) or BLOCKED (exit 2)")
     .addOption(new Option("--driver <driver>", "real spawns the CLIs; fake runs the scripted PM").choices(["real", "fake"]).default("real"))
     .option("--fake-script <path>", "script for --driver fake (default: the bundled fake-pm)")
-    .option("--fake-mode <mode>", "good or slop for --driver fake (default: good)")
+    .addOption(new Option("--fake-mode <mode>", "scripted behaviour for --driver fake (default: DIARCHY_FAKE_MODE, else good)").choices(["good", "slop"]))
     .option("--no-worktrees", "run the agents in the project directory instead of per-agent worktrees")
     .action((goal, options) => exitWith(() => runStart(projectDir(), goal, options)));
 program

@@ -42,8 +42,17 @@ function parseDriver(value) {
         return value;
     throw new CliError(`--driver must be real or fake, got "${value}"`);
 }
+/** The fake PM's mode: --fake-mode, else DIARCHY_FAKE_MODE, else good. Checked before kickoff, since the fake PM rejects anything else at startup. */
+function fakeMode(options) {
+    const mode = options.fakeMode ?? process.env.DIARCHY_FAKE_MODE ?? "good";
+    if (mode === "good" || mode === "slop")
+        return mode;
+    throw new CliError(`--fake-mode (or DIARCHY_FAKE_MODE) must be good or slop, got "${mode}"`);
+}
 export async function runStart(projectDir, goalText, options) {
     const driver = parseDriver(options.driver);
+    if (driver === "fake")
+        fakeMode(options);
     const config = loadConfig(projectDir);
     const agents = Object.keys(config.agents);
     const launcher = loadLauncherConfig(projectDir, agents);
@@ -158,8 +167,7 @@ class Supervisor {
         const worktree = worktrees.get(agent) ?? null;
         const cwd = worktree ?? projectDir;
         if (driver === "fake") {
-            const mode = options.fakeMode ?? process.env.DIARCHY_FAKE_MODE ?? "good";
-            return fakePlan({ projectDir, agent, goalId: goal.goalId, cwd, worktree, script: options.fakeScript ?? defaultFakeScript(), mode });
+            return fakePlan({ projectDir, agent, goalId: goal.goalId, cwd, worktree, script: options.fakeScript ?? defaultFakeScript(), mode: fakeMode(options) });
         }
         const session = loadSession(projectDir, agent, goal.goalId);
         const plan = realPlan({ projectDir, agent, goalId: goal.goalId, launch: launcher.agents[agent], cwd, worktree, session });

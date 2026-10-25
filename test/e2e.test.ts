@@ -35,11 +35,12 @@ interface Run {
 }
 
 /** Run the CLI from source; stdin is always closed so hook commands see end-of-input. */
-function cli(args: string[], options: { input?: string } = {}): Promise<Run> {
+function cli(args: string[], options: { input?: string; env?: NodeJS.ProcessEnv } = {}): Promise<Run> {
   return new Promise((resolve, reject) => {
     const env: NodeJS.ProcessEnv = { ...process.env, ...GIT_ENV };
     delete env.DIARCHY_PROJECT;
     delete env.DIARCHY_FAKE_MODE;
+    Object.assign(env, options.env);
     const child = spawn(process.execPath, ["--import", "tsx", CLI, ...args], { cwd: ROOT, env, stdio: ["pipe", "pipe", "pipe"] });
     let stdout = "";
     let stderr = "";
@@ -257,6 +258,17 @@ describe("start --driver fake (good)", () => {
     const result = await cli(["start", "--driver", "fake", "--project", dir]);
     expect(result.code).toBe(1);
     expect(result.stderr).toContain("goal is required");
+  });
+
+  it("start rejects an unknown fake mode, from --fake-mode or DIARCHY_FAKE_MODE, before it kicks off", async () => {
+    const args = ["start", "Ship a typo", "--ac", "It never starts.", "--driver", "fake", "--no-worktrees", "--project", dir];
+    const flag = await cli([...args, "--fake-mode", "bogus"]);
+    expect(flag.code).toBe(1);
+    expect(flag.stderr).toContain("Allowed choices are good, slop");
+    const env = await cli(args, { env: { DIARCHY_FAKE_MODE: "bogus" } });
+    expect(env.code).toBe(1);
+    expect(env.stderr).toContain('diarchy: --fake-mode (or DIARCHY_FAKE_MODE) must be good or slop, got "bogus"');
+    expect(human(dir).listGoals().map((goal) => goal.goalId)).toEqual([paths.goalId]);
   });
 });
 

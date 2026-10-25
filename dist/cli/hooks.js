@@ -1,6 +1,6 @@
 /**
- * The two hook-facing commands. Both never throw, always exit 0, and read the
- * agent's inbox cursor without moving it.
+ * The three hook-facing commands. None throws, all exit 0, and the two that
+ * read the vault leave the agent's inbox cursor where it is.
  *
  * `inbox-skim --agent <id>` (SessionStart): a brief of at most 15 lines, or
  * nothing when no goal is active.
@@ -9,6 +9,9 @@
  * agent owes the goal something in PLAN/EXECUTE, else nothing. After
  * GATE_CAP consecutive blocks with no new message (tracked in
  * `.diarchy/gate-<agent>.json`) it stops blocking so a stuck agent can end its turn.
+ *
+ * `guard --agent <id>` (PreToolUse): a deny decision when the shell command
+ * on stdin runs `diarchy reply` or `diarchy stop`, the human's commands.
  */
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -95,5 +98,67 @@ export function runGate(projectDir, agent) {
         return null;
     saveGateRecord(path, { blocks: record.blocks + 1, last_message_id: lastId, updated: new Date().toISOString() });
     return { decision: "block", reason: `diarchy goal ${goal.goalId} (${state.phase}): ${step.text}.` };
+}
+// ---------------------------------------------------------------------------
+// guard (PreToolUse): the human's commands are not for a PM
+// ---------------------------------------------------------------------------
+/** Shell operators that start a new simple command. */
+const COMMAND_SEPARATORS = /\|\||&&|\$\(|[;|&\n()`]/;
+/** Words that may precede the program without being it. */
+const PRELUDE = new Set(["sudo", "env", "exec", "command", "nohup", "time", "node", "npx", "npm", "pnpm", "yarn", "bun", "tsx"]);
+const ENV_ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*=/;
+/** `diarchy`, `bin/diarchy.js`, `/abs/path/diarchy.js`, `./node_modules/.bin/diarchy`. */
+const PROGRAM = /^(?:[\w.~/-]*\/)?diarchy(?:\.js)?$/;
+/**
+ * The human subcommand a shell command would run (`reply` or `stop`), else
+ * null. Each simple command is read as `[VAR=x ...] [sudo|env|node|npx ...]
+ * <program> [--project <dir>] <subcommand>`, so the words inside an argument
+ * (`grep "diarchy reply" docs/`) do not count. Best effort by design: a
+ * `bash -c '...'` string, an alias, or a wrapper script is not unpacked
+ * (ANTI-SLOP.md, What this does NOT prevent).
+ */
+export function humanCommand(command) {
+    for (const segment of command.split(COMMAND_SEPARATORS)) {
+        const words = segment.trim().split(/\s+/).filter((word) => word !== "");
+        let i = 0;
+        while (i < words.length && (ENV_ASSIGNMENT.test(words[i]) || PRELUDE.has(words[i]) || words[i].startsWith("-")))
+            i += 1;
+        if (i >= words.length || !PROGRAM.test(words[i]))
+            continue;
+        i += 1;
+        while (i < words.length && words[i].startsWith("-"))
+            i += /^--?project$/.test(words[i]) ? 2 : 1;
+        const subcommand = words[i];
+        if (subcommand === "reply" || subcommand === "stop")
+            return subcommand;
+    }
+    return null;
+}
+/**
+ * The PreToolUse deny for a shell call that runs `diarchy reply` or
+ * `diarchy stop`, else null. `hookJson` is the hook event on stdin; anything
+ * that is not an event with a string `tool_input.command` is let through.
+ */
+export function runGuard(agent, hookJson) {
+    let command;
+    try {
+        const event = JSON.parse(hookJson);
+        command = event?.tool_input?.command;
+    }
+    catch {
+        return null;
+    }
+    if (typeof command !== "string")
+        return null;
+    const subcommand = humanCommand(command);
+    if (subcommand === null)
+        return null;
+    return {
+        hookSpecificOutput: {
+            hookEventName: "PreToolUse",
+            permissionDecision: "deny",
+            permissionDecisionReason: `diarchy ${subcommand} posts as the human, and ${agent} is a PM. The human answers from their own terminal; call wait_for_reply instead.`,
+        },
+    };
 }
 //# sourceMappingURL=hooks.js.map

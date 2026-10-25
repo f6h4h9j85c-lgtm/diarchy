@@ -6,7 +6,7 @@
 import { Command, Option } from "commander";
 import { VERSION } from "../index.js";
 import { CliError, EXIT_ERROR, EXIT_OK, resolveProjectDir } from "./common.js";
-import { runGate, runInboxSkim } from "./hooks.js";
+import { runGate, runGuard, runInboxSkim } from "./hooks.js";
 import { runReply, runStop } from "./human.js";
 import { runInit } from "./init.js";
 import { runKickoff } from "./kickoff.js";
@@ -156,6 +156,21 @@ program
     try {
         await readStdin(1_500);
         const decision = runGate(projectDir(), options.agent);
+        if (decision !== null)
+            process.stdout.write(`${JSON.stringify(decision)}\n`);
+    }
+    catch {
+        // the hook must never break a session
+    }
+    process.exit(EXIT_OK);
+});
+program
+    .command("guard")
+    .description("PreToolUse hook: print a deny decision when the shell command on stdin runs diarchy reply or diarchy stop; never throws")
+    .requiredOption("--agent <id>", "agent id (claude | codex)")
+    .action(async (options) => {
+    try {
+        const decision = runGuard(options.agent, await readStdin(1_500));
         if (decision !== null)
             process.stdout.write(`${JSON.stringify(decision)}\n`);
     }

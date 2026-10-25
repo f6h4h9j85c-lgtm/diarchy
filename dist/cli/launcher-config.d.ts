@@ -19,6 +19,17 @@ export interface LauncherConfig {
     agents: Record<string, AgentLaunch>;
     launcher: LauncherKnobs;
 }
+/**
+ * Permission rules the Claude PM runs under. Headless `claude -p` has no one to
+ * answer a permission prompt, so every tool outside this list is denied:
+ * `acceptEdits` covers file edits and read-only shell commands, the MCP rule
+ * covers the diarchy tools under the plugin-scoped server name (a server
+ * registered with `claude mcp add diarchy` is `mcp__diarchy__*` instead), and
+ * the Bash rules cover the commands a PM and its subagents issue. A project
+ * whose checks run through another command adds it to `agents.claude.args` in
+ * diarchy.config.json, for example `Bash(make *)`.
+ */
+export declare const CLAUDE_ALLOWED_TOOLS: string[];
 export declare const DEFAULT_AGENT_LAUNCH: Record<string, AgentLaunch>;
 export declare const DEFAULT_LAUNCHER: LauncherKnobs;
 /**

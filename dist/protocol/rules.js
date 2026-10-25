@@ -4,7 +4,7 @@
  * passes. `RULES_IN_ORDER` is the doc's evaluation order.
  */
 import { checkMessageShape, compactTs, isMessageType, parseMessageId, schemaMessage, typedOnlyMessage, } from "./schema.js";
-import { allowedTypes, challengeCount, challengers, isKnownSender, isPm, limitHit, messageRef, newEvidenceKeys, openThreads, pendingReviewUrl, phaseAllows, planBudgetSpent, prAuthor, projectAcStatuses, repliesToOpenChallenge, roleOf, talkRatioReached, targetDecisionId, totalBudgetReached, } from "./state.js";
+import { allowedTypes, authoredPr, challengeCount, challengers, isKnownSender, isPm, limitHit, messageRef, newEvidenceKeys, openThreads, pendingReviewUrl, phaseAllows, planBudgetSpent, prAuthor, repliesToOpenChallenge, roleOf, talkRatioReached, targetDecisionId, totalBudgetReached, } from "./state.js";
 import { BODY_MAX_WORDS, isAck, isOneClaim, wordCount } from "./text.js";
 import { AGENT_HUMAN, AGENT_SYSTEM, ASSIGN_REASONS, RULE_IDS, } from "./types.js";
 export const RULES_IN_ORDER = [...RULE_IDS];
@@ -351,14 +351,18 @@ const busyReviewing = ({ message, state }) => {
         return null;
     return reject("BUSY_REVIEWING", `${message.to} is reviewing ${url}. Assign implementation to another agent or wait for the review evidence.`);
 };
-/** PROTOCOL.md 9.2 (a) to (d), as a list of what is missing. */
+/**
+ * PROTOCOL.md 9.2 (a) to (f), as a list of what is missing. Only recorded
+ * state counts: the DONE's own evidence is an attestation and cannot set an
+ * AC passing, register a PR, or close a task.
+ */
 export function doneMissing(message, state) {
     const missing = [];
     if (state.phase !== "EXECUTE")
         missing.push(`phase is ${state.phase}`);
     if (message.from !== state.lead)
         missing.push(`sender ${message.from} is not the lead`);
-    for (const [ac, status] of Object.entries(projectAcStatuses(state, message))) {
+    for (const [ac, { status }] of Object.entries(state.acs)) {
         if (status === "failing")
             missing.push(`${ac} latest test failed`);
         else if (status !== "passing")
@@ -375,6 +379,15 @@ export function doneMissing(message, state) {
         missing.push(`decision ${id} is open`);
     if (state.deadlock_watch !== null)
         missing.push(`deadlock watch on ${state.deadlock_watch.decision_id} is active`);
+    for (const task of Object.values(state.tasks)) {
+        if (task.status !== "done")
+            missing.push(`task ${task.id} is ${task.status}`);
+        else if (state.review_required && task.kind !== "review" && !authoredPr(state, task.assignee)) {
+            missing.push(`task ${task.id} has no pr evidence from ${task.assignee ?? "an assignee"}`);
+        }
+    }
+    if (state.review_required && Object.keys(state.prs).length === 0)
+        missing.push("no PR is registered");
     return missing;
 }
 const donePrecondition = ({ message, state }) => {
@@ -383,7 +396,7 @@ const donePrecondition = ({ message, state }) => {
     const missing = doneMissing(message, state);
     if (missing.length === 0)
         return null;
-    return reject("DONE_PRECONDITION", `Not done: ${missing.join("; ")}. Post STATUS with passing tests for each AC and get the other agent's approve review on each PR.`);
+    return reject("DONE_PRECONDITION", `Not done: ${missing.join("; ")}. Finish every task, post STATUS with passing tests for each AC, and get the other agent's approve review on each PR.`);
 };
 /** DEADLOCK is a store trigger, not a rejection; the engine fires it after acceptance. */
 const deadlock = () => null;

@@ -192,7 +192,7 @@ export interface GoalState {
     /** Keyed by task id (T1, T2, ...). */
     tasks: Record<string, TaskState>;
     messages: MessageRef[];
-    /** `review.required` from diarchy.config.json (waives DONE 9.2(c) when false). */
+    /** `review.required` from diarchy.config.json (waives DONE 9.2(c) and (f) when false). */
     review_required: boolean;
     updated: string;
 }

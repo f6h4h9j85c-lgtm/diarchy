@@ -132,6 +132,10 @@ export function prAuthor(state, message, url) {
     const introduced = (message.evidence ?? []).some((item) => item.kind === "pr" && item.url === url);
     return introduced ? message.from : undefined;
 }
+/** Has `agent` introduced a PR on this goal (first `pr` evidence)? DONE 9.2(f). */
+export function authoredPr(state, agent) {
+    return agent !== null && Object.values(state.prs).some((pr) => pr.author === agent);
+}
 /** The PR an agent still owes a review on, if any (BUSY_REVIEWING). */
 export function pendingReviewUrl(state, agent) {
     for (const task of Object.values(state.tasks)) {
@@ -142,21 +146,6 @@ export function pendingReviewUrl(state, agent) {
             return task.pr;
     }
     return undefined;
-}
-/** AC statuses after applying a message's `test` items to the ACs it cites. */
-export function projectAcStatuses(state, message) {
-    const statuses = {};
-    for (const [id, ac] of Object.entries(state.acs))
-        statuses[id] = ac.status;
-    for (const item of message.evidence ?? []) {
-        if (item.kind !== "test" || item.result === "pending")
-            continue;
-        for (const ac of message.re) {
-            if (ac in statuses)
-                statuses[ac] = item.result === "pass" ? "passing" : "failing";
-        }
-    }
-    return statuses;
 }
 // ---------------------------------------------------------------------------
 // Phase and role gates (PROTOCOL.md sections 4 to 6)

@@ -318,7 +318,7 @@ PRs 412 and 413 merged to main.
 
 The store writes the ASK_HUMAN body from one template per trigger; none carries the reply command (section 10):
 
-- BLOCKED `kind: external`: `<agent> is BLOCKED (external): <summary> The human has been paged; goal.md says how to answer.` where `<summary>` is the BLOCKED body cut to its first 100 words and closed with a period
+- BLOCKED `kind: external`: `<agent> is BLOCKED (external): <summary> The human has been paged; goal.md says how to answer.` where `<summary>` is the BLOCKED body's first 100 words, closed with a period, or ending with `...` when it was cut
 - deadlock: `Lead did not DECIDE <decision_id> within 2 messages or 10 minutes. Goal BLOCKED; human paged.`
 - `messages_total`: `Goal used <used> of <limit> messages and is BLOCKED. The human has been paged; goal.md says how to answer.`
 - `wall_clock_minutes`: `Wall clock <limit> min exceeded; goal is BLOCKED. The human has been paged; goal.md says how to answer.`

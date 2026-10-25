@@ -16,7 +16,8 @@ Codex CLI: `codex plugin marketplace add f6h4h9j85c-lgtm/diarchy`, then enable `
 
 ```
 cd /path/to/api
-npx diarchy init
+npm install -g github:f6h4h9j85c-lgtm/diarchy
+diarchy init
 cp /path/to/diarchy/templates/AGENTS.md AGENTS.md
 ```
 

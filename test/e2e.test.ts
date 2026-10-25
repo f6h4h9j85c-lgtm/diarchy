@@ -322,7 +322,9 @@ describe("start --driver fake (slop)", () => {
     const status = await cli(["status", "--project", dir]);
     expect(status.code).toBe(0);
     expect(status.stdout).toContain("human needed: deadlock on plan");
-    expect(status.stdout).toContain('diarchy reply "<ruling>" --decision plan');
+    // D1 is still open, so a ruling on plan would be rejected by PHASE_GATE; the hint must not suggest --decision plan.
+    expect(status.stdout).toContain('diarchy reply "<ruling>"');
+    expect(status.stdout).not.toContain("--decision plan");
     const json = JSON.parse((await cli(["status", "--json", "--project", dir])).stdout) as { human_needed: boolean; reply_command: string };
     expect(json.human_needed).toBe(true);
     expect(json.reply_command).toContain("diarchy reply");

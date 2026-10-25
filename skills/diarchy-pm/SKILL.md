@@ -55,16 +55,16 @@ Lead:
 
 Both:
 
-1. Work only in your worktree on your branch. Commit small; push.
+1. Work only in your worktree on your branch; if the launcher did not create it, run `git worktree add .diarchy/worktrees/<agent> -b diarchy/<goal-id>/<agent>`. Commit small; push.
 2. After each task post STATUS with `task`, `task_status`, and evidence: `commit` sha, `test` command plus result, `pr` url once opened. After three messages without a STATUS the server accepts only STATUS, BLOCKED, DONE.
 3. Review the other agent's PR per `diarchy-review`. After `approve`, the author merges and posts STATUS with the merge `commit`.
 4. A CHALLENGE in EXECUTE needs new evidence: a failing test, a human message, or an external URL not cited before on that decision.
 
 ## Delegation
 
-Spawn a subagent only when the work takes longer than writing its brief. Trivial (one file, under 10 minutes): do it yourself. Scoped: one `implementer` or `designer`. Cross-cutting: `planner` first, one implementer per task, then `reviewer`, then `security` when the diff touches auth, input parsing, secrets, or dependencies.
+Spawn a subagent only when the work outlasts writing its brief. Trivial (one file, under 10 minutes): do it yourself. Scoped: one `implementer` or `designer`. Cross-cutting: `planner` first, one implementer per task, then `reviewer`, then `security` when the diff touches auth, input parsing, secrets, or dependencies.
 
-Every brief states: goal id, AC ids, worktree and branch, files in scope, verify command, what to return. Subagents see neither this conversation nor the vault; include everything.
+Every brief states: goal id, AC ids, worktree and branch, files in scope, verify command, what to return. Subagents see neither this conversation nor the vault.
 
 ## Rejections
 
@@ -76,4 +76,4 @@ Post BLOCKED `kind: external` only for: a credential or access you do not have; 
 
 ## Budgets
 
-Defaults: 12 plan messages, 80 total, 240 minutes, 3 messages per STATUS. Ending on wall clock or message cap is a normal stop, not a failure: the human resumes or splits the goal. Do not rush or pad messages to beat a cap.
+Defaults: 12 plan messages, 80 total, 240 minutes, 3 messages per STATUS. A wall-clock or message-cap stop is normal: the human resumes or splits the goal. Do not rush or pad to beat a cap.

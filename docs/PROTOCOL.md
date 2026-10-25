@@ -381,10 +381,10 @@ All tools act on the single active goal (`goal_id` optional). Success returns `{
 
 | Tool | Input (field: type) | Output extras | Typical errors |
 |---|---|---|---|
-| kickoff | goal: string (120 words max); acceptance_criteria: string[] (1+, 40 words each); lead?: agent id; budgets?: object; goal_id?: string | goal_id, lead, challenger, kickoff_id | SINGLE_KICKOFF, SCHEMA, WORD_CAP |
+| kickoff | goal: string (120 words max); acceptance_criteria: string[] (1+, 40 words each); lead?: agent id; budgets?: object; slug?: string | goal_id, lead, challenger, kickoff_id | SINGLE_KICKOFF, SCHEMA, WORD_CAP |
 | post | type; to; re: string[]; body?; claim?; evidence?: item[]; reply_to?; decision_id?; kind?; from? (must match server identity) | id, ts, seq, decision_id | any rule |
 | read | since?: id (default: inbox cursor) | messages: [{frontmatter..., body}] excluding the caller's own; cursor | SCHEMA |
-| wait_for_reply | timeout_s?: int (default and hard cap 110) | as `read`, or `{ timeout: true }`; MCP progress notification every 15 s; runs the store tick | SCHEMA |
+| wait_for_reply | timeout_ms?: int (default and hard cap 110000) | as `read`, or `{ timeout: true }`; MCP progress notification every 15 s; runs the store tick | SCHEMA |
 | decide | claim; basis; re; decision_id?; supersedes?; evidence?; reply_to?; tasks?; ac_add?; body? | as `post` (type DECIDE) | ROLE_GATE, TWO_ROUNDS, DECISION_IMMUTABLE, PHASE_GATE |
 | assign | to; kind; task? or new_task?; worktree?; branch?; pr?; re; reason?; body? | as `post` (type ASSIGN); worktree/branch default from config | ROLE_GATE, NO_DOMAIN_ROUTING, BUSY_REVIEWING, NO_SELF_REVIEW |
 | status | re; evidence; task?; task_status?; body? | as `post` (type STATUS) | NO_ACK, NO_SELF_REVIEW, CITE_AC |

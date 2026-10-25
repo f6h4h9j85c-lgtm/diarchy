@@ -73,7 +73,9 @@ export function replyHint(state: GoalState, messages: Message[]): string | null 
   const replyTo = ask.reply_to === undefined ? undefined : ordered.find((message) => message.id === ask.reply_to);
   if (replyTo?.type === "CHALLENGE") {
     const decision = ask.decision_id ?? replyTo.decision_id ?? "plan";
-    return `diarchy reply "<ruling>" --decision ${decision}`;
+    // A human ruling on `plan` is rejected by PHASE_GATE while another thread is open; a plain reply opens a new decided thread and unblocks.
+    const otherOpen = Object.entries(state.decisions).some(([id, thread]) => id !== decision && thread.status === "open");
+    return decision === "plan" && otherOpen ? 'diarchy reply "<ruling>"' : `diarchy reply "<ruling>" --decision ${decision}`;
   }
   if (replyTo !== undefined || ask.reply_to !== undefined) return 'diarchy reply "<your answer>"';
   const hit = budgetTrigger(ask, state);

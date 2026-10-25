@@ -312,6 +312,8 @@ Final paragraph, how to answer. The human never edits a vault file; the launcher
 
 - external: `` **To answer:** run `diarchy reply "<your answer>"`. It is posted as a DECIDE with basis human, recorded in decisions.md, and EXECUTE resumes. `diarchy stop` ends the run and leaves it BLOCKED. ``
 - deadlock: `` **To answer:** run `diarchy reply "<ruling>" --decision <decision_id>`. Your ruling closes <decision_id> as a DECIDE with basis human and <blocked_from> resumes. `diarchy stop` ends the run. ``
+
+When the stalled decision is `plan` and another thread is still open, the command is `diarchy reply "<ruling>"` without `--decision` (a `plan` ruling would be rejected by PHASE_GATE); the paragraph then says the ruling is recorded as a new DECIDE and that the lead must DECIDE plan next.
 - budget: `` **To answer:** run `diarchy reply "continue" --budget <counter>=<suggested>` to raise the limit and resume <blocked_from>, or `diarchy stop` to end the run. `` where `<suggested>` is twice the current limit.
 
 The word `EXECUTE` in the external variant is `<blocked_from>` when the block happened in PLAN.

@@ -84,7 +84,8 @@ Skills load from `.agents/skills/`. Trust the project (start `codex` in it once 
 ## Quickstart
 
 ```
-npx diarchy init
+npm install -g github:f6h4h9j85c-lgtm/diarchy
+diarchy init
 diarchy start "Add per-API-key rate limiting to the public API." \
   --ac "Requests over the per-key limit get HTTP 429 with a Retry-After header." \
   --ac "The limit is configurable through RATE_LIMIT_PER_MIN with a documented default."

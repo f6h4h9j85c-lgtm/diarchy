@@ -140,6 +140,15 @@ function externalParagraphs(blocked: Message, from: Phase): string[] {
   ];
 }
 
+/** A human ruling on `plan` is rejected while another thread is open, so the hint drops `--decision` in that case. */
+function answerLine(decision: string, state: GoalState, from: Phase): string {
+  const otherOpen = Object.entries(state.decisions).some(([id, thread]) => id !== decision && thread.status === "open");
+  if (decision === "plan" && otherOpen) {
+    return `**To answer:** run \`diarchy reply "<ruling>"\`. Your ruling is recorded as a new DECIDE with basis human, ${from} resumes, and ${state.lead} must then DECIDE plan. \`diarchy stop\` ends the run.`;
+  }
+  return `**To answer:** run \`diarchy reply "<ruling>" --decision ${decision}\`. Your ruling closes ${decision} as a DECIDE with basis human and ${from} resumes. \`diarchy stop\` ends the run.`;
+}
+
 function deadlockParagraphs(
   ask: Message,
   challenge: Message,
@@ -159,7 +168,7 @@ function deadlockParagraphs(
   return [
     `**Deadlock on ${decision}, re ${challenge.re.join(", ")}.** ${state.lead} did not DECIDE within 2 messages or 10 minutes. The two positions:`,
     `${first}${second}`,
-    `**To answer:** run \`diarchy reply "<ruling>" --decision ${decision}\`. Your ruling closes ${decision} as a DECIDE with basis human and ${from} resumes. \`diarchy stop\` ends the run.`,
+    answerLine(decision, state, from),
   ];
 }
 

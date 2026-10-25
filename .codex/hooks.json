@@ -1,0 +1,27 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|resume|clear|compact",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${DIARCHY_ROOT:-.}/hooks/session-start.sh\" codex",
+            "timeout": 15
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${DIARCHY_ROOT:-.}/hooks/stop-gate.sh\" codex",
+            "timeout": 30
+          }
+        ]
+      }
+    ]
+  }
+}

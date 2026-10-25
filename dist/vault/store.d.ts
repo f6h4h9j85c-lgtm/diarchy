@@ -18,7 +18,7 @@ export declare class VaultStore {
     private readonly warned;
     constructor(options: VaultStoreOptions);
     /**
-     * Every goal with a readable budget.json, oldest first. A goal whose
+     * Every goal whose KICKOFF committed, oldest first. A goal whose
      * budget.json does not parse (damaged, or another protocol_version) is
      * skipped with one stderr warning naming the file, so it cannot take the
      * rest of the vault down with it (PROTOCOL.md 2.3).
@@ -53,12 +53,13 @@ export declare class VaultStore {
     /**
      * `<YYYYMMDD>-<slug>`, slug from `slug` or the goal text (a time-based
      * `goal-HHMMSS` when the text has no Latin letters or digits). Under the vault
-     * lock no goal is active, so an id that is taken belongs to a finished or
-     * abandoned goal: the slug gets the first free `-2`, `-3`, ... suffix instead.
-     * An explicit `goal_id` is used as given or refused.
+     * lock no goal is active, so a committed goal holding the id is a finished
+     * one: a derived slug gets the first free `-2`, `-3`, ... suffix, while a
+     * `slug` the caller chose is refused with SINGLE_KICKOFF and an explicit
+     * `goal_id` with SCHEMA. A directory an interrupted kickoff left holds no id.
      */
     private newGoalId;
-    /** kickoff never reuses a goal directory that holds a kickoff.md or a budget.json. */
+    /** A committed goal holds the id; what an interrupted kickoff left does not (PROTOCOL.md 2.2). */
     private goalIdTaken;
     /** A PM kicking off leads; the launcher alternates from the previous goal's lead. */
     private defaultLead;
@@ -139,6 +140,12 @@ export declare class VaultStore {
     private readMessages;
     /** budget.json of one goal; a file that does not parse throws an error naming it. */
     private loadState;
+    /**
+     * The goal's state once its KICKOFF has committed; null when the directory
+     * holds no goal, or only what a kickoff that died before its commit left
+     * (no budget.json, or one without a KICKOFF from before that write moved).
+     */
+    private committedState;
     /** The commit point: every chat/ file written so far is now accepted. */
     private persist;
     private loadKickoff;

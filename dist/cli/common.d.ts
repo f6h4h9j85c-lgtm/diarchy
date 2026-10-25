@@ -3,6 +3,14 @@ import { VaultStore, type GoalRef } from "../vault/index.js";
 export declare const EXIT_OK = 0;
 export declare const EXIT_ERROR = 1;
 export declare const EXIT_BLOCKED = 2;
+/**
+ * Replace what happens when the reader of stdout or stderr goes away (EPIPE,
+ * as in `diarchy status | head -1`). The default ends the command quietly;
+ * `diarchy start` swaps in its shutdown so its PMs are stopped, not orphaned.
+ */
+export declare function onBrokenPipe(handler: () => void): void;
+/** Route EPIPE on stdout and stderr to the onBrokenPipe handler instead of crashing with an unhandled 'error' event. */
+export declare function handleBrokenPipes(): void;
 /** A user-facing failure: printed as `diarchy: <message>` with the given exit code, no stack. */
 export declare class CliError extends Error {
     readonly exitCode: number;

@@ -567,6 +567,10 @@ describe("happy path", () => {
     expect(final.messages.map((message) => message.type)).toEqual(["ASSIGN", "STATUS", "DONE"]);
     expect(final.budgets.used).toMatchObject({ messages_total: 9, plan_messages: 3, talk_since_work: 0 });
 
+    // The branch default comes from the newest goal even after DONE, so the engine answers with the phase, not a missing branch.
+    const late = await rejected(h.claude, "assign", { to: "codex", new_task: "One more pass", kind: "implement", re: ["AC1"] });
+    expect(late).toEqual({ ok: false, rule: "PHASE_GATE", message: expect.stringMatching(/^ASSIGN is not allowed in phase DONE\./) as unknown });
+
     // After DONE, read answers phase DONE, never NO_GOAL again; kickoff starts the next goal and its description must say so.
     const kickoffTool = (await h.codex.listTools()).tools.find((tool) => tool.name === "kickoff");
     expect(kickoffTool?.description).toContain("Use when read returns NO_GOAL or a goal in phase DONE, and a human gave you a goal.");

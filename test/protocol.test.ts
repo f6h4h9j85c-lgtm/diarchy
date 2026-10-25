@@ -146,9 +146,10 @@ function docErrorTemplates(): Map<string, RegExp> {
   for (const cells of tableRows(section)) {
     if (!/^[A-Z_]+$/.test(cells[1])) continue;
     expect(cells, `row ${cells[1]} has an unexpected pipe`).toHaveLength(7);
-    const template = cells[4].replace(/ \(ASK_HUMAN body\)$/, "");
-    const parts = template.split(/\{[a-z_]+\}/).map(escapeRegExp);
-    templates.set(cells[1], new RegExp(`^${parts.join("[\\s\\S]+?")}$`));
+    // One template per message variant, separated by <br> in the cell.
+    const variants = cells[4].replace(/ \(ASK_HUMAN body\)$/, "").split("<br>");
+    const patterns = variants.map((template) => template.split(/\{[a-z_]+\}/).map(escapeRegExp).join("[\\s\\S]+?"));
+    templates.set(cells[1], new RegExp(`^(?:${patterns.join("|")})$`));
   }
   return templates;
 }

@@ -756,14 +756,62 @@ describe("crash safety", () => {
   it("a kickoff that throws before its KICKOFF commits leaves no goal behind, so kickoff can be retried", async () => {
     const h = harness();
     const input = { goal: "Add per-API-key rate limiting to the public API.", acceptance_criteria: ["Requests over the limit get 429."], slug: "rate-limit" };
-    const chat = join(h.goalDir(), "chat");
-    mkdirSync(chat, { recursive: true });
-    writeFileSync(join(chat, "20261025T140000Z-0001-human-KICKOFF.md"), "planted\n");
-    await expect(h.human.kickoff(input)).rejects.toThrow(/refusing to overwrite/);
+    const kickoffMd = join(h.goalDir(), "kickoff.md");
+    const planted = join(h.goalDir(), "chat", "20261025T140000Z-0001-human-KICKOFF.md");
+    // Planted once kickoff.md is written under the lock, after the leftovers of an earlier kickoff are cleared.
+    const human = new VaultStore({
+      projectDir: h.projectDir,
+      config: CONFIG,
+      agent: "human",
+      now: () => {
+        if (existsSync(kickoffMd) && !existsSync(planted)) writeFileSync(planted, "planted\n");
+        return h.clock.now();
+      },
+      sleep: h.clock.sleep,
+      localTz: TZ,
+    });
+    await expect(human.kickoff(input)).rejects.toThrow(/refusing to overwrite/);
     expect(existsSync(h.goalDir())).toBe(false);
     expect(h.human.activeGoal()).toBeNull();
     ok(await h.human.kickoff(input));
     expect(h.human.state()?.messages.map((ref) => ref.id)).toEqual(["20261025T140000Z-0001-human-KICKOFF"]);
+  });
+
+  it("a kickoff killed before its commit leaves no goal, and the next kickoff of that id clears what it left", async () => {
+    const h = harness();
+    const input = { goal: "Add per-API-key rate limiting to the public API.", acceptance_criteria: ["Requests over the limit get 429."], slug: "rate-limit" };
+    const kickoffId = "20261025T140000Z-0001-human-KICKOFF";
+    const killed = async (leave: (dir: string, committed: GoalState | null) => void): Promise<void> => {
+      ok(await h.human.kickoff(input));
+      const dir = h.goalDir();
+      const committed = h.human.state();
+      for (const name of ["budget.json", "goal.md", "chat.md", "decisions.md"]) rmSync(join(dir, name));
+      leave(dir, committed);
+      // SIGKILL also leaves the lock behind; it goes stale after 30 s.
+      mkdirSync(join(dir, ".lock"));
+      const old = (Date.now() - 60_000) / 1000;
+      utimesSync(join(dir, ".lock"), old, old);
+
+      expect(h.human.listGoals()).toEqual([]);
+      expect(h.human.activeGoal()).toBeNull();
+      expect(h.claude.read()).toBeNull();
+      await expect(h.claude.post({ type: "PROPOSE", to: "all", re: ["AC1"], decision_id: "plan", claim: "Nothing to post to." })).rejects.toThrow(/No goal/);
+
+      const again = await h.human.kickoff(input);
+      ok(again);
+      expect(again).toMatchObject({ goal_id: "20261025-rate-limit", kickoff_id: kickoffId, phase: "PLAN" });
+      expect(listFiles(dir)).toEqual(["budget.json", "chat.md", "chat/", `chat/${kickoffId}.md`, "decisions.md", "goal.md", "inbox/", "kickoff.md"]);
+      expect(h.claude.read()?.messages.map((message) => message.id)).toEqual([kickoffId]);
+      h.human.render();
+    };
+    // Killed between the KICKOFF file and budget.json: kickoff.md and an uncommitted chat/ file.
+    await killed(() => undefined);
+    rmSync(join(h.projectDir, "api brain"), { recursive: true });
+    // An older store wrote budget.json before the KICKOFF: one without a kickoff_id is no goal either.
+    await killed((dir, committed) => {
+      rmSync(join(dir, "chat"), { recursive: true });
+      writeFileSync(join(dir, "budget.json"), `${JSON.stringify({ ...committed, kickoff_id: null, messages: [] }, null, 2)}\n`);
+    });
   });
 });
 
@@ -880,7 +928,7 @@ describe("kickoff", () => {
     expect(readdirSync(join(same.goalDir(), ".."))).toEqual(["20261025-same"]);
   });
 
-  it("a new goal whose id is taken by a finished goal gets the next free suffix instead of SINGLE_KICKOFF", async () => {
+  it("a derived slug whose id a finished goal holds gets the next free suffix; the same slug passed explicitly is SINGLE_KICKOFF", async () => {
     const h = harness();
     const first = await h.human.kickoff(INPUT);
     ok(first);
@@ -892,10 +940,16 @@ describe("kickoff", () => {
     expect(second.goal_id).toBe("20261025-add-per-api-key-rate-limiting-to-the-p-2");
     setPhase(h, second.goal_id, "DONE");
     h.clock.advance(60_000);
-    const third = await h.human.kickoff({ ...INPUT, slug: "add-per-api-key-rate-limiting-to-the-pub" });
+    const third = await h.human.kickoff({ ...INPUT, goal: "Add per-API-key rate limiting to the public API v3." });
     ok(third);
     expect(third.goal_id).toBe("20261025-add-per-api-key-rate-limiting-to-the-p-3");
     setPhase(h, third.goal_id, "DONE");
+    // A slug the caller names is the id it asked for: a DONE goal's id is refused, not renamed.
+    expect(await h.human.kickoff({ ...INPUT, slug: "add-per-api-key-rate-limiting-to-the-pub" })).toEqual({
+      ok: false,
+      rule: "SINGLE_KICKOFF",
+      message: "Goal 20261025-add-per-api-key-rate-limiting-to-the-pub is DONE and its id is not reused. Kick off with another slug.",
+    });
     h.clock.set("2026-10-25T15:04:05Z");
     const japanese = await h.human.kickoff({ ...INPUT, goal: "レート制限を追加する" });
     ok(japanese);
@@ -917,6 +971,11 @@ describe("kickoff", () => {
   it("allows a new goal once the previous one is DONE, alternating the lead", async () => {
     const h = harness();
     await replay(h);
+    expect(await h.human.kickoff({ ...INPUT, slug: "rate-limit" })).toEqual({
+      ok: false,
+      rule: "SINGLE_KICKOFF",
+      message: "Goal 20261025-rate-limit is DONE and its id is not reused. Kick off with another slug.",
+    });
     h.clock.set("2026-10-26T09:00:00Z");
     const next = await h.human.kickoff(INPUT);
     ok(next);

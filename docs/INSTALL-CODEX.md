@@ -201,7 +201,8 @@ instead.
    as pending review.
 4. Ask Codex to call the diarchy `read` tool. With no goal in the vault it
    answers `{ ok: false, rule: "NO_GOAL", ... }`; that is the server working.
-   Once a goal exists it returns the phase, your role, and unread messages.
+   Once a goal exists it returns the goal text (`goal_text`), every acceptance
+   criterion with its status (`acs`), the phase, your role, and unread messages.
 5. With a goal active, the session starts with the inbox brief from
    `diarchy inbox-skim --agent codex`. With no active goal nothing is printed.
 6. Ask Codex to run `diarchy reply "test"` in the shell. The PreToolUse hook

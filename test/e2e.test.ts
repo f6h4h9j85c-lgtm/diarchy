@@ -132,6 +132,8 @@ describe("diarchy init", () => {
     expect(first.stdout).toContain("Next steps");
     expect(first.stdout).toContain("claude plugin install diarchy");
     expect(first.stdout).toContain("codex plugin marketplace add");
+    // Adding a marketplace installs nothing: without this step Codex has no diarchy skills or hooks.
+    expect(first.stdout).toContain("codex plugin add diarchy@diarchy");
     expect(first.stdout).not.toContain(String.fromCharCode(0x2014));
     const configPath = join(dir, "diarchy.config.json");
     expect(existsSync(configPath)).toBe(true);

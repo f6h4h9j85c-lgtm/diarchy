@@ -43,7 +43,7 @@ Challenger:
 2. Find the cheapest fact that would change the plan: a failing test, a replica count, a missing dependency, an uncovered AC. Run it if you can.
 3. Post at most one CHALLENGE with a `test` evidence item (`result: pending` is allowed in PLAN), or post nothing. Silence is legal and common.
 
-At the 12-message cap only the lead's DECIDE is accepted.
+At the 12-message cap only BLOCKED and the lead's DECIDE are accepted.
 
 ## EXECUTE phase
 
@@ -55,8 +55,8 @@ Lead:
 
 Both:
 
-1. Work only in your worktree on your branch; if the launcher did not create it, run `git worktree add .diarchy/worktrees/<agent> -b diarchy/<goal-id>/<agent>`. Commit small; push.
-2. After each task post STATUS with `task`, `task_status`, and evidence: `commit` sha, `test` command plus result, `pr` url once opened. After three messages without a STATUS the server accepts only STATUS, BLOCKED, DONE.
+1. Work only in your worktree on your branch (if missing: `git worktree add .diarchy/worktrees/<agent> -b diarchy/<goal-id>/<agent>`). Commit small; push.
+2. After each task post STATUS with `task`, `task_status`, and evidence: `commit` sha, `test` command plus result, `pr` url. After three messages without a STATUS, only STATUS, BLOCKED, DONE, and a DECIDE answering an open CHALLENGE are accepted.
 3. Review the other agent's PR per `diarchy-review`. After `approve`, the author merges and posts STATUS with the merge `commit`.
 4. A CHALLENGE in EXECUTE needs new evidence: a failing test, a human message, or an external URL not cited before on that decision.
 

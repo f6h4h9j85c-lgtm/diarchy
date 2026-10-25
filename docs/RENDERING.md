@@ -23,7 +23,7 @@ Target: Obsidian reading view (mobile and desktop) and GitHub file view, from on
 - Links are standard markdown links with paths relative to the goal directory: `[goal](goal.md)`. Wikilinks are never emitted (GitHub shows them as literal brackets).
 - Every `---` separator has one blank line before and after it. A `---` directly under a text line would turn that line into a setext heading.
 - Paragraph breaks are blank lines. The renderer never relies on soft line breaks (GitHub collapses them, Obsidian does not).
-- Hard rule for all strings copied from messages (claim, body, task text, criteria, test commands, notes): a line beginning with `#`, `>`, `-`, `*`, `+`, `|`, a digit followed by `.`, or consisting only of `---`, `***`, `___` is prefixed with a backslash. Inside italics, `*` and `_` are backslash-escaped. Inside a code span, a string containing a backtick is wrapped in double backticks with a space inside: ``` `` a`b `` ```. Inside a table cell, `|` becomes `\|` and newlines become a single space.
+- Hard rule for all strings copied from messages (claim, body, task text, criteria, test commands, notes): a line beginning, after any spaces or tabs, with `#`, `>`, `-`, `*`, `+`, `|`, a digit followed by `.`, or a type glyph (1.3), or consisting only of `=`, or of three or more `_` with optional spaces, gets a backslash before that first character. CR, LF, and CRLF all end a line. No message text can then open a heading, a quote, a list, a `---` separator, or a line that passes for another message's header. A string placed on one line (claim, task text, `new_task`, `reason`, an added criterion, a code span, a note) has each run of line breaks collapsed to one space first. Inside italics, `*` and `_` are backslash-escaped. Inside a code span, a string containing a backtick is wrapped in double backticks with a space inside: ``` `` a`b `` ```. Inside a table cell, `|` becomes `\|` and newlines become a single space.
 - Protocol tokens are rendered literally and never translated or prettified: `EXECUTE`, `adopted-challenge`, `in_progress`, `request_changes`, `load-balance`. The file and the MCP error messages must agree word for word so a reader can search for either.
 - No em dashes anywhere in renderer-authored text. Separator between segments on one line is ` · ` (space, U+00B7, space).
 
@@ -110,7 +110,7 @@ Paragraph 1, state:
 ```
 
 - `<PHASE>` is the literal phase. In BLOCKED it is `**BLOCKED** from <blocked_from>`.
-- `<human slot>` is `no action needed` in PLAN, EXECUTE, DONE, and `**human needed** since <HH:MM:SS> UTC` in BLOCKED, using the ts of the latest ASK_HUMAN.
+- `<human slot>` is `no action needed` in PLAN, EXECUTE, DONE, and `**human needed** since <HH:MM:SS> UTC` in BLOCKED, using the ts of the message that put the run into BLOCKED (4.1).
 - With three or more agents, `challenger` lists them comma-separated.
 
 Paragraph 2, budget line (1.4).
@@ -281,9 +281,11 @@ Paragraph 1, always:
 **Human needed** since <HH:MM:SS> UTC (<HH:MM> local). The run is BLOCKED (from <blocked_from>); nothing moves until you answer.
 ```
 
-Paragraph 2 and 3 depend on the trigger, read from the latest ASK_HUMAN and its `reply_to`:
+The time is the ts of the message that put the run into BLOCKED: the latest ASK_HUMAN, or a human BLOCKED (`diarchy stop`) posted after it. The strip (2.1) and `## Status` (4.2) show the same time.
 
-External BLOCKED (`reply_to` is a BLOCKED message):
+Paragraph 2 and 3 depend on that message: an ASK_HUMAN read with its `reply_to`, or the human BLOCKED itself.
+
+External BLOCKED (`reply_to` is a BLOCKED message, or the message is a human BLOCKED, whose agent is `human`):
 
 ```
 **<agent> is blocked (external), re <AC list>:**

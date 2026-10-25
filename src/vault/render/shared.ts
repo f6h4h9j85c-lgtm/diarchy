@@ -64,30 +64,39 @@ export function localHint(ts: string, localTz: string | undefined): string {
 // Escaping (1.1)
 // ---------------------------------------------------------------------------
 
-const BLOCK_START = /^(?:[#>\-*+|]|\d+\.)/;
-const THEMATIC_BREAK = /^(?:---|\*\*\*|___)$/;
+/**
+ * After any indentation: a block marker, a type glyph that would pass for a
+ * message header (1.3), an underscore rule, or a setext `=` underline.
+ */
+const BLOCK_START = new RegExp(`^([ \\t]*)(?=[#>*+|\\-${Object.values(GLYPHS).join("")}]|\\d+\\.|(?:_[ \\t]*){3,}$|=+[ \\t]*$)`);
 
-/** Backslash-prefix any line that would start a block construct. */
+/** Backslash-prefix any line that would start a block construct or pass for a message header. */
 export function escapeBlockStarts(text: string): string {
   return text
-    .split("\n")
-    .map((line) => (BLOCK_START.test(line) || THEMATIC_BREAK.test(line) ? `\\${line}` : line))
+    .split(/\r\n?|\n/)
+    .map((line) => line.replace(BLOCK_START, "$1\\"))
     .join("\n");
 }
 
-/** Claim inside single `*`: emphasis delimiters are escaped. */
-export function italic(text: string): string {
-  return `*${text.replace(/[*_]/g, (char) => `\\${char}`)}*`;
+/** Text placed on one line (a list item, the fields line, a span): each run of line breaks becomes one space. */
+export function inline(text: string): string {
+  return text.replace(/[\r\n\u2028\u2029]+/g, " ");
 }
 
-/** Code span; a string holding a backtick is wrapped in double backticks with inner spaces. */
+/** Claim inside single `*`: one line, emphasis delimiters escaped. */
+export function italic(text: string): string {
+  return `*${inline(text).replace(/[*_]/g, (char) => `\\${char}`)}*`;
+}
+
+/** One-line code span; a string holding a backtick is wrapped in double backticks with inner spaces. */
 export function code(text: string): string {
-  return text.includes("`") ? `\`\` ${text} \`\`` : `\`${text}\``;
+  const flat = inline(text);
+  return flat.includes("`") ? `\`\` ${flat} \`\`` : `\`${flat}\``;
 }
 
 /** Table cell: pipes escaped, newlines collapsed to one space. */
 export function cell(text: string): string {
-  return text.replace(/\|/g, "\\|").replace(/(?:\r?\n)+/g, " ");
+  return inline(text).replace(/\|/g, "\\|");
 }
 
 /** `| a | b |` with an empty cell rendered as a single space, as in the samples. */
@@ -167,7 +176,7 @@ export function evidenceBullet(item: EvidenceItem, byId: Map<string, Message>): 
     case "human":
       return `- human: ${messageRef(item.id, byId)}`;
     case "external":
-      return `- external: ${link(item.url)}${item.note === undefined ? "" : `${SEP}${item.note}`}`;
+      return `- external: ${link(item.url)}${item.note === undefined ? "" : `${SEP}${inline(item.note)}`}`;
   }
 }
 
@@ -224,9 +233,18 @@ export function lastOfType(messages: Message[], type: MessageType): Message | un
   return undefined;
 }
 
-/** The ts the "human needed since" slot shows: the latest ASK_HUMAN, else the last message. */
+/** The message that put the run into BLOCKED: the latest ASK_HUMAN, or a later human BLOCKED (`diarchy stop`). */
+export function blockTrigger(messages: Message[]): Message | undefined {
+  const ask = lastOfType(messages, "ASK_HUMAN");
+  const stop = [...messages].reverse().find((message) => message.type === "BLOCKED" && message.from === "human");
+  if (ask === undefined) return stop;
+  if (stop === undefined) return ask;
+  return stop.ts > ask.ts ? stop : ask;
+}
+
+/** The ts the "human needed since" slot shows: the block trigger's, else the last message's. */
 export function humanNeededSince(messages: Message[]): string | undefined {
-  return (lastOfType(messages, "ASK_HUMAN") ?? messages[messages.length - 1])?.ts;
+  return (blockTrigger(messages) ?? messages[messages.length - 1])?.ts;
 }
 
 export function humanSlot(state: GoalState | null, messages: Message[]): string {

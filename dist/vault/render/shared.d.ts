@@ -18,11 +18,13 @@ export declare function utcDate(ts: string): string;
 export declare function hostTimeZone(): string;
 /** `(12:30 local)`, or `(23:30 local, 2026-10-24)` when the local date differs from the UTC date. */
 export declare function localHint(ts: string, localTz: string | undefined): string;
-/** Backslash-prefix any line that would start a block construct. */
+/** Backslash-prefix any line that would start a block construct or pass for a message header. */
 export declare function escapeBlockStarts(text: string): string;
-/** Claim inside single `*`: emphasis delimiters are escaped. */
+/** Text placed on one line (a list item, the fields line, a span): each run of line breaks becomes one space. */
+export declare function inline(text: string): string;
+/** Claim inside single `*`: one line, emphasis delimiters escaped. */
 export declare function italic(text: string): string;
-/** Code span; a string holding a backtick is wrapped in double backticks with inner spaces. */
+/** One-line code span; a string holding a backtick is wrapped in double backticks with inner spaces. */
 export declare function code(text: string): string;
 /** Table cell: pipes escaped, newlines collapsed to one space. */
 export declare function cell(text: string): string;
@@ -49,7 +51,9 @@ export declare function byId(messages: Message[]): Map<string, Message>;
 /** Messages in `(ts, seq)` order; ids sort the same way because ts is strictly increasing. */
 export declare function sortMessages(messages: Message[]): Message[];
 export declare function lastOfType(messages: Message[], type: MessageType): Message | undefined;
-/** The ts the "human needed since" slot shows: the latest ASK_HUMAN, else the last message. */
+/** The message that put the run into BLOCKED: the latest ASK_HUMAN, or a later human BLOCKED (`diarchy stop`). */
+export declare function blockTrigger(messages: Message[]): Message | undefined;
+/** The ts the "human needed since" slot shows: the block trigger's, else the last message's. */
 export declare function humanNeededSince(messages: Message[]): string | undefined;
 export declare function humanSlot(state: GoalState | null, messages: Message[]): string;
 /** The challengers, comma-separated (one in a two-agent run). */

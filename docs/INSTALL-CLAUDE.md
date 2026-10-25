@@ -8,7 +8,8 @@ brief, a PreToolUse hook that denies a shell call to the human's `diarchy reply`
 and `diarchy stop`, and a Stop hook that keeps the turn open while you owe the
 other PM a reply.
 
-Requirements: Node 20 or later on `PATH`, Claude Code 2.1.275 or later.
+Requirements: Node 20 or later on `PATH`, Claude Code 2.1.275 or later (2.1.292 or
+later for the one-line shell install in Path B).
 
 ## Path A: from inside Claude Code
 
@@ -26,9 +27,17 @@ so the plugin id is `diarchy@diarchy`.
 claude plugin install diarchy --marketplace f6h4h9j85c-lgtm/diarchy
 ```
 
-This adds the marketplace if it is not configured yet, then installs at user
-scope. Add `--scope project` to record the install in the project's
-`.claude/settings.json` so teammates get it too.
+This needs Claude Code 2.1.292 or later. It adds the marketplace if it is not
+configured yet, then installs at user scope. Add `--scope project` to record the
+install in the project's `.claude/settings.json` so teammates get it too.
+
+On 2.1.275 to 2.1.291, `--marketplace` is an unknown option; add the
+marketplace first, then install by plugin id:
+
+```
+claude plugin marketplace add f6h4h9j85c-lgtm/diarchy
+claude plugin install diarchy@diarchy
+```
 
 ## Local checkout (development)
 

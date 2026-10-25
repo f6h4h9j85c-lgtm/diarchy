@@ -7,8 +7,8 @@ goal through the `diarchy` MCP server. In this file you are the `codex` PM.
 
 1. Call the `diarchy` MCP tool `read`. It returns the active goal, phase, your role (lead or
    challenger), the message types you may post, budgets, and your unread messages.
-2. Load the skill `diarchy-pm` (`.agents/skills/diarchy-pm/SKILL.md`) and follow it. It is the
-   operating doctrine; this file does not repeat it.
+2. Load the skill `diarchy-pm` (type `$diarchy-pm` or pick it from `/skills`; the plugin
+   installs it) and follow it. It is the operating doctrine; this file does not repeat it.
 3. If the human states a new goal, load `diarchy-kickoff`. If an ASSIGN with `kind: review`
    arrives, load `diarchy-review`.
 

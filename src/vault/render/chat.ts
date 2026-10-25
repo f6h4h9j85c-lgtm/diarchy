@@ -13,6 +13,7 @@ import {
   evidenceBullet,
   hms,
   humanSlot,
+  inline,
   italic,
   link,
   localHint,
@@ -97,7 +98,7 @@ function strip(messages: Message[], state: GoalState | null, kickoff: Kickoff, o
 
 /** Claim, else the first body line, cut at 80 characters on whitespace. */
 function summary(message: Message): string {
-  const text = (message.claim ?? message.body.trim().split("\n")[0] ?? "").trim();
+  const text = inline(message.claim ?? message.body.trim().split("\n")[0] ?? "").trim();
   if (text.length <= SUMMARY_MAX) return text;
   const cut = text.lastIndexOf(" ", SUMMARY_MAX);
   return `${(cut > 0 ? text.slice(0, cut) : text.slice(0, SUMMARY_MAX)).trimEnd()}…`;
@@ -120,11 +121,11 @@ function block(message: Message, ctx: Context): string {
   if (evidence.length > 0) parts.push(evidence.map((item) => evidenceBullet(item, ctx.byId)).join("\n"));
   const tasks = message.type === "DECIDE" && message.decision_id === "plan" ? (message.tasks ?? []) : [];
   if (tasks.length > 0) {
-    parts.push(["Tasks:", ...tasks.map((task, index) => `- T${index + 1}: ${task}`)].join("\n"));
+    parts.push(["Tasks:", ...tasks.map((task, index) => `- T${index + 1}: ${inline(task)}`)].join("\n"));
   }
   const added = message.type === "DECIDE" && message.decision_id === "plan" ? (message.ac_add ?? []) : [];
   if (added.length > 0) {
-    const lines = added.map((criterion, index) => `- AC${ctx.acCount + index + 1}: ${criterion}`);
+    const lines = added.map((criterion, index) => `- AC${ctx.acCount + index + 1}: ${inline(criterion)}`);
     parts.push(["Acceptance criteria added:", ...lines].join("\n"));
   }
   return parts.join("\n\n");
@@ -183,9 +184,9 @@ function assignFields(message: Message, ctx: Context): string[] {
   } else {
     const task = message.task ?? ctx.newTaskIds.get(message.id) ?? "";
     segments.push(`implement ${task} on ${code(message.branch ?? "")}`);
-    if (message.new_task !== undefined) segments.push(`new task: ${message.new_task}`);
+    if (message.new_task !== undefined) segments.push(`new task: ${inline(message.new_task)}`);
   }
-  if (message.reason !== undefined) segments.push(`reason: ${message.reason}`);
+  if (message.reason !== undefined) segments.push(`reason: ${inline(message.reason)}`);
   return segments;
 }
 

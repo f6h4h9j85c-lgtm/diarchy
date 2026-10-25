@@ -1,0 +1,28 @@
+description: "SCHEMA: the lead's DECIDE carries budgets, which only the human may set."
+state:
+  base: plan-proposed
+message:
+  protocol_version: 1
+  id: 20261025T140730Z-0002-claude-DECIDE
+  goal: 20261025-rate-limit
+  from: claude
+  to: all
+  type: DECIDE
+  re:
+    - AC1
+    - AC2
+    - AC3
+  decision_id: plan
+  claim: Use the Redis-backed token bucket.
+  basis: authority
+  budgets:
+    messages_total: 200
+  tasks:
+    - Token-bucket middleware in src/middleware/rateLimit.ts
+  phase: PLAN
+  ts: 2026-10-25T14:07:30Z
+  body: No test can run before the middleware exists.
+expect:
+  ok: false
+  rule: SCHEMA
+  message: 'Field "budgets": human only. Fix it per PROTOCOL.md section 3 and post again.'

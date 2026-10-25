@@ -1020,6 +1020,35 @@ describe("deadlock question callout variants", () => {
     expect(ruling.phase).toBe("EXECUTE");
     expect(h.human.state()).toMatchObject({ decisions: { plan: { status: "superseded", superseded_by: ruling.decision_id } }, tasks: { T1: { task: "Middleware" } } });
   });
+
+  it("a plan DECIDE with ac_add appends the criterion to goal.md and lists it under the DECIDE in chat.md", async () => {
+    const h = harness();
+    ok(await h.human.kickoff({ goal: "Rate limit the API.", acceptance_criteria: ["Over-limit requests get 429."], lead: "claude", slug: "rl" }));
+    h.clock.advance(60_000);
+    ok(await h.claude.post({ type: "PROPOSE", to: "all", re: ["AC1"], decision_id: "plan", claim: "One task does it.", body: "A single middleware task." }));
+    h.clock.advance(60_000);
+    ok(
+      await h.claude.post({
+        type: "DECIDE",
+        to: "all",
+        re: ["AC1"],
+        decision_id: "plan",
+        basis: "authority",
+        claim: "One task does it.",
+        tasks: ["Middleware"],
+        ac_add: ["Every 429 carries Retry-After.", "The limit is configurable."],
+        body: "Nothing to test before the work exists.",
+      }),
+    );
+    expect(h.file("goal.md", RL_GOAL)).toContain(
+      "| AC1 | Over-limit requests get 429. | open |\n| AC2 | Every 429 carries Retry-After. | open |\n| AC3 | The limit is configurable. | open |\n",
+    );
+    expect(h.file("chat.md", RL_GOAL)).toContain(
+      "*One task does it.*\n\nNothing to test before the work exists.\n\nTasks:\n- T1: Middleware\n\nAcceptance criteria added:\n- AC2: Every 429 carries Retry-After.\n- AC3: The limit is configurable.\n",
+    );
+    h.clock.advance(60_000);
+    ok(await h.codex.post({ type: "STATUS", to: "all", re: ["AC3"], evidence: [{ kind: "commit", sha: "abcdef1" }], body: "Config read from RATE_LIMIT_PER_MIN." }));
+  });
 });
 
 // ---------------------------------------------------------------------------

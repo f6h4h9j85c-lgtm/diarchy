@@ -1,0 +1,22 @@
+description: "SCHEMA: a commit evidence sha of 7 characters that are not all hex (PROTOCOL.md 3.1: 7 to 40 hex)."
+state:
+  base: execute-assigned
+message:
+  protocol_version: 1
+  id: 20261025T151200Z-0003-codex-STATUS
+  goal: 20261025-rate-limit
+  from: codex
+  to: all
+  type: STATUS
+  re:
+    - AC1
+  evidence:
+    - kind: commit
+      sha: 9f3c2ag
+  phase: EXECUTE
+  ts: 2026-10-25T15:12:00Z
+  body: Middleware scaffold pushed.
+expect:
+  ok: false
+  rule: SCHEMA
+  message: 'Field "evidence.0.sha": 7 to 40 hex. Fix it per PROTOCOL.md section 3 and post again.'

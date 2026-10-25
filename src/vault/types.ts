@@ -1,5 +1,6 @@
 /** Public types of the vault store (docs/PROTOCOL.md sections 2 and 10). */
 import type {
+  AcState,
   AgentId,
   BudgetLimits,
   BudgetUsed,
@@ -80,6 +81,10 @@ export type KickoffResult = KickoffOk | Rejection;
 
 export interface ReadResult {
   goal: string;
+  /** The KICKOFF body: what the goal is, so a PM can plan without opening the vault. */
+  goal_text: string;
+  /** Every acceptance criterion in order (kickoff ACs, then plan `ac_add`) with its text and current status. */
+  acs: Record<string, AcState>;
   phase: Phase;
   role: Role;
   allowed_types: MessageType[];
@@ -98,6 +103,8 @@ export interface WaitProgress {
 export interface WaitOptions {
   timeoutMs?: number;
   onProgress?: (progress: WaitProgress) => void;
+  /** Aborting it ends the wait with `{ timeout: true }` without moving the inbox cursor: nobody is left to read the result. */
+  signal?: AbortSignal;
 }
 
 export type WaitResult = ReadResult | { timeout: true };

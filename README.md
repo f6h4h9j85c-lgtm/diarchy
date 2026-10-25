@@ -2,7 +2,7 @@
 
 diarchy installs into Claude Code and OpenAI Codex CLI and runs each as a product-manager agent on one goal. The two PMs are peers from different vendors: one leads, the other challenges, and each delegates to its own subagents in private. They talk only through a chat in an Obsidian vault, and every message passes through an MCP server that enforces the protocol in code, so the exchange cannot drift into acknowledgements, repetition, or open-ended debate. The human reads three rendered files and is called in only for a true deadlock, a missing credential, or a spent budget. Every PR is reviewed by the other model before it merges.
 
-Status: pre-alpha, v0.1.0. Requires Node 20 or later.
+Status: pre-alpha, v0.1.0. Requires Node 20.3 or later.
 
 ## How a run works
 
@@ -79,19 +79,20 @@ startup_timeout_sec = 20
 tool_timeout_sec = 1800
 ```
 
-Skills load from `.agents/skills/`. Trust the project (start `codex` in it once and accept the prompt, or add `[projects."/abs/path/to/project"]` with `trust_level = "trusted"`) so `.codex/hooks.json` and `.codex/agents/*.toml` run, and copy `templates/AGENTS.md` to the project root. Verify: `/mcp` lists `diarchy`, and the `read` tool answers `NO_GOAL`. Details: `docs/INSTALL-CODEX.md`.
+Skills load from `.agents/skills/`. Trust the project (start `codex` in it once and accept the prompt, or add `[projects."/abs/path/to/project"]` with `trust_level = "trusted"`) so the subagents in `.codex/agents/` load, then run `/hooks` and approve the plugin's three diarchy hooks (`hooks/codex-hooks.json`): Codex records trust per hook hash, so approve them again after a diarchy update changes them. Headless `codex exec` skips untrusted hooks silently; the launcher passes `--dangerously-bypass-hook-trust` by default. The launcher keeps the Codex sandbox on, so the Codex PM cannot commit, push, or open a PR; `diarchy init --codex-full-access` lifts the sandbox and gives it your full OS permissions. `diarchy init` copies the subagents and `templates/AGENTS.md` into the project; commit both before `diarchy start`. Verify: `/mcp` lists `diarchy`, `/hooks` shows all three hooks trusted, and the `read` tool answers `NO_GOAL`. Details: `docs/INSTALL-CODEX.md`.
 
 ## Quickstart
 
 ```
 npm install -g github:f6h4h9j85c-lgtm/diarchy
 diarchy init
+git add AGENTS.md .codex && git commit -m "Add the diarchy Codex files"
 diarchy start "Add per-API-key rate limiting to the public API." \
   --ac "Requests over the per-key limit get HTTP 429 with a Retry-After header." \
   --ac "The limit is configurable through RATE_LIMIT_PER_MIN with a documented default."
 ```
 
-`init` writes `diarchy.config.json`, creates the vault at `<project> brain/diarchy`, and adds `.diarchy/` to `.gitignore`. `start` creates `goals/<YYYYMMDD>-<slug>/` in the vault: `kickoff.md`, `goal.md`, `chat.md`, `decisions.md`, `budget.json`, and `chat/` with one file per message. Follow `chat.md` in Obsidian or `diarchy watch` in a terminal. `diarchy status` shows phase, roles, budget, open assignments, and the exact `diarchy reply` command when you are needed. `diarchy stop` posts a human BLOCKED message and ends the run. `--driver fake` runs the protocol with scripted PMs and no model calls.
+`init` writes `diarchy.config.json`, creates the vault at `<project> brain/diarchy`, adds `.diarchy/` to `.gitignore`, and copies `AGENTS.md` and the Codex subagents (`.codex/agents/`) into the project; commit them, since the PMs work in worktrees cut from HEAD. `start` creates `goals/<YYYYMMDD>-<slug>/` in the vault: `kickoff.md`, `goal.md`, `chat.md`, `decisions.md`, `budget.json`, and `chat/` with one file per message. Follow `chat.md` in Obsidian or `diarchy watch` in a terminal. `diarchy status` shows phase, roles, budget, open assignments, and the exact `diarchy reply` command when you are needed. `diarchy stop` posts a human BLOCKED message and ends the run. `--driver fake` runs the protocol with scripted PMs and no model calls.
 
 Dev mode: open `claude` and `codex` interactively in the same project and state the goal once to either. The `diarchy-kickoff` skill kicks off, that CLI becomes lead, and the other joins when it calls `read`. See `docs/QUICKSTART.md`.
 
@@ -99,20 +100,21 @@ Dev mode: open `claude` and `codex` interactively in the same project and state 
 
 ```
 .claude-plugin/  Claude Code plugin and marketplace manifests
+.codex-plugin/   Codex plugin manifest (points at .agents/skills, mcp.json, and hooks/codex-hooks.json)
 .agents/         Codex marketplace manifest and skill copies
-.codex/          Codex hooks.json and subagent .toml files
+.codex/          Codex subagent .toml files (diarchy init copies them into a project)
 agents/          Claude Code subagents
 bin/             diarchy.js, the CLI entry (imports dist/)
 dist/            compiled src/, committed so a plugin install runs without a build
 docs/            PROTOCOL, ANTI-SLOP, RENDERING, ARCHITECTURE, INSTALL-*, samples/
-hooks/           hooks.json and the three hook scripts
+hooks/           hooks.json (Claude Code), codex-hooks.json (Codex), the three hook scripts
 scripts/         sync-skills.mjs
 skills/          diarchy-pm, diarchy-kickoff, diarchy-review
 src/protocol/    pure engine: schema, rules, state, transitions
 src/vault/       store: files, lock, cursors, renderers
 src/mcp/         the MCP server, one process per agent
 src/cli/         launcher, human commands, hook helpers
-templates/       AGENTS.md for Codex projects
+templates/       AGENTS.md for Codex projects (diarchy init copies it)
 test/            vitest suites and fixtures
 ```
 

@@ -15,6 +15,8 @@ Checks run in this order; the first failure is returned.
 | store (needs goal state) | SINGLE_KICKOFF, TOTAL_BUDGET, WALL_CLOCK, PHASE_GATE, ROLE_GATE, PLAN_BUDGET, TALK_WORK_RATIO, CITE_AC, NEW_EVIDENCE, ONE_CHALLENGE, TWO_ROUNDS, DECISION_IMMUTABLE, NO_SELF_REVIEW, BUSY_REVIEWING, DONE_PRECONDITION |
 | store trigger (not a rejection) | DEADLOCK |
 
+The MCP server also answers `{ ok: false, rule, message }` with three codes that are not protocol rules: NO_GOAL (nothing kicked off yet), WRONG_TOOL (`post` used for a type that has its own tool), and INTERNAL (an unexpected exception). PROTOCOL.md section 10 lists their messages.
+
 ## Rules
 
 Placeholders in braces are filled by the store at rejection time.
@@ -22,7 +24,7 @@ Placeholders in braces are filled by the store at rejection time.
 | Rule ID | Rule | Enforcement | Error message | Fixture |
 |---|---|---|---|---|
 | TYPED_ONLY | `type` is one of KICKOFF, PROPOSE, CHALLENGE, DECIDE, ASSIGN, STATUS, DONE, BLOCKED, ASK_HUMAN. | validator | Unknown type "{type}". Use one of KICKOFF, PROPOSE, CHALLENGE, DECIDE, ASSIGN, STATUS, DONE, BLOCKED, ASK_HUMAN. | `slop/typed_only-unknown.yaml` |
-| SCHEMA | Frontmatter parses; `protocol_version` is 1; every field required for the type (PROTOCOL.md section 3) is present with the right shape and enum value; `to` is an agent id, `all`, or `human`; `reply_to` exists; ASSIGN has exactly one of `task`/`new_task`. | validator (shape); store (`reply_to` existence) | Field "{field}": {problem}. Fix it per PROTOCOL.md section 3 and post again. | `slop/schema-missing-basis.yaml`, `slop/schema-reply-to-missing.yaml` |
+| SCHEMA | Frontmatter parses; `protocol_version` is 1; every field required for the type (PROTOCOL.md section 3) is present with the right shape and enum value; `to` is an agent id, `all`, or `human`; `reply_to` exists; ASSIGN has exactly one of `task`/`new_task`. | validator (shape); store (`reply_to` existence) | Field "{field}": {problem}. Fix it per PROTOCOL.md section 3 and post again. | `slop/schema-missing-basis.yaml`, `slop/schema-reply-to-missing.yaml`, `slop/schema-multiline-task.yaml`, `slop/schema-branch-escape.yaml` |
 | CITE_AC | `re` is non-empty and every id exists in goal.md. | store | Set `re` to acceptance criteria that exist in goal.md ({known}). Unknown: {unknown}. | `slop/cite_ac-missing-re.yaml`, `slop/cite_ac-unknown-id.yaml` |
 | ONE_CLAIM | PROPOSE, CHALLENGE, DECIDE carry exactly one `claim`: 1 to 40 whitespace-split words, last character `.` `!` or `?`, no other `.` `!` `?` followed by whitespace. | validator | Put exactly one falsifiable sentence in `claim` (40 words max, one terminal punctuation mark). Move everything else to the body. | `slop/one_claim-41-words.yaml`, `slop/one_claim-two-sentences.yaml` |
 | WORD_CAP | Body has at most 120 whitespace-split tokens; the kickoff goal text has the same cap. | validator | Body is {n} words; cut to 120 or fewer. Put detail in a file and cite it as `file` evidence. | `slop/word_cap-121-words.yaml` |

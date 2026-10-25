@@ -3,9 +3,14 @@
  *
  * Real driver: `claude -p --permission-mode acceptEdits --permission-prompts none
  * --allowedTools <diarchy MCP tools and git, npm, node, gh> "<prompt>"` and
- * `codex exec --sandbox workspace-write "<prompt>"` (command and base flags
- * from diarchy.config.json `agents.<id>`), cwd the agent's worktree, env
+ * `codex exec --sandbox workspace-write --dangerously-bypass-hook-trust "<prompt>"`
+ * (command and base flags from diarchy.config.json `agents.<id>`; the codex
+ * flag runs the diarchy hooks, which a headless run cannot trust in /hooks),
+ * cwd the agent's worktree, env
  * DIARCHY_AGENT and DIARCHY_PROJECT so the MCP server and hooks find the vault.
+ * Under that sandbox the Codex PM cannot commit, push, or open a PR, so
+ * `diarchy start` prints `sandboxNotice`; `diarchy init --codex-full-access`
+ * swaps the sandbox flags for `--dangerously-bypass-approvals-and-sandbox`.
  *
  * Session resume is best effort and keyed by goal in `.diarchy/sessions/<agent>.json`:
  * - claude: the launcher mints a UUID and passes `--session-id <uuid>` on the
@@ -28,6 +33,7 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node
 import { createRequire } from "node:module";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { runsInWorkspaceWrite } from "./launcher-config.js";
 export function sessionPath(projectDir, agent) {
     return join(projectDir, ".diarchy", "sessions", `${agent}.json`);
 }
@@ -89,6 +95,17 @@ export function flavorOf(command) {
     if (name.startsWith("codex"))
         return "codex";
     return "generic";
+}
+/**
+ * The line `diarchy start` prints for a Codex PM launched under
+ * `--sandbox workspace-write`, else null: that sandbox keeps the worktree's
+ * gitdir read-only and the network off, and `codex exec` never escalates.
+ */
+export function sandboxNotice(agent, launch) {
+    if (flavorOf(launch.command) !== "codex" || !runsInWorkspaceWrite(launch.args))
+        return null;
+    return (`note: ${agent} runs in the Codex workspace-write sandbox, so it can edit and test in its worktree but cannot commit, push, or open a PR; ` +
+        "the other PM or you must commit its work (full access: diarchy init --codex-full-access, docs/INSTALL-CODEX.md 5)");
 }
 function baseEnv(input) {
     const env = {

@@ -17,5 +17,15 @@ export interface WorktreeResult {
 }
 export declare function worktreePath(projectDir: string, config: DiarchyConfig, agent: string): string;
 export declare function branchName(config: DiarchyConfig, goalId: string, agent: string): string;
+/**
+ * Project files Codex reads from its git root, which for a PM in a linked
+ * worktree is the worktree itself, never the main checkout.
+ */
+export declare const CODEX_PROJECT_FILES: string[];
+/**
+ * The Codex project files present in the project but missing from at least
+ * one worktree: uncommitted, so a worktree cut from HEAD does not have them.
+ */
+export declare function missingFromWorktrees(projectDir: string, worktrees: string[]): string[];
 /** One worktree per agent; prunes stale registrations first. Throws when git itself fails. */
 export declare function ensureWorktrees(projectDir: string, config: DiarchyConfig, goalId: string, agents: string[]): WorktreeResult[];

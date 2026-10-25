@@ -1,0 +1,38 @@
+description: "A pass item sets every AC in re even beside request_changes (PROTOCOL.md 2.3 has no verdict exception), so a reviewer citing an unmet AC with a green suite marks it passing; diarchy-review step 5 forbids pass items on request_changes for this reason."
+state:
+  base: execute-review-assigned
+message:
+  protocol_version: 1
+  id: 20261025T152000Z-0005-claude-STATUS
+  goal: 20261025-rate-limit
+  from: claude
+  to: all
+  type: STATUS
+  re:
+    - AC1
+    - AC2
+  task: T4
+  task_status: done
+  evidence:
+    - kind: review
+      url: https://github.com/acme/api/pull/412
+      verdict: request_changes
+    - kind: test
+      test: npm test
+      result: pass
+  phase: EXECUTE
+  ts: 2026-10-25T15:20:00Z
+  body: src/middleware/rateLimit.ts hardcodes 100, so AC2 fails.
+expect:
+  ok: true
+  phase_after: EXECUTE
+  effects:
+    - kind: ac_status
+      ac: AC2
+      status: passing
+  state:
+    acs:
+      AC1:
+        status: passing
+      AC2:
+        status: passing

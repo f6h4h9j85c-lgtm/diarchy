@@ -1,4 +1,6 @@
-import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 
 import { describe, expect, it } from "vitest";
@@ -158,6 +160,8 @@ function walk(dir: string, base = dir): string[] {
 
 const AGENT_NAMES = ["planner", "designer", "implementer", "reviewer", "security"];
 const pkg = readJson(at("package.json")) as { version: string };
+/** The manifest Codex reads: `.codex-plugin/plugin.json` takes precedence over a root `plugin.json`. */
+const codexManifest = existsSync(at(".codex-plugin", "plugin.json")) ? at(".codex-plugin", "plugin.json") : at("plugin.json");
 
 describe("codex-config: TOML parser", () => {
   it("parses the subset used by the agent files", () => {
@@ -239,15 +243,27 @@ describe("codex-config: JSON manifests", () => {
     expect(typeof (m.author as { name?: string }).name).toBe("string");
   });
 
-  it("root plugin.json (Codex) has name, version, description, skills, mcp", () => {
-    const m = readJson(at("plugin.json"));
+  it(".codex-plugin/plugin.json (Codex) has name, version, description, skills, mcpServers", () => {
+    const m = readJson(at(".codex-plugin", "plugin.json"));
     expect(m.name).toBe("diarchy");
     expect(m.version).toBe(pkg.version);
     expect(typeof m.description).toBe("string");
+    // Codex's manifest key is mcpServers (not mcp), and every path must start with ./
     expect(m.skills).toBe("./.agents/skills");
-    expect(m.mcp).toBe("./mcp.json");
+    expect(m.mcpServers).toBe("./mcp.json");
     expect(existsSync(at(m.skills as string))).toBe(true);
-    expect(existsSync(at(m.mcp as string))).toBe(true);
+    expect(existsSync(at(m.mcpServers as string))).toBe(true);
+  });
+
+  it("ships no root plugin.json: Codex ignores one without the agent-plugins $schema and Claude never reads it", () => {
+    expect(existsSync(at("plugin.json"))).toBe(false);
+  });
+
+  it("package.json files ships both plugin manifests, both MCP files, the hooks and the Codex copies", () => {
+    const files = (readJson(at("package.json")) as { files: string[] }).files;
+    for (const entry of [".claude-plugin", ".codex-plugin", ".mcp.json", "mcp.json", ".agents", ".codex", "hooks", "bin"]) {
+      expect(files, entry).toContain(entry);
+    }
   });
 
   for (const path of [".claude-plugin/marketplace.json", ".agents/plugins/marketplace.json"]) {
@@ -270,14 +286,23 @@ describe("codex-config: JSON manifests", () => {
     expect(s.args.slice(1)).toEqual(["mcp", "--agent", "claude"]);
   });
 
-  it("mcp.json (Codex) starts the stdio server as agent codex with tool_timeout_sec >= 600", () => {
+  it("mcp.json (Codex) starts the stdio server as agent codex from the plugin root with tool_timeout_sec >= 600", () => {
     const m = readJson(at("mcp.json")) as {
-      mcpServers: Record<string, { command: string; args: string[]; tool_timeout_sec: number; startup_timeout_sec: number }>;
+      mcpServers: Record<
+        string,
+        { command: string; args: string[]; cwd: string; env_vars: string[]; tool_timeout_sec: number; startup_timeout_sec: number }
+      >;
     };
     const s = m.mcpServers.diarchy;
     expect(s.command).toBe("node");
-    expect(s.args[0]).toMatch(/bin\/diarchy\.js$/);
+    // Codex rewrites a relative cwd to the plugin root but never rewrites args,
+    // so the script path stays relative and resolves through cwd.
+    expect(s.cwd).toBe(".");
+    expect(s.args[0]).toBe("bin/diarchy.js");
+    expect(existsSync(at(s.args[0]))).toBe(true);
     expect(s.args.slice(1)).toEqual(["mcp", "--agent", "codex"]);
+    // With cwd at the plugin root the server finds the project only through DIARCHY_PROJECT.
+    expect(s.env_vars).toContain("DIARCHY_PROJECT");
     expect(s.tool_timeout_sec).toBeGreaterThanOrEqual(600);
     expect(s.startup_timeout_sec).toBeGreaterThan(0);
   });
@@ -287,11 +312,22 @@ describe("codex-config: hooks", () => {
   type HookEntry = { matcher?: string; hooks: { type: string; command: string; timeout?: number }[] };
   type HooksFile = { hooks: Record<string, HookEntry[]> };
 
-  for (const [path, agent] of [
-    ["hooks/hooks.json", "claude"],
-    [".codex/hooks.json", "codex"],
-  ] as const) {
-    it(`${path} wires SessionStart, PreToolUse, and Stop to the shared wrappers as ${agent}`, () => {
+  /** Every hook command in a hooks file, in file order. */
+  const commandsOf = (path: string): string[] =>
+    Object.values((readJson(at(path)) as unknown as HooksFile).hooks).flatMap((entries) =>
+      entries.flatMap((entry) => entry.hooks.map((hook) => hook.command)),
+    );
+
+  // Each CLI loads its own file through its own plugin manifest and sets the
+  // plugin root in the environment of plugin hooks: CLAUDE_PLUGIN_ROOT for
+  // Claude Code, PLUGIN_ROOT for Codex (which also sets CLAUDE_PLUGIN_ROOT).
+  const HOOK_FILES = [
+    ["hooks/hooks.json", "claude", "CLAUDE_PLUGIN_ROOT"],
+    ["hooks/codex-hooks.json", "codex", "PLUGIN_ROOT"],
+  ] as const;
+
+  for (const [path, agent, rootVar] of HOOK_FILES) {
+    it(`${path} wires SessionStart, PreToolUse, and Stop to the shared wrappers as ${agent}, resolved from \${${rootVar}}`, () => {
       const h = readJson(at(path)) as unknown as HooksFile;
       expect(Object.keys(h.hooks).sort()).toEqual(["PreToolUse", "SessionStart", "Stop"]);
       const commands: Record<string, string> = {};
@@ -307,13 +343,61 @@ describe("codex-config: hooks", () => {
           }
         }
       }
+      for (const command of commandsOf(path)) {
+        // Never a cwd-relative script: hooks run in the session directory, not the plugin.
+        expect(command, command).toMatch(new RegExp(`^bash "\\$\\{${rootVar}\\}/hooks/[a-z-]+\\.sh" ${agent}$`));
+        expect(command, command).not.toContain("DIARCHY_ROOT");
+      }
       expect(h.hooks.SessionStart[0].matcher).toBe("startup|resume|clear|compact");
       expect(h.hooks.PreToolUse[0].matcher).toBe("Bash");
       expect(commands.SessionStart).toContain("/hooks/session-start.sh");
       expect(commands.PreToolUse).toContain("/hooks/pre-tool-guard.sh");
       expect(commands.Stop).toContain("/hooks/stop-gate.sh");
     });
+
+    it(`${path} runs the plugin's wrappers as ${agent} from any cwd, never a project-supplied hooks/ script`, () => {
+      const tmp = mkdtempSync(join(tmpdir(), "diarchy-hooks-"));
+      try {
+        // A project directory that ships its own hooks/*.sh: a cwd-relative command would run these.
+        const project = join(tmp, "project");
+        const marker = join(tmp, "project-script-ran");
+        mkdirSync(join(project, "hooks"), { recursive: true });
+        for (const script of ["session-start.sh", "pre-tool-guard.sh", "stop-gate.sh"]) {
+          writeFileSync(join(project, "hooks", script), `#!/usr/bin/env bash\ntouch "${marker}"\n`, { mode: 0o755 });
+        }
+        // Stand-in for bin/diarchy.js: prints its arguments as one JSON object.
+        const fakeBin = join(tmp, "diarchy.js");
+        writeFileSync(fakeBin, "console.log(JSON.stringify({ argv: process.argv.slice(2) }));\n");
+        const env: NodeJS.ProcessEnv = { ...process.env, [rootVar]: root.replace(/\/$/, ""), DIARCHY_BIN: fakeBin };
+        delete env.DIARCHY_ROOT;
+        // pre-tool-guard.sh skips node unless the event mentions diarchy; the other two ignore stdin.
+        const input = JSON.stringify({ tool_name: "Bash", tool_input: { command: "diarchy reply ok" } });
+        for (const command of commandsOf(path)) {
+          const run = spawnSync("sh", ["-c", command], { cwd: project, env, input, encoding: "utf8" });
+          expect(run.status, `${command}: ${run.stderr}`).toBe(0);
+          const out = JSON.parse(run.stdout) as { argv: string[] };
+          expect(out.argv.slice(-2)).toEqual(["--agent", agent]);
+        }
+        expect(existsSync(marker)).toBe(false);
+      } finally {
+        rmSync(tmp, { recursive: true, force: true });
+      }
+    });
   }
+
+  it("the Codex manifest declares hooks/codex-hooks.json, so Codex never falls back to the Claude hooks/hooks.json", () => {
+    // Without a hooks entry Codex loads the plugin's hooks/hooks.json, which runs the gate as claude.
+    const m = readJson(codexManifest);
+    expect(m.hooks).toBe("./hooks/codex-hooks.json");
+    expect(existsSync(at(m.hooks as string))).toBe(true);
+    // Claude Code reads .claude-plugin/plugin.json and loads hooks/hooks.json by default; no override there.
+    expect(readJson(at(".claude-plugin", "plugin.json")).hooks).toBeUndefined();
+  });
+
+  it("ships no project-layer .codex/hooks.json beside the plugin hooks", () => {
+    // In a trusted diarchy checkout Codex would run it as well as the plugin hooks, without PLUGIN_ROOT.
+    expect(existsSync(at(".codex", "hooks.json"))).toBe(false);
+  });
 
   for (const script of ["session-start.sh", "pre-tool-guard.sh", "stop-gate.sh"]) {
     it(`hooks/${script} is executable and uses strict mode`, () => {
@@ -354,14 +438,49 @@ describe("codex-config: skills", () => {
     const words = readFileSync(at("skills", "diarchy-pm", "SKILL.md"), "utf8").split(/\s+/).filter(Boolean).length;
     expect(words).toBeLessThan(900);
   });
+
+  it("diarchy-pm bounds the lead's wait on a silent challenger and names the basis to DECIDE on", () => {
+    const text = readFileSync(at("skills", "diarchy-pm", "SKILL.md"), "utf8");
+    const plan = text.slice(text.indexOf("## PLAN phase"), text.indexOf("## EXECUTE phase"));
+    expect(plan).toContain("After two `{ timeout: true }` with none, or once the challenger posts something else, DECIDE.");
+    expect(plan).toContain("`authority` when no CHALLENGE came");
+    expect(plan).toContain("the lead decides after two of its `wait_for_reply` timeouts");
+  });
+
+  it("diarchy-review checks out the PR detached and keeps a request_changes STATUS from marking ACs passing", () => {
+    const text = readFileSync(at("skills", "diarchy-review", "SKILL.md"), "utf8");
+    expect(text).toContain("git checkout --detach FETCH_HEAD");
+    expect(text).toContain("git checkout --detach <branch>");
+    expect(text).not.toMatch(/&& git checkout <branch>`/);
+    expect(text).toContain("`request_changes`: `re` = only the unmet ACs, each backed by a `test` item with `result: fail`");
+    expect(text).toContain("no `pass` items");
+  });
 });
 
 describe("codex-config: prose", () => {
+  it("install docs say to commit AGENTS.md and .codex/agents/ before diarchy start", () => {
+    // Each PM runs in a worktree cut from HEAD and Codex reads both only from its own worktree.
+    expect(readFileSync(at("docs", "QUICKSTART.md"), "utf8")).toContain("git add AGENTS.md .codex && git commit");
+    expect(readFileSync(at("README.md"), "utf8")).toContain("git add AGENTS.md .codex && git commit");
+    expect(readFileSync(at("docs", "INSTALL-CODEX.md"), "utf8")).toContain("Commit `AGENTS.md` and `.codex/agents/` before `diarchy start`");
+  });
+
+  it("install docs never send Codex to a project-layer .codex/hooks.json or a DIARCHY_ROOT path", () => {
+    // Codex hooks ride the plugin (hooks/codex-hooks.json, resolved from PLUGIN_ROOT).
+    for (const file of ["README.md", "docs/INSTALL-CODEX.md", "docs/QUICKSTART.md", "docs/ARCHITECTURE.md", "src/cli/init.ts"]) {
+      const text = readFileSync(at(file), "utf8");
+      expect(text.includes(".codex/hooks.json"), file).toBe(false);
+      expect(text.includes("DIARCHY_ROOT"), file).toBe(false);
+    }
+  });
+
   it("plugin prose contains no em-dashes", () => {
     const files = [
       ...walk(at("skills")).map((f) => at("skills", f)),
       ...walk(at("agents")).map((f) => at("agents", f)),
       ...walk(at(".codex")).map((f) => at(".codex", f)),
+      at(".codex-plugin", "plugin.json"),
+      at("mcp.json"),
       at("templates", "AGENTS.md"),
       at("docs", "INSTALL-CLAUDE.md"),
       at("docs", "INSTALL-CODEX.md"),

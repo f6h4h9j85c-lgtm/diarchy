@@ -12,6 +12,8 @@ export declare class VaultStore {
     private readonly sleep;
     private readonly renderOptions;
     private readonly pollIntervalMs;
+    /** Per goal directory: chat/ files the open transaction wrote since its last budget.json commit. */
+    private readonly uncommitted;
     constructor(options: VaultStoreOptions);
     /** Every goal with a budget.json, oldest first. */
     listGoals(): GoalRef[];
@@ -29,7 +31,7 @@ export declare class VaultStore {
     private kickoffProblem;
     /** A PM kicking off leads; the launcher alternates from the previous goal's lead. */
     private defaultLead;
-    /** One transaction (PROTOCOL.md 2.2): lock, tick, evaluate, write, persist, effects, render. */
+    /** One transaction (PROTOCOL.md 2.2): lock, recover, tick, evaluate, write, effects, persist (the commit), render. */
     post(draft: MessageDraft): Promise<PostResult>;
     /** Assign id, evaluate, and on acceptance write the message file. Call under the lock. */
     private accept;
@@ -38,14 +40,21 @@ export declare class VaultStore {
     /** Time-based transitions (DEADLOCK deadline, WALL_CLOCK) land before anything else. Call under the lock. */
     private tickLocked;
     private postOk;
-    /** Messages after this agent's cursor, excluding its own; advances the cursor. */
+    /** Goal text, ACs with status, and messages after this agent's cursor, excluding its own; advances the cursor. */
     read(options?: {
         since?: string;
     }): ReadResult | null;
+    /** `read` without its side effect: what a read would deliver now, and the cursor that delivery commits. */
+    private peek;
+    private commitCursor;
     /**
-     * Resolve as soon as `read()` has something, or `{ timeout: true }`. Polls the
-     * chat directory every `pollIntervalMs` (fs.watch only wakes the poll early),
-     * runs the engine tick on every poll, and reports progress every 15 s.
+     * Resolve as soon as a `read` would deliver something, or `{ timeout: true }`.
+     * Polls the chat directory every `pollIntervalMs` (fs.watch only wakes the
+     * poll early), runs the engine tick on every poll, and reports progress every
+     * 15 s. The inbox cursor moves only when a result is delivered: once
+     * `options.signal` aborts, the wait returns `{ timeout: true }` at the next
+     * wake without touching the cursor, so the reply reaches the caller's next
+     * read or wait instead of being consumed by a call nobody is reading.
      */
     waitForReply(options?: WaitOptions): Promise<WaitResult>;
     /** Apply a due tick under the lock; returns whether the phase moved. */
@@ -62,14 +71,23 @@ export declare class VaultStore {
     /** Leave the goal BLOCKED with a human BLOCKED (external) message saying why. */
     stop(reason: string): Promise<PostResult>;
     private requireHuman;
+    /**
+     * Writing budget.json commits a transaction (PROTOCOL.md 2.2). A throw removes
+     * the chat/ files written since the last commit; a crash's leftovers are moved
+     * aside by the next transaction before it reads anything.
+     */
     private withLock;
+    /** Under the lock: a chat/ file whose id budget.json does not record never committed; move it to chat/.orphans/. */
+    private recoverOrphans;
     private acquireLock;
     /** The store never writes a message whose ts is still in the future. */
     private waitUntil;
     /** chat/ files are writer-owned and immutable: own agent or system only, never overwritten. */
     private writeMessage;
+    /** The committed messages: chat/ files whose id `state` records, in (ts, seq) order. Nothing else is read or rendered. */
     private readMessages;
     private loadState;
+    /** The commit point: every chat/ file written so far is now accepted. */
     private persist;
     private loadKickoff;
     private loadCursor;

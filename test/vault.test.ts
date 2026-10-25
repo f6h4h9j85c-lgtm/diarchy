@@ -550,9 +550,20 @@ describe("store-owned files", () => {
     if (state === null) throw new Error("no goal");
     const next = assignId(state, "claude", "PROPOSE", h.clock.now());
     const path = join(h.goalDir(), "chat", `${next.id}.md`);
-    writeFileSync(path, "planted\n");
+    // Planted while the store sleeps to the next second, after crash recovery has run under the lock.
+    const claude = new VaultStore({
+      projectDir: h.projectDir,
+      config: CONFIG,
+      agent: "claude",
+      now: h.clock.now,
+      sleep: async (ms) => {
+        writeFileSync(path, "planted\n");
+        h.clock.advance(ms);
+      },
+      localTz: TZ,
+    });
     await expect(
-      h.claude.post({ type: "PROPOSE", to: "all", re: ["AC1"], decision_id: "plan", claim: "Collide.", body: "This must not overwrite." }),
+      claude.post({ type: "PROPOSE", to: "all", re: ["AC1"], decision_id: "plan", claim: "Collide.", body: "This must not overwrite." }),
     ).rejects.toThrow(/refusing to overwrite/);
     expect(readFileSync(path, "utf8")).toBe("planted\n");
     expect(existsSync(join(h.goalDir(), ".lock"))).toBe(false);
@@ -594,6 +605,84 @@ describe("lock", () => {
     rmSync(lock, { recursive: true });
     ok(await pending);
     expect(existsSync(lock)).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Crash safety: writing budget.json commits a transaction (PROTOCOL.md 2.2)
+// ---------------------------------------------------------------------------
+
+describe("crash safety", () => {
+  const BLOCKED = RUN[BLOCKED_INDEX - 1];
+  const ASK_HUMAN = RUN[BLOCKED_INDEX];
+
+  it("a post that throws after writing its message file removes it; the retry lands with the same id", async () => {
+    const h = harness();
+    await replay(h, BLOCKED_INDEX - 1);
+    const chat = join(h.goalDir(), "chat");
+    const before = readdirSync(chat);
+    const budget = h.file("budget.json");
+    const dying = new VaultStore({
+      projectDir: h.projectDir,
+      config: CONFIG,
+      agent: "codex",
+      now: h.clock.now,
+      sleep: () => Promise.reject(new Error("interrupted while waiting for the ASK_HUMAN second")),
+      localTz: TZ,
+    });
+    h.clock.set(BLOCKED.ts);
+    await expect(dying.post(toDraft(BLOCKED))).rejects.toThrow(/interrupted/);
+    expect(readdirSync(chat)).toEqual(before);
+    expect(h.file("budget.json")).toBe(budget);
+    expect(existsSync(join(h.goalDir(), ".lock"))).toBe(false);
+    const retry = await h.codex.post(toDraft(BLOCKED));
+    ok(retry);
+    expect(retry).toMatchObject({ id: BLOCKED.id, phase: "BLOCKED" });
+    expect(h.claude.listMessages().slice(-2).map((message) => message.id)).toEqual([BLOCKED.id, ASK_HUMAN.id]);
+  });
+
+  it("a message file a crash left before budget.json is never shown, and the next transaction moves it to chat/.orphans/", async () => {
+    const h = harness();
+    await replay(h, BLOCKED_INDEX - 1);
+    expect(h.claude.read()?.messages.length).toBeGreaterThan(0);
+    const chatMd = h.file("chat.md");
+    const goalMd = h.file("goal.md");
+    // What SIGKILL leaves while the store sleeps for the system ASK_HUMAN second: the file, the old budget.json, a stale lock.
+    const ghost = readFileSync(join(SAMPLE_RUN, `${BLOCKED.id}.md`), "utf8");
+    writeFileSync(join(h.goalDir(), "chat", `${BLOCKED.id}.md`), ghost);
+    const lock = join(h.goalDir(), ".lock");
+    mkdirSync(lock);
+    const old = (Date.now() - 60_000) / 1000;
+    utimesSync(lock, old, old);
+    h.clock.set(BLOCKED.ts);
+
+    expect(h.claude.read()?.messages).toEqual([]);
+    expect(h.claude.listMessages().map((message) => message.id)).not.toContain(BLOCKED.id);
+    h.claude.render();
+    expect(h.file("chat.md")).toBe(chatMd);
+    expect(h.file("goal.md")).toBe(goalMd);
+
+    const retry = await h.codex.post(toDraft(BLOCKED));
+    ok(retry);
+    expect(retry).toMatchObject({ id: BLOCKED.id, seq: 2, phase: "BLOCKED" });
+    expect(readFileSync(join(h.goalDir(), "chat", ".orphans", `${BLOCKED.id}.md`), "utf8")).toBe(ghost);
+    expect(h.claude.read()?.messages.map((message) => message.id)).toEqual([BLOCKED.id, ASK_HUMAN.id]);
+    const state = h.claude.state();
+    expect(state?.messages.map((ref) => ref.id)).toEqual(h.claude.listMessages().map((message) => message.id));
+    expect(existsSync(lock)).toBe(false);
+  });
+
+  it("a kickoff that throws before its KICKOFF commits leaves no goal behind, so kickoff can be retried", async () => {
+    const h = harness();
+    const input = { goal: "Add per-API-key rate limiting to the public API.", acceptance_criteria: ["Requests over the limit get 429."], slug: "rate-limit" };
+    const chat = join(h.goalDir(), "chat");
+    mkdirSync(chat, { recursive: true });
+    writeFileSync(join(chat, "20261025T140000Z-0001-human-KICKOFF.md"), "planted\n");
+    await expect(h.human.kickoff(input)).rejects.toThrow(/refusing to overwrite/);
+    expect(existsSync(h.goalDir())).toBe(false);
+    expect(h.human.activeGoal()).toBeNull();
+    ok(await h.human.kickoff(input));
+    expect(h.human.state()?.messages.map((ref) => ref.id)).toEqual(["20261025T140000Z-0001-human-KICKOFF"]);
   });
 });
 
@@ -703,6 +792,8 @@ describe("read and waitForReply", () => {
     expect(first).toMatchObject({ goal: "20261025-rate-limit", phase: "PLAN", role: "challenger", lead: "claude", challenger: "codex", cursor: RUN[1].id });
     expect(first?.allowed_types).toEqual(["PROPOSE", "CHALLENGE", "STATUS", "BLOCKED"]);
     expect(first?.budgets.used.messages_total).toBe(1);
+    expect(first?.goal_text).toBe(RUN_KICKOFF.goal_text);
+    expect(first?.acs).toEqual(Object.fromEntries(RUN_KICKOFF.acceptance_criteria.map((criterion, index) => [`AC${index + 1}`, { criterion, status: "open" }])));
     expect(h.codex.read()?.messages).toEqual([]);
     expect(JSON.parse(h.file("inbox/codex.json"))).toMatchObject({ protocol_version: 1, agent: "codex", cursor: RUN[1].id });
     const own = h.claude.read();
@@ -749,6 +840,49 @@ describe("read and waitForReply", () => {
     expect(await Promise.race([waiting, realSleep(1_000).then(() => "still waiting")])).toEqual({ timeout: true });
   });
 
+  it("an aborted waitForReply returns { timeout: true } at once and leaves the cursor for the next read", async () => {
+    const h = harness();
+    await replay(h, 1);
+    const before = h.codex.read();
+    // A poll too slow to matter: only the abort listener can end this wait quickly.
+    const slow = new VaultStore({ projectDir: h.projectDir, config: CONFIG, agent: "codex", now: h.clock.now, sleep: h.clock.sleep, localTz: TZ, pollIntervalMs: 60_000 });
+    const controller = new AbortController();
+    const waiting = slow.waitForReply({ timeoutMs: 5_000, signal: controller.signal });
+    await realSleep(20);
+    const started = Date.now();
+    controller.abort();
+    expect(await waiting).toEqual({ timeout: true });
+    expect(Date.now() - started).toBeLessThan(1_000);
+    h.clock.set(RUN[1].ts);
+    ok(await h.claude.post(toDraft(RUN[1])));
+    await realSleep(50);
+    expect(JSON.parse(h.file("inbox/codex.json")).cursor).toBe(before?.cursor);
+    const next = h.codex.read();
+    expect(next?.messages.map((message) => message.id)).toEqual([RUN[1].id]);
+    expect(next?.cursor).toBe(RUN[1].id);
+  });
+
+  it("waitForReply moves the cursor only when it delivers: the agent's own post during a wait leaves the inbox file alone", async () => {
+    const h = harness();
+    await replay(h, 4);
+    expect(RUN[4]).toMatchObject({ from: "codex", type: "CHALLENGE" });
+    expect(RUN[5]).toMatchObject({ from: "claude", type: "DECIDE" });
+    const before = h.codex.read();
+    h.clock.set(RUN[4].ts);
+    const waiting = h.codex.waitForReply({ timeoutMs: 5_000 });
+    await realSleep(50);
+    ok(await h.codex.post(toDraft(RUN[4])));
+    await realSleep(50);
+    expect(JSON.parse(h.file("inbox/codex.json")).cursor).toBe(before?.cursor);
+    h.clock.advance(1_000);
+    const decide = await h.claude.post(toDraft(RUN[5]));
+    ok(decide);
+    const result = await waiting;
+    if ("timeout" in result) throw new Error("timed out");
+    expect(result.messages.map((message) => message.id)).toEqual([decide.id]);
+    expect(JSON.parse(h.file("inbox/codex.json")).cursor).toBe(decide.id);
+  });
+
   it("a tick-driven DEADLOCK posts a system ASK_HUMAN and renders the deadlock question", async () => {
     const h = harness();
     await replay(h, 5);
@@ -777,7 +911,8 @@ describe("read and waitForReply", () => {
     expect(goal).toContain("> **Deadlock on plan, re AC1.** claude did not DECIDE within 2 messages or 10 minutes. The two positions:\n>\n");
     expect(goal).toContain("> 1. claude PROPOSE 14:02:10: *A token-bucket middleware keyed by API key in the existing Redis client satisfies AC1 and AC2.*\n");
     expect(goal).toContain("> 2. codex CHALLENGE 14:04:55: *An in-process bucket meets AC1 with no network hop if the API runs as one replica.* (test `kubectl -n prod get deploy api -o jsonpath='{.spec.replicas}' prints 1` · pending)\n>\n");
-    expect(goal).toContain('> **To answer:** run `diarchy reply "<ruling>" --decision plan`. Your ruling closes plan as a DECIDE with basis human and PLAN resumes. `diarchy stop` ends the run.\n');
+    // A human ruling on plan carries no tasks and closes PLAN at once, so the hint must not promise that PLAN resumes.
+    expect(goal).toContain('> **To answer:** run `diarchy reply "<ruling>" --decision plan`. Your ruling closes plan as a DECIDE with basis human, and EXECUTE begins with no tasks: claude must ASSIGN each task with new_task. `diarchy stop` ends the run.\n');
     expect(goal).toContain("| BLOCKED | claude | codex | 2026-10-25 14:14:55 UTC |");
     const chat = h.file("chat.md");
     expect(chat).toContain("> [!WARNING]\n> **BLOCKED** from PLAN · **human needed** since 14:14:55 UTC · lead claude · challenger codex\n");
@@ -830,7 +965,10 @@ describe("reply and stop as human", () => {
     expect(h.human.state()).toMatchObject({ phase: "EXECUTE", limits: { messages_total: 160 }, decisions: { plan: { status: "decided" } }, deadlock_watch: null });
     const chat = h.file("chat.md");
     expect(chat).toContain("basis: human · replying to system ASK_HUMAN 14:14:55 · budgets: messages_total 160");
-    expect(chat).toContain("## → EXECUTE · 14:30:00");
+    expect(h.human.state()?.tasks).toEqual({});
+    // The ruling restores PLAN and closes it in one acceptance: one heading, not PLAN then EXECUTE.
+    expect(chat).toContain("---\n\n## → EXECUTE · 14:30:00");
+    expect(chat).not.toContain("## → PLAN · 14:30:00");
   });
 
   it("reply --decision on a decided thread supersedes it", async () => {
@@ -909,6 +1047,30 @@ describe("reply and stop as human", () => {
 // config
 // ---------------------------------------------------------------------------
 
+describe("docs that quote the sample run", () => {
+  const DOCS = join(SAMPLES, "..");
+
+  it("QUICKSTART's start command yields the goal id and chat.md path it names", () => {
+    const quickstart = readFileSync(join(DOCS, "QUICKSTART.md"), "utf8");
+    const command = quickstart.slice(quickstart.indexOf("## 3. Kick off"), quickstart.indexOf("## 4."));
+    const goal = /diarchy start "([^"]+)"/.exec(command)?.[1] ?? "";
+    const slug = /--slug (\S+)/.exec(command)?.[1] ?? slugify(goal);
+    const goalId = `20261025-${slug}`;
+    const named = [...quickstart.matchAll(/\b2026\d{4}-[a-z0-9-]+/g)].map((match) => match[0]);
+    expect(named.length).toBeGreaterThan(0);
+    expect(new Set(named)).toEqual(new Set([goalId]));
+    expect(quickstart).toContain(`goals/${goalId}/chat.md`);
+  });
+
+  it("RENDERING-DESIGN-NOTES quotes the AC statuses goal-blocked.md renders", () => {
+    const notes = readFileSync(join(DOCS, "RENDERING-DESIGN-NOTES.md"), "utf8");
+    const statuses = [...readFileSync(join(SAMPLES, "goal-blocked.md"), "utf8").matchAll(/^\| AC\d+ \|.*\| ([^|]+) \|$/gm)].map((match) => match[1]);
+    expect(statuses).toHaveLength(3);
+    const quoted = /All three ACs read `([^`]+)`/.exec(notes)?.[1];
+    expect(new Set(statuses)).toEqual(new Set([quoted]));
+  });
+});
+
 describe("config", () => {
   it("loadConfig defaults the vault to '<basename> brain/diarchy' and merges diarchy.config.json", () => {
     const root = mkdtempSync(join(tmpdir(), "diarchy-config-"));
@@ -930,6 +1092,16 @@ describe("config", () => {
     expect(loaded).toMatchObject({ vault: "notes/diarchy", budgets: { plan_messages: 6 }, review: { required: false }, agents: { claude: { command: "claude" } } });
     writeFileSync(join(projectDir, "diarchy.config.json"), JSON.stringify({ protocol_version: 2 }));
     expect(() => loadConfig(projectDir)).toThrow();
+  });
+
+  it("rejects a third agent: protocol_version 1 runs exactly two (PROTOCOL.md section 11)", () => {
+    const root = mkdtempSync(join(tmpdir(), "diarchy-config-"));
+    temps.push(root);
+    const agents = { claude: { command: "claude" }, codex: { command: "codex" }, cursor: { command: "cursor" } };
+    writeFileSync(join(root, "diarchy.config.json"), JSON.stringify({ protocol_version: 1, vault: "notes/diarchy", agents }));
+    expect(() => loadConfig(root)).toThrow(/exactly 2 agents/);
+    expect(() => parseConfig({ ...CONFIG, agents })).toThrow(/exactly 2 agents/);
+    expect(parseConfig(CONFIG).agents).toEqual(CONFIG.agents);
   });
 
   it("resolveVaultPaths lays out the goal directory under the vault", () => {

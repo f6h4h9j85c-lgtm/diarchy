@@ -131,11 +131,17 @@ function externalParagraphs(blocked: Message, from: Phase): string[] {
   ];
 }
 
-/** A human ruling on `plan` is rejected while another thread is open, so the hint drops `--decision` in that case. */
+/**
+ * A human ruling on `plan` is rejected while another thread is open, so the hint drops `--decision` in that case.
+ * Otherwise a ruling on `plan` closes PLAN at once and, carrying no tasks, opens an empty EXECUTE.
+ */
 function answerLine(decision: string, state: GoalState, from: Phase): string {
   const otherOpen = Object.entries(state.decisions).some(([id, thread]) => id !== decision && thread.status === "open");
   if (decision === "plan" && otherOpen) {
     return `**To answer:** run \`diarchy reply "<ruling>"\`. Your ruling is recorded as a new DECIDE with basis human, ${from} resumes, and ${state.lead} must then DECIDE plan. \`diarchy stop\` ends the run.`;
+  }
+  if (decision === "plan") {
+    return `**To answer:** run \`diarchy reply "<ruling>" --decision plan\`. Your ruling closes plan as a DECIDE with basis human, and EXECUTE begins with no tasks: ${state.lead} must ASSIGN each task with new_task. \`diarchy stop\` ends the run.`;
   }
   return `**To answer:** run \`diarchy reply "<ruling>" --decision ${decision}\`. Your ruling closes ${decision} as a DECIDE with basis human and ${from} resumes. \`diarchy stop\` ends the run.`;
 }

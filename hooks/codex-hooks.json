@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"${DIARCHY_ROOT:-.}/hooks/session-start.sh\" codex",
+            "command": "bash \"${PLUGIN_ROOT}/hooks/session-start.sh\" codex",
             "timeout": 15
           }
         ]
@@ -18,7 +18,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"${DIARCHY_ROOT:-.}/hooks/pre-tool-guard.sh\" codex",
+            "command": "bash \"${PLUGIN_ROOT}/hooks/pre-tool-guard.sh\" codex",
             "timeout": 10
           }
         ]
@@ -29,7 +29,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"${DIARCHY_ROOT:-.}/hooks/stop-gate.sh\" codex",
+            "command": "bash \"${PLUGIN_ROOT}/hooks/stop-gate.sh\" codex",
             "timeout": 30
           }
         ]

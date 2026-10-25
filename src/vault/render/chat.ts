@@ -197,7 +197,8 @@ function assignFields(message: Message, ctx: Context): string[] {
 /**
  * Phases a message's acceptance passes through that no later message records:
  * KICKOFF opens PLAN, a `plan` DECIDE opens EXECUTE, a human DECIDE restores
- * the phase the run was blocked from (and a human `plan` ruling then opens EXECUTE).
+ * the phase the run was blocked from. A human `plan` ruling restores PLAN and
+ * closes it in the same acceptance, so it implies EXECUTE only.
  */
 function impliedPhases(message: Message, index: number, ordered: Message[]): Phase[] {
   if (message.type === "KICKOFF") return ["PLAN"];
@@ -207,7 +208,7 @@ function impliedPhases(message: Message, index: number, ordered: Message[]): Pha
   if (message.from === "human" && phase === "BLOCKED") {
     const earlier = ordered.slice(0, index).reverse().find((candidate) => candidate.phase !== "BLOCKED");
     phase = earlier?.phase ?? "EXECUTE";
-    phases.push(phase);
+    if (message.decision_id !== "plan" || phase !== "PLAN") phases.push(phase);
   }
   if (message.decision_id === "plan" && phase === "PLAN") phases.push("EXECUTE");
   return phases;

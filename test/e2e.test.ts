@@ -315,12 +315,6 @@ describe("start --driver fake (good)", () => {
     expect(lines(result.stdout)[lines(result.stdout).length - 1]).toBe("# DONE");
   });
 
-  it("start without a goal text fails once no goal is active", async () => {
-    const result = await cli(["start", "--driver", "fake", "--project", dir]);
-    expect(result.code).toBe(1);
-    expect(result.stderr).toContain("goal is required");
-  });
-
   it("start rejects an unknown fake mode, from --fake-mode or DIARCHY_FAKE_MODE, before it kicks off", async () => {
     const args = ["start", "Ship a typo", "--ac", "It never starts.", "--driver", "fake", "--no-worktrees", "--project", dir];
     const flag = await cli([...args, "--fake-mode", "bogus"]);
@@ -330,6 +324,12 @@ describe("start --driver fake (good)", () => {
     expect(env.code).toBe(1);
     expect(env.stderr).toContain('diarchy: --fake-mode (or DIARCHY_FAKE_MODE) must be good or slop, got "bogus"');
     expect(human(dir).listGoals().map((goal) => goal.goalId)).toEqual([paths.goalId]);
+  });
+
+  it("start without a goal text fails once no goal is active", async () => {
+    const result = await cli(["start", "--driver", "fake", "--project", dir]);
+    expect(result.code).toBe(1);
+    expect(result.stderr).toContain("goal is required");
   });
 });
 

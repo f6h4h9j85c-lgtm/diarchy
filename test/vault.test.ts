@@ -29,13 +29,11 @@ import {
   renderGoal,
   resolveVaultPaths,
   slugify,
-  type KickoffInput,
   type MessageDraft,
   type PostResult,
-  type ReplyOptions,
-  type WaitOptions,
 } from "../src/vault/index.js";
 import { budgetLine, code, escapeBlockStarts, italic, linkText, localHint } from "../src/vault/render/shared.js";
+import type { KickoffInput, ReplyOptions, WaitOptions } from "../src/vault/types.js";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const FIXTURES = fileURLToPath(new URL("./fixtures/", import.meta.url));

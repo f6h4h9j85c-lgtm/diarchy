@@ -354,7 +354,7 @@ export class VaultStore {
   // read and wait_for_reply
   // -------------------------------------------------------------------------
 
-  /** Messages after this agent's cursor, excluding its own; advances the cursor. */
+  /** Goal text, ACs with status, and messages after this agent's cursor, excluding its own; advances the cursor. */
   read(options: { since?: string } = {}): ReadResult | null {
     const goal = this.currentGoal();
     if (goal === null) return null;
@@ -367,6 +367,8 @@ export class VaultStore {
     if (next !== this.loadCursor(goal.paths)) this.saveCursor(goal.paths, next);
     return {
       goal: goal.goalId,
+      goal_text: this.loadKickoff(goal.paths).goal_text,
+      acs: state.acs,
       phase: state.phase,
       role: roleOf(state, this.agent),
       allowed_types: allowedTypes(state, this.agent),

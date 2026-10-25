@@ -567,6 +567,10 @@ describe("happy path", () => {
     expect(final.messages.map((message) => message.type)).toEqual(["ASSIGN", "STATUS", "DONE"]);
     expect(final.budgets.used).toMatchObject({ messages_total: 9, plan_messages: 3, talk_since_work: 0 });
 
+    // The branch default comes from the newest goal even after DONE, so the engine answers with the phase, not a missing branch.
+    const late = await rejected(h.claude, "assign", { to: "codex", new_task: "One more pass", kind: "implement", re: ["AC1"] });
+    expect(late).toEqual({ ok: false, rule: "PHASE_GATE", message: expect.stringMatching(/^ASSIGN is not allowed in phase DONE\./) as unknown });
+
     // After DONE, read answers phase DONE, never NO_GOAL again; kickoff starts the next goal and its description must say so.
     const kickoffTool = (await h.codex.listTools()).tools.find((tool) => tool.name === "kickoff");
     expect(kickoffTool?.description).toContain("Use when read returns NO_GOAL or a goal in phase DONE, and a human gave you a goal.");
@@ -864,6 +868,51 @@ describe("runMcpServer over stdio", () => {
     const parsed = lines.map((line) => JSON.parse(line) as { jsonrpc: string; id?: number; result?: { tools?: { name: string }[] } });
     expect(parsed.every((frame) => frame.jsonrpc === "2.0")).toBe(true);
     expect(parsed.find((frame) => frame.id === 2)?.result?.tools?.map((tool) => tool.name).sort()).toEqual(SORTED_TOOLS);
+  });
+
+  it("bin/diarchy.js mcp, the plugins' entry over the committed dist/, serves the same tools and reads the project's goal", async () => {
+    const projectDir = tempProject();
+    const human = new VaultStore({ projectDir, config: loadConfig(projectDir), agent: "human" });
+    const kicked = await human.kickoff({ ...KICKOFF_ARGS, lead: "claude" });
+    if (!kicked.ok) throw new Error(`${kicked.rule}: ${kicked.message}`);
+    const child = spawn(process.execPath, [join(ROOT, "bin", "diarchy.js"), "mcp", "--agent", "codex", "--project", projectDir], {
+      cwd: projectDir,
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    let stdout = "";
+    let stderr = "";
+    child.stderr.on("data", (chunk: Buffer) => (stderr += chunk.toString()));
+    const exited = new Promise<number | null>((resolve) => child.on("exit", resolve));
+    const answered = new Promise<void>((resolve, reject) => {
+      child.stdout.on("data", (chunk: Buffer) => {
+        stdout += chunk.toString();
+        if (stdout.includes('"id":3')) resolve();
+      });
+      child.on("exit", (code) => reject(new Error(`bin/diarchy.js mcp exited ${code} before answering: ${stderr}`)));
+    });
+    const frames = [
+      { jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "raw", version: "0" } } },
+      { jsonrpc: "2.0", method: "notifications/initialized" },
+      { jsonrpc: "2.0", id: 2, method: "tools/list" },
+      { jsonrpc: "2.0", id: 3, method: "tools/call", params: { name: "read", arguments: {} } },
+    ];
+    for (const frame of frames) child.stdin.write(`${JSON.stringify(frame)}\n`);
+    await answered;
+    child.stdin.end();
+    expect(await exited, stderr).toBe(0);
+
+    const parsed = stdout
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line) as { jsonrpc: string; id?: number; result?: { tools?: { name: string }[]; structuredContent?: Partial<ReadResult> } });
+    expect(parsed.every((frame) => frame.jsonrpc === "2.0")).toBe(true);
+    expect(parsed.find((frame) => frame.id === 2)?.result?.tools?.map((tool) => tool.name).sort()).toEqual(SORTED_TOOLS);
+    expect(parsed.find((frame) => frame.id === 3)?.result?.structuredContent).toMatchObject({
+      goal: kicked.goal_id,
+      phase: "PLAN",
+      role: "challenger",
+      cursor: kicked.kickoff_id,
+    });
   });
 });
 

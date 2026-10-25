@@ -1,6 +1,6 @@
 # Quickstart: a first diarchy run in ten minutes
 
-You need Claude Code and Codex CLI installed and signed in, Node 20.3 or later, and a git repository with at least one commit.
+You need Claude Code and Codex CLI installed and signed in, Node 20.3 or later on Linux or macOS (native Windows is untested and `diarchy start --driver real` refuses to run there; use WSL), and a git repository with at least one commit.
 
 ## 1. Install the plugin in both CLIs
 
@@ -64,7 +64,7 @@ Then `● DECIDE · plan` with its basis and a `Tasks:` list, and the heading `#
 diarchy reply "Read REDIS_URL from .env.staging; it is gitignored."
 ```
 
-For a deadlock: `diarchy reply "<ruling>" --decision plan` (or `D<n>`). For a spent budget: `diarchy reply "continue" --budget messages_total=160`. The reply is posted as a DECIDE with `basis: human`, recorded in `decisions.md`, and the phase returns to where it was. A ruling on `plan` is the exception: it closes PLAN, so EXECUTE begins with no tasks and the lead ASSIGNs each one with `new_task`. Then run `diarchy start` with no goal text: it attaches to the active goal and respawns both PMs.
+For a deadlock: `diarchy reply "<ruling>" --decision plan` (or `D<n>`). For a spent budget: `diarchy reply "continue" --budget messages_total=160`. The reply is posted as a DECIDE with `basis: human`, recorded in `decisions.md`, and the phase returns to where it was. A ruling on an open `plan` (the run blocked from PLAN) is the exception: it closes PLAN, so EXECUTE begins with no tasks and the lead ASSIGNs each one with `new_task`. A reopened `plan` is already decided, so a ruling on it supersedes it and EXECUTE resumes with the tasks already set. Then run `diarchy start` with no goal text: it attaches to the active goal and respawns both PMs.
 
 ## 7. Stop
 

@@ -7,6 +7,26 @@ import { GLYPHS, SEP, hms } from "../vault/render/shared.js";
 export const EXIT_OK = 0;
 export const EXIT_ERROR = 1;
 export const EXIT_BLOCKED = 2;
+/** What a closed stdout or stderr does; see onBrokenPipe. */
+let brokenPipe = () => process.exit(process.exitCode ?? EXIT_OK);
+/**
+ * Replace what happens when the reader of stdout or stderr goes away (EPIPE,
+ * as in `diarchy status | head -1`). The default ends the command quietly;
+ * `diarchy start` swaps in its shutdown so its PMs are stopped, not orphaned.
+ */
+export function onBrokenPipe(handler) {
+    brokenPipe = handler;
+}
+/** Route EPIPE on stdout and stderr to the onBrokenPipe handler instead of crashing with an unhandled 'error' event. */
+export function handleBrokenPipes() {
+    for (const stream of [process.stdout, process.stderr]) {
+        stream.on("error", (error) => {
+            if (error.code !== "EPIPE")
+                throw error;
+            brokenPipe();
+        });
+    }
+}
 /** A user-facing failure: printed as `diarchy: <message>` with the given exit code, no stack. */
 export class CliError extends Error {
     exitCode;

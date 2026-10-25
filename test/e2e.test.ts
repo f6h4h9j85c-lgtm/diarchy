@@ -38,11 +38,12 @@ interface Run {
 }
 
 /** Run the CLI from source; stdin is always closed so hook commands see end-of-input. */
-function cli(args: string[], options: { input?: string; cwd?: string } = {}): Promise<Run> {
+function cli(args: string[], options: { input?: string; cwd?: string; env?: NodeJS.ProcessEnv } = {}): Promise<Run> {
   return new Promise((resolve, reject) => {
     const env: NodeJS.ProcessEnv = { ...process.env, ...GIT_ENV };
     delete env.DIARCHY_PROJECT;
     delete env.DIARCHY_FAKE_MODE;
+    Object.assign(env, options.env);
     const child = spawn(process.execPath, ["--import", TSX, CLI, ...args], { cwd: options.cwd ?? ROOT, env, stdio: ["pipe", "pipe", "pipe"] });
     let stdout = "";
     let stderr = "";
@@ -402,6 +403,17 @@ describe("start --driver fake (good)", () => {
     expect(lines(result.stdout)[lines(result.stdout).length - 1]).toBe("# DONE");
   });
 
+  it("start rejects an unknown fake mode, from --fake-mode or DIARCHY_FAKE_MODE, before it kicks off", async () => {
+    const args = ["start", "Ship a typo", "--ac", "It never starts.", "--driver", "fake", "--no-worktrees", "--project", dir];
+    const flag = await cli([...args, "--fake-mode", "bogus"]);
+    expect(flag.code).toBe(1);
+    expect(flag.stderr).toContain("Allowed choices are good, slop");
+    const env = await cli(args, { env: { DIARCHY_FAKE_MODE: "bogus" } });
+    expect(env.code).toBe(1);
+    expect(env.stderr).toContain('diarchy: --fake-mode (or DIARCHY_FAKE_MODE) must be good or slop, got "bogus"');
+    expect(human(dir).listGoals().map((goal) => goal.goalId)).toEqual([paths.goalId]);
+  });
+
   it("start without a goal text fails once no goal is active", async () => {
     const result = await cli(["start", "--driver", "fake", "--project", dir]);
     expect(result.code).toBe(1);
@@ -555,6 +567,50 @@ describe("start --driver fake (slop)", () => {
 });
 
 // ---------------------------------------------------------------------------
+// start with its output closed early (`diarchy start | head -1`)
+// ---------------------------------------------------------------------------
+
+/** Live processes whose environment names this project: the PMs a diarchy start spawned. Reads /proc, so it finds none off Linux. */
+function pmPids(dir: string): number[] {
+  if (!existsSync("/proc")) return [];
+  const pids: number[] = [];
+  for (const entry of readdirSync("/proc").filter((name) => /^\d+$/.test(name))) {
+    try {
+      if (readFileSync(`/proc/${entry}/environ`, "utf8").split("\0").includes(`DIARCHY_PROJECT=${dir}`)) pids.push(Number(entry));
+    } catch {
+      // exited, or not ours to read
+    }
+  }
+  return pids;
+}
+
+describe("start with its stdout closed", () => {
+  it("stops both PMs and exits 1 instead of crashing on EPIPE and orphaning them", async () => {
+    const dir = await initProject("piped", false);
+    const env: NodeJS.ProcessEnv = { ...process.env, ...GIT_ENV };
+    delete env.DIARCHY_PROJECT;
+    delete env.DIARCHY_FAKE_MODE;
+    const args = ["start", "Ship the piped widget", "--ac", "The widget renders.", "--driver", "fake", "--no-worktrees", "--project", dir];
+    const child = spawn(process.execPath, ["--import", "tsx", CLI, ...args], { cwd: ROOT, env, stdio: ["ignore", "pipe", "pipe"] });
+    let stdout = "";
+    let stderr = "";
+    child.stderr.on("data", (chunk: Buffer) => (stderr += chunk.toString()));
+    // Like `| head`: read until both PMs run, then close the read end of the pipe.
+    child.stdout.on("data", (chunk: Buffer) => {
+      stdout += chunk.toString();
+      if (stdout.includes("codex started")) child.stdout.destroy();
+    });
+    const code = await new Promise<number>((resolve) => child.on("close", (exit) => resolve(exit ?? -1)));
+    const orphans = pmPids(dir);
+    for (const pid of orphans) process.kill(pid, "SIGKILL");
+    expect(stderr).not.toContain("EPIPE");
+    expect(code, stderr).toBe(1);
+    expect(orphans).toEqual([]);
+    expect(existsSync(join(dir, ".diarchy", "start.pid"))).toBe(false);
+  }, RUN_TIMEOUT);
+});
+
+// ---------------------------------------------------------------------------
 // Hooks: guard (PreToolUse)
 // ---------------------------------------------------------------------------
 
@@ -590,6 +646,102 @@ describe("guard", () => {
     expect(await cli(["guard", "--agent", "codex"], { input: "not json {{{" })).toEqual({ code: 0, stdout: "", stderr: "" });
     expect(await cli(["guard", "--agent", "codex"], { input: "" })).toEqual({ code: 0, stdout: "", stderr: "" });
   });
+});
+
+// ---------------------------------------------------------------------------
+// kickoff, status, and stop through the shipped bin/diarchy.js (dist/ is committed)
+// ---------------------------------------------------------------------------
+
+describe("bin/diarchy.js kickoff, status, and stop", () => {
+  const BIN = join(ROOT, "bin", "diarchy.js");
+
+  /** The installed entry, run from inside the project so the cwd default for --project is exercised too. */
+  function launchBin(dir: string, args: string[]): { pid: number | undefined; done: Promise<Run> } {
+    const env: NodeJS.ProcessEnv = { ...process.env, ...GIT_ENV };
+    delete env.DIARCHY_PROJECT;
+    delete env.DIARCHY_FAKE_MODE;
+    const child = spawn(process.execPath, [BIN, ...args], { cwd: dir, env, stdio: ["ignore", "pipe", "pipe"] });
+    let stdout = "";
+    let stderr = "";
+    child.stdout.on("data", (chunk: Buffer) => (stdout += chunk.toString()));
+    child.stderr.on("data", (chunk: Buffer) => (stderr += chunk.toString()));
+    const done = new Promise<Run>((resolve, reject) => {
+      child.on("error", reject);
+      child.on("close", (code) => resolve({ code: code ?? -1, stdout, stderr }));
+    });
+    return { pid: child.pid, done };
+  }
+
+  const bin = (dir: string, args: string[]): Promise<Run> => launchBin(dir, args).done;
+
+  it("kickoff --json starts a goal that status --json reports, a second kickoff is refused, and stop --json blocks it", async () => {
+    const dir = await initProject("bin-kickoff", false);
+    const kick = await bin(dir, ["kickoff", "Ship the widget", "--ac", "It renders.", "--ac", "It is documented.", "--lead", "codex", "--json"]);
+    expect(kick.code, kick.stderr).toBe(0);
+    const kicked = JSON.parse(kick.stdout) as { goal_id: string; goal_md: string };
+    expect(kicked).toMatchObject({ ok: true, lead: "codex", challenger: "claude", phase: "PLAN" });
+    expect(kicked.goal_id).toMatch(/^\d{8}-ship-the-widget$/);
+    expect(kicked.goal_md).toBe(goalPaths(dir).goalMd);
+    expect(readFileSync(kicked.goal_md, "utf8")).toContain("| AC1 | It renders\\. | open |\n| AC2 | It is documented\\. | open |\n");
+
+    const status = await bin(dir, ["status", "--json"]);
+    expect(status.code, status.stderr).toBe(0);
+    expect(JSON.parse(status.stdout)).toMatchObject({
+      goal: kicked.goal_id,
+      phase: "PLAN",
+      lead: "codex",
+      challenger: "claude",
+      message_count: 1,
+      last_message: { from: "human", type: "KICKOFF" },
+      human_needed: false,
+      reply_command: null,
+    });
+
+    const again = await bin(dir, ["kickoff", "Another goal", "--ac", "Nothing changes.", "--json"]);
+    expect(again.code).toBe(1);
+    expect(JSON.parse(again.stdout)).toMatchObject({ ok: false, rule: "SINGLE_KICKOFF" });
+    expect(human(dir).listGoals()).toHaveLength(1);
+
+    const stop = await bin(dir, ["stop", "--reason", "Pausing for the night.", "--json"]);
+    expect(stop.code, stop.stderr).toBe(0);
+    const stopped = JSON.parse(stop.stdout) as { detail: string };
+    expect(stopped).toMatchObject({ stopped: true, supervisor_pid: null, signalled: false });
+    expect(stopped.detail).toMatch(/^posted \S+-human-BLOCKED · phase BLOCKED$/);
+    expect(goalState(dir)).toMatchObject({ phase: "BLOCKED", blocked_from: "PLAN" });
+    expect(JSON.parse((await bin(dir, ["status", "--json"])).stdout)).toMatchObject({
+      phase: "BLOCKED",
+      human_needed: true,
+      block: "stopped by the human",
+      last_message: { from: "human", type: "BLOCKED" },
+    });
+  });
+
+  it(
+    "stop --json against a running start blocks the goal, signals the supervisor, and start exits 2",
+    async () => {
+      const dir = await initProject("bin-stop", false);
+      const scratch = mkdtempSync(join(tmpdir(), "diarchy-e2e-idle-"));
+      temps.push(scratch);
+      const script = join(scratch, "idle-pm.mjs");
+      writeFileSync(script, "setInterval(() => undefined, 1000);\n");
+      const start = launchBin(dir, ["start", "Idle until stopped", "--ac", "Nothing moves.", "--lead", "claude", "--driver", "fake", "--fake-script", script, "--no-worktrees"]);
+      const pidFile = join(dir, ".diarchy", "start.pid");
+      const deadline = Date.now() + 15_000;
+      while (!existsSync(pidFile)) {
+        if (Date.now() > deadline) throw new Error(`start never wrote ${pidFile}`);
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+
+      const stop = await bin(dir, ["stop", "--json"]);
+      expect(stop.code, stop.stderr).toBe(0);
+      expect(JSON.parse(stop.stdout)).toMatchObject({ stopped: true, supervisor_pid: start.pid, signalled: true });
+      const run = await start.done;
+      expect(run.code, run.stdout + run.stderr).toBe(2);
+      expect(existsSync(pidFile)).toBe(false);
+      expect(goalState(dir)).toMatchObject({ phase: "BLOCKED", blocked_from: "PLAN" });
+    },
+    RUN_TIMEOUT,
+  );
 });
 
 // ---------------------------------------------------------------------------

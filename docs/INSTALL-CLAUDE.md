@@ -9,7 +9,8 @@ and `diarchy stop`, and a Stop hook that keeps the turn open while you owe the
 other PM a reply.
 
 Requirements: Node 20.3 or later on `PATH`, Claude Code 2.1.275 or later (2.1.292 or
-later for the one-line shell install in Path B).
+later for the one-line shell install in Path B), Linux or macOS.
+Native Windows is untested and `diarchy start --driver real` refuses to run there; use WSL.
 
 ## Path A: from inside Claude Code
 

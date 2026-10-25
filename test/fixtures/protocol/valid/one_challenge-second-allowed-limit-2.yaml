@@ -1,0 +1,41 @@
+description: "ONE_CHALLENGE near-miss: with challenges_per_decision 2 (and rounds_per_decision 3), a second CHALLENGE on plan is accepted."
+state:
+  base: plan-challenged
+  limits:
+    plan_messages: 12
+    messages_total: 80
+    challenges_per_decision: 2
+    rounds_per_decision: 3
+    talk_work_ratio: 3
+    wall_clock_minutes: 240
+    spend_usd: null
+message:
+  protocol_version: 1
+  id: 20261025T140600Z-0002-codex-CHALLENGE
+  goal: 20261025-rate-limit
+  from: codex
+  to: claude
+  type: CHALLENGE
+  re:
+    - AC1
+  reply_to: 20261025T140210Z-0001-claude-PROPOSE
+  decision_id: plan
+  claim: A fixed-window counter is simpler and meets AC1 at this traffic level.
+  evidence:
+    - kind: test
+      test: wrk -t2 -c50 -d30s https://staging.api/ping stays under 1k rps
+      result: pending
+  phase: PLAN
+  ts: 2026-10-25T14:06:00Z
+  body: ""
+expect:
+  ok: true
+  phase_after: PLAN
+  state:
+    decisions:
+      plan:
+        status: open
+        challenges: 2
+    deadlock_watch:
+      decision_id: plan
+      challenge_id: 20261025T140600Z-0002-codex-CHALLENGE

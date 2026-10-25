@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, expectTypeOf, it, vi } from "vitest";
 
 import {
   assignId,
@@ -37,7 +37,9 @@ import {
 } from "../src/vault/index.js";
 import { LOCK_HOST, inspectLock, isStale, lockOwner, reapIfSame, releaseLock, touchLock, tryLock } from "../src/vault/lock.js";
 import { budgetLine, cellCode, code, escapePunctuation, italic, link, linkText, localHint, plainBlock, plainInline, visible } from "../src/vault/render/shared.js";
+import type { KickoffInput, ReplyOptions, WaitOptions } from "../src/vault/types.js";
 
+const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const FIXTURES = fileURLToPath(new URL("./fixtures/", import.meta.url));
 const SAMPLE_RUN = join(FIXTURES, "vault", "sample-run");
 const EXAMPLES = join(FIXTURES, "protocol", "examples");
@@ -664,7 +666,9 @@ describe("renderer rules", () => {
 
 function spawnWriter(projectDir: string, agent: string, count: number, startMs: number): Promise<void> {
   return new Promise((resolve, reject) => {
+    // `--import tsx` resolves from the child's cwd, so pin it to the repo rather than inherit vitest's.
     const child = spawn(process.execPath, ["--import", "tsx", WRITER, projectDir, agent, String(count), String(startMs), TZ], {
+      cwd: ROOT,
       stdio: ["ignore", "pipe", "pipe"],
     });
     let output = "";
@@ -706,7 +710,14 @@ describe("concurrent writers", () => {
     if (before === null) throw new Error("no goal");
     expect(before.phase).toBe("EXECUTE");
     const start = h.clock.ms + 1_000;
-    await Promise.all([spawnWriter(h.projectDir, "claude", 20, start), spawnWriter(h.projectDir, "codex", 20, start)]);
+    // Spawned from outside the repo, as when vitest runs with --root from another directory.
+    const cwd = process.cwd();
+    process.chdir(tmpdir());
+    try {
+      await Promise.all([spawnWriter(h.projectDir, "claude", 20, start), spawnWriter(h.projectDir, "codex", 20, start)]);
+    } finally {
+      process.chdir(cwd);
+    }
 
     const goalDir = h.goalDir("20261025-ship");
     const files = readdirSync(join(goalDir, "chat")).filter((name) => name.endsWith(".md"));
@@ -769,11 +780,40 @@ describe("store-owned files", () => {
     expect(seen.size).toBe(21);
   });
 
-  it("no public method takes a path; only kickoff, post, read, waitForReply, reply, stop, and render write", () => {
+  it("no public method takes a path; only kickoff, post, read, waitForReply, reply, stop, and render write", async () => {
+    // TypeScript `private` is erased at runtime, so the public surface and its signatures are pinned for npm run typecheck.
+    type Reader = "listGoals" | "activeGoal" | "state" | "listMessages" | "readKickoff";
+    type Writer = "render" | "kickoff" | "post" | "read" | "waitForReply" | "reply" | "stop";
+    expectTypeOf<keyof VaultStore>().toEqualTypeOf<"agent" | Reader | Writer>();
+    expectTypeOf<{ [K in Reader | "render"]: Parameters<VaultStore[K]> }>().toEqualTypeOf<{ [K in Reader | "render"]: [] }>();
+    expectTypeOf<Parameters<VaultStore["kickoff"]>>().toEqualTypeOf<[KickoffInput]>();
+    expectTypeOf<Parameters<VaultStore["post"]>>().toEqualTypeOf<[MessageDraft]>();
+    expectTypeOf<Parameters<VaultStore["read"]>>().toEqualTypeOf<[options?: { since?: string }]>();
+    expectTypeOf<Parameters<VaultStore["waitForReply"]>>().toEqualTypeOf<[options?: WaitOptions]>();
+    expectTypeOf<Parameters<VaultStore["reply"]>>().toEqualTypeOf<[text: string, options?: ReplyOptions]>();
+    expectTypeOf<Parameters<VaultStore["stop"]>>().toEqualTypeOf<[reason: string]>();
+
     const methods = Object.getOwnPropertyNames(VaultStore.prototype).filter((name) => name !== "constructor");
     const publicApi = ["listGoals", "activeGoal", "state", "listMessages", "readKickoff", "render", "kickoff", "post", "read", "waitForReply", "reply", "stop"];
     for (const name of publicApi) expect(methods).toContain(name);
-    expect(methods.some((name) => /path|file|write|save|persist/i.test(name) && !publicApi.includes(name) && !name.startsWith("load") && !name.startsWith("read"))).toBe(true);
+
+    // The readers leave every file in the project as it was, contents and mtimes.
+    const h = harness();
+    await replay(h, BLOCKED_INDEX + 1);
+    const snapshot = () =>
+      listFiles(h.projectDir).map((name) => {
+        const path = join(h.projectDir, name);
+        return name.endsWith("/") ? name : `${name} ${statSync(path).mtimeMs} ${readFileSync(path, "utf8")}`;
+      });
+    const before = snapshot();
+    for (const store of [h.human, h.claude, h.codex]) {
+      expect(store.listGoals()).toHaveLength(1);
+      expect(store.activeGoal()?.phase).toBe("BLOCKED");
+      expect(store.state()?.phase).toBe("BLOCKED");
+      expect(store.listMessages()).toHaveLength(BLOCKED_INDEX + 1);
+      expect(store.readKickoff()?.goal).toBe("20261025-rate-limit");
+    }
+    expect(snapshot()).toEqual(before);
   });
 
   it("rejects a message whose from is another agent with WRITER_OWNED and writes nothing", async () => {
@@ -1012,14 +1052,62 @@ describe("crash safety", () => {
   it("a kickoff that throws before its KICKOFF commits leaves no goal behind, so kickoff can be retried", async () => {
     const h = harness();
     const input = { goal: "Add per-API-key rate limiting to the public API.", acceptance_criteria: ["Requests over the limit get 429."], slug: "rate-limit" };
-    const chat = join(h.goalDir(), "chat");
-    mkdirSync(chat, { recursive: true });
-    writeFileSync(join(chat, "20261025T140000Z-0001-human-KICKOFF.md"), "planted\n");
-    await expect(h.human.kickoff(input)).rejects.toThrow(/refusing to overwrite/);
+    const kickoffMd = join(h.goalDir(), "kickoff.md");
+    const planted = join(h.goalDir(), "chat", "20261025T140000Z-0001-human-KICKOFF.md");
+    // Planted once kickoff.md is written under the lock, after the leftovers of an earlier kickoff are cleared.
+    const human = new VaultStore({
+      projectDir: h.projectDir,
+      config: CONFIG,
+      agent: "human",
+      now: () => {
+        if (existsSync(kickoffMd) && !existsSync(planted)) writeFileSync(planted, "planted\n");
+        return h.clock.now();
+      },
+      sleep: h.clock.sleep,
+      localTz: TZ,
+    });
+    await expect(human.kickoff(input)).rejects.toThrow(/refusing to overwrite/);
     expect(existsSync(h.goalDir())).toBe(false);
     expect(h.human.activeGoal()).toBeNull();
     ok(await h.human.kickoff(input));
     expect(h.human.state()?.messages.map((ref) => ref.id)).toEqual(["20261025T140000Z-0001-human-KICKOFF"]);
+  });
+
+  it("a kickoff killed before its commit leaves no goal, and the next kickoff of that id clears what it left", async () => {
+    const h = harness();
+    const input = { goal: "Add per-API-key rate limiting to the public API.", acceptance_criteria: ["Requests over the limit get 429."], slug: "rate-limit" };
+    const kickoffId = "20261025T140000Z-0001-human-KICKOFF";
+    const killed = async (leave: (dir: string, committed: GoalState | null) => void): Promise<void> => {
+      ok(await h.human.kickoff(input));
+      const dir = h.goalDir();
+      const committed = h.human.state();
+      for (const name of ["budget.json", "goal.md", "chat.md", "decisions.md"]) rmSync(join(dir, name));
+      leave(dir, committed);
+      // SIGKILL also leaves the lock behind; it goes stale after 30 s.
+      mkdirSync(join(dir, ".lock"));
+      const old = (Date.now() - 60_000) / 1000;
+      utimesSync(join(dir, ".lock"), old, old);
+
+      expect(h.human.listGoals()).toEqual([]);
+      expect(h.human.activeGoal()).toBeNull();
+      expect(h.claude.read()).toBeNull();
+      await expect(h.claude.post({ type: "PROPOSE", to: "all", re: ["AC1"], decision_id: "plan", claim: "Nothing to post to." })).rejects.toThrow(/No goal/);
+
+      const again = await h.human.kickoff(input);
+      ok(again);
+      expect(again).toMatchObject({ goal_id: "20261025-rate-limit", kickoff_id: kickoffId, phase: "PLAN" });
+      expect(listFiles(dir)).toEqual(["budget.json", "chat.md", "chat/", `chat/${kickoffId}.md`, "decisions.md", "goal.md", "inbox/", "kickoff.md"]);
+      expect(h.claude.read()?.messages.map((message) => message.id)).toEqual([kickoffId]);
+      h.human.render();
+    };
+    // Killed between the KICKOFF file and budget.json: kickoff.md and an uncommitted chat/ file.
+    await killed(() => undefined);
+    rmSync(join(h.projectDir, "api brain"), { recursive: true });
+    // An older store wrote budget.json before the KICKOFF: one without a kickoff_id is no goal either.
+    await killed((dir, committed) => {
+      rmSync(join(dir, "chat"), { recursive: true });
+      writeFileSync(join(dir, "budget.json"), `${JSON.stringify({ ...committed, kickoff_id: null, messages: [] }, null, 2)}\n`);
+    });
   });
 });
 
@@ -1181,7 +1269,7 @@ describe("kickoff", () => {
     expect(readdirSync(join(same.goalDir(), ".."))).toEqual(["20261025-same"]);
   });
 
-  it("a new goal whose id is taken by a finished goal gets the next free suffix instead of SINGLE_KICKOFF", async () => {
+  it("a derived slug whose id a finished goal holds gets the next free suffix; the same slug passed explicitly is SINGLE_KICKOFF", async () => {
     const h = harness();
     const first = await h.human.kickoff(INPUT);
     ok(first);
@@ -1193,10 +1281,16 @@ describe("kickoff", () => {
     expect(second.goal_id).toBe("20261025-add-per-api-key-rate-limiting-to-the-p-2");
     setPhase(h, second.goal_id, "DONE");
     h.clock.advance(60_000);
-    const third = await h.human.kickoff({ ...INPUT, slug: "add-per-api-key-rate-limiting-to-the-pub" });
+    const third = await h.human.kickoff({ ...INPUT, goal: "Add per-API-key rate limiting to the public API v3." });
     ok(third);
     expect(third.goal_id).toBe("20261025-add-per-api-key-rate-limiting-to-the-p-3");
     setPhase(h, third.goal_id, "DONE");
+    // A slug the caller names is the id it asked for: a DONE goal's id is refused, not renamed.
+    expect(await h.human.kickoff({ ...INPUT, slug: "add-per-api-key-rate-limiting-to-the-pub" })).toEqual({
+      ok: false,
+      rule: "SINGLE_KICKOFF",
+      message: "Goal 20261025-add-per-api-key-rate-limiting-to-the-pub is DONE and its id is not reused. Kick off with another slug.",
+    });
     h.clock.set("2026-10-25T15:04:05Z");
     const japanese = await h.human.kickoff({ ...INPUT, goal: "レート制限を追加する" });
     ok(japanese);
@@ -1218,6 +1312,11 @@ describe("kickoff", () => {
   it("allows a new goal once the previous one is DONE, alternating the lead", async () => {
     const h = harness();
     await replay(h);
+    expect(await h.human.kickoff({ ...INPUT, slug: "rate-limit" })).toEqual({
+      ok: false,
+      rule: "SINGLE_KICKOFF",
+      message: "Goal 20261025-rate-limit is DONE and its id is not reused. Kick off with another slug.",
+    });
     h.clock.set("2026-10-26T09:00:00Z");
     const next = await h.human.kickoff(INPUT);
     ok(next);
@@ -1487,6 +1586,140 @@ describe("read and waitForReply", () => {
     expect(result).toMatchObject({ ok: false, rule: "PHASE_GATE" });
     expect(h.codex.state()?.phase).toBe("BLOCKED");
     expect(readdirSync(join(h.goalDir(), "chat")).some((name) => name.endsWith("-system-ASK_HUMAN.md"))).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The deadlock question callout variants (RENDERING.md 4.1)
+// ---------------------------------------------------------------------------
+
+describe("deadlock question callout variants", () => {
+  const RL_GOAL = "20261025-rl";
+
+  it("a plan deadlock while D1 is open shows the reply without --decision, and that reply unblocks PLAN", async () => {
+    const h = harness();
+    ok(await h.human.kickoff({ goal: "Rate limit the API.", acceptance_criteria: ["Over-limit requests get 429.", "The limit is configurable."], lead: "claude", slug: "rl" }));
+    h.clock.advance(60_000);
+    const propose = await h.claude.post({ type: "PROPOSE", to: "all", re: ["AC1", "AC2"], decision_id: "plan", claim: "One task per AC.", body: "Two tasks: middleware and config." });
+    ok(propose);
+    h.clock.advance(60_000);
+    ok(
+      await h.codex.post({
+        type: "CHALLENGE",
+        to: "claude",
+        re: ["AC1"],
+        reply_to: propose.id,
+        decision_id: "plan",
+        claim: "An in-process bucket suffices on one replica.",
+        evidence: [{ kind: "test", test: "kubectl get deploy api prints 1", result: "pending" }],
+      }),
+    );
+    h.clock.advance(60_000);
+    const d1 = await h.claude.post({ type: "PROPOSE", to: "all", re: ["AC2"], claim: "The default should match nginx.", body: "Ops has one number to reason about." });
+    ok(d1);
+    expect(d1.decision_id).toBe("D1");
+    h.clock.advance(60_000);
+    const late = await h.codex.post({ type: "STATUS", to: "all", re: ["AC1"], evidence: [{ kind: "file", path: "notes/probe.md" }], body: "Probe queued; results in notes/probe.md." });
+    ok(late);
+    expect(late.phase).toBe("BLOCKED");
+    expect(h.human.state()).toMatchObject({ blocked_from: "PLAN", decisions: { plan: { status: "open" }, D1: { status: "open" } } });
+
+    expect(h.file("goal.md", RL_GOAL)).toContain(
+      [
+        "> **Deadlock on plan, re AC1.** claude did not DECIDE within 2 messages or 10 minutes. The two positions:",
+        ">",
+        "> 1. claude PROPOSE 14:01:00: *One task per AC\\.*",
+        "> 2. codex CHALLENGE 14:02:00: *An in\\-process bucket suffices on one replica\\.* (test `kubectl get deploy api prints 1` · pending)",
+        ">",
+        '> **To answer:** run `diarchy reply "<ruling>"`. Your ruling is recorded as a new DECIDE with basis human, PLAN resumes, and claude must then DECIDE plan. `diarchy stop` ends the run.',
+        "",
+      ].join("\n"),
+    );
+    // Why the callout drops --decision: a ruling on plan is refused while D1 is open.
+    expect(await h.human.reply("Use the in-process bucket.", { decision: "plan" })).toMatchObject({ ok: false, rule: "PHASE_GATE" });
+    const ruling = await h.human.reply("Use the in-process bucket.");
+    ok(ruling);
+    expect(ruling).toMatchObject({ decision_id: "D2", phase: "PLAN" });
+    expect(h.human.state()?.decisions.plan.status).toBe("open");
+  });
+
+  it("a reopened plan thread lists the DECIDE it reopens and answers with the general line, keeping EXECUTE's tasks", async () => {
+    const h = harness();
+    ok(await h.human.kickoff({ goal: "Rate limit the API.", acceptance_criteria: ["Over-limit requests get 429."], lead: "claude", slug: "rl" }));
+    h.clock.advance(60_000);
+    ok(await h.claude.post({ type: "PROPOSE", to: "all", re: ["AC1"], decision_id: "plan", claim: "One task does it.", body: "A single middleware task." }));
+    h.clock.advance(60_000);
+    const decide = await h.claude.post({
+      type: "DECIDE",
+      to: "all",
+      re: ["AC1"],
+      decision_id: "plan",
+      basis: "authority",
+      claim: "One task does it.",
+      tasks: ["Middleware"],
+      body: "Nothing to test before the work exists.",
+    });
+    ok(decide);
+    h.clock.advance(60_000);
+    ok(
+      await h.codex.post({
+        type: "CHALLENGE",
+        to: "claude",
+        re: ["AC1"],
+        reply_to: decide.id,
+        decision_id: "plan",
+        claim: "The task list misses the config step.",
+        evidence: [{ kind: "test", test: "grep RATE_LIMIT src prints nothing", result: "fail" }],
+      }),
+    );
+    h.clock.advance(11 * 60_000);
+    await h.claude.waitForReply({ timeoutMs: 1_000 });
+    expect(h.human.state()).toMatchObject({ phase: "BLOCKED", blocked_from: "EXECUTE", decisions: { plan: { status: "decided" } } });
+
+    expect(h.file("goal.md", RL_GOAL)).toContain(
+      [
+        "> **Deadlock on plan, re AC1.** claude did not DECIDE within 2 messages or 10 minutes. The two positions:",
+        ">",
+        "> 1. claude DECIDE 14:02:00: *One task does it\\.*",
+        "> 2. codex CHALLENGE 14:03:00: *The task list misses the config step\\.* (test `grep RATE_LIMIT src prints nothing` · **fail**)",
+        ">",
+        '> **To answer:** run `diarchy reply "<ruling>" --decision plan`. Your ruling closes plan as a DECIDE with basis human and EXECUTE resumes. `diarchy stop` ends the run.',
+        "",
+      ].join("\n"),
+    );
+    const ruling = await h.human.reply("Add the config step.", { decision: "plan" });
+    ok(ruling);
+    expect(ruling.phase).toBe("EXECUTE");
+    expect(h.human.state()).toMatchObject({ decisions: { plan: { status: "superseded", superseded_by: ruling.decision_id } }, tasks: { T1: { task: "Middleware" } } });
+  });
+
+  it("a plan DECIDE with ac_add appends the criterion to goal.md and lists it under the DECIDE in chat.md", async () => {
+    const h = harness();
+    ok(await h.human.kickoff({ goal: "Rate limit the API.", acceptance_criteria: ["Over-limit requests get 429."], lead: "claude", slug: "rl" }));
+    h.clock.advance(60_000);
+    ok(await h.claude.post({ type: "PROPOSE", to: "all", re: ["AC1"], decision_id: "plan", claim: "One task does it.", body: "A single middleware task." }));
+    h.clock.advance(60_000);
+    ok(
+      await h.claude.post({
+        type: "DECIDE",
+        to: "all",
+        re: ["AC1"],
+        decision_id: "plan",
+        basis: "authority",
+        claim: "One task does it.",
+        tasks: ["Middleware"],
+        ac_add: ["Every 429 carries Retry-After.", "The limit is configurable."],
+        body: "Nothing to test before the work exists.",
+      }),
+    );
+    expect(h.file("goal.md", RL_GOAL)).toContain(
+      "| AC1 | Over\\-limit requests get 429\\. | open |\n| AC2 | Every 429 carries Retry\\-After\\. | open |\n| AC3 | The limit is configurable\\. | open |\n",
+    );
+    expect(h.file("chat.md", RL_GOAL)).toContain(
+      "*One task does it\\.*\n\nNothing to test before the work exists\\.\n\nTasks:\n- T1: Middleware\n\nAcceptance criteria added:\n- AC2: Every 429 carries Retry\\-After\\.\n- AC3: The limit is configurable\\.\n",
+    );
+    h.clock.advance(60_000);
+    ok(await h.codex.post({ type: "STATUS", to: "all", re: ["AC3"], evidence: [{ kind: "commit", sha: "abcdef1" }], body: "Config read from RATE_LIMIT_PER_MIN." }));
   });
 });
 

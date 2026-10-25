@@ -131,7 +131,7 @@ export class VaultStore {
   // -------------------------------------------------------------------------
 
   /**
-   * Every goal with a readable budget.json, oldest first. A goal whose
+   * Every goal whose KICKOFF committed, oldest first. A goal whose
    * budget.json does not parse (damaged, or another protocol_version) is
    * skipped with one stderr warning naming the file, so it cannot take the
    * rest of the vault down with it (PROTOCOL.md 2.3).
@@ -142,14 +142,14 @@ export class VaultStore {
     const refs: GoalRef[] = [];
     for (const name of readdirSync(goals).sort()) {
       const paths = resolveVaultPaths(this.projectDir, this.config, name);
-      if (!existsSync(paths.budget)) continue;
-      let state: GoalState;
+      let state: GoalState | null;
       try {
-        state = this.loadState(paths);
+        state = this.committedState(paths);
       } catch (error) {
         this.warnUnreadable(paths, error);
         continue;
       }
+      if (state === null) continue;
       refs.push({ goalId: name, phase: state.phase, lead: state.lead, challenger: state.challenger, created: state.created, paths });
     }
     return refs.sort((a, b) => (a.created < b.created ? -1 : a.created > b.created ? 1 : 0));
@@ -252,14 +252,22 @@ export class VaultStore {
       goal_text: input.goal.trim(),
       acceptance_criteria: input.acceptance_criteria.map((criterion) => criterion.trim()),
     };
-    mkdirSync(paths.chatDir, { recursive: true });
-    mkdirSync(paths.inboxDir, { recursive: true });
-    atomicWrite(paths.kickoff, serializeKickoff(kickoff), { durable: true });
-    const state = initialState(kickoff, this.config, now);
+    mkdirSync(paths.goal, { recursive: true });
     return this.withLock(paths, async () => {
+      // A kickoff holds the lock from its first write to its commit, so what an
+      // uncommitted goal directory holds now was left by a kickoff that died.
+      const raced = this.committedState(paths);
+      if (raced !== null) return singleKickoff(goalId, raced.phase);
       let committed = false;
       try {
-        this.persist(paths, state);
+        for (const path of [paths.kickoff, paths.budget, paths.chatDir, paths.inboxDir, paths.goalMd, paths.chatMd, paths.decisionsMd]) {
+          rmSync(path, { recursive: true, force: true });
+        }
+        mkdirSync(paths.chatDir, { recursive: true });
+        mkdirSync(paths.inboxDir, { recursive: true });
+        atomicWrite(paths.kickoff, serializeKickoff(kickoff), { durable: true });
+        // budget.json is first written below, with the KICKOFF recorded: that write commits the goal (PROTOCOL.md 2.2).
+        const state = initialState(kickoff, this.config, now);
         const draft: MessageDraft = { type: "KICKOFF", to: "all", re: Object.keys(state.acs), body: kickoff.goal_text };
         const outcome = await this.accept(paths, state, draft);
         if (!outcome.ok) return outcome;
@@ -312,9 +320,10 @@ export class VaultStore {
   /**
    * `<YYYYMMDD>-<slug>`, slug from `slug` or the goal text (a time-based
    * `goal-HHMMSS` when the text has no Latin letters or digits). Under the vault
-   * lock no goal is active, so an id that is taken belongs to a finished or
-   * abandoned goal: the slug gets the first free `-2`, `-3`, ... suffix instead.
-   * An explicit `goal_id` is used as given or refused.
+   * lock no goal is active, so a committed goal holding the id is a finished
+   * one: a derived slug gets the first free `-2`, `-3`, ... suffix, while a
+   * `slug` the caller chose is refused with SINGLE_KICKOFF and an explicit
+   * `goal_id` with SCHEMA. A directory an interrupted kickoff left holds no id.
    */
   private newGoalId(input: KickoffInput, created: string): string | Rejection {
     if (input.goal_id !== undefined) {
@@ -325,16 +334,26 @@ export class VaultStore {
     const day = created.slice(0, 10).replace(/-/g, "");
     const slug = input.slug ?? slugify(input.goal, `goal-${created.slice(11, 19).replace(/:/g, "")}`);
     if (!GOAL_ID_PATTERN.test(`${day}-${slug}`)) return reject("SCHEMA", schemaText("slug", "must be [a-z0-9-]{1,40}"));
+    if (input.slug !== undefined) {
+      // A slug the caller chose names the goal: a finished goal's id is not reused (SINGLE_KICKOFF).
+      const goalId = `${day}-${slug}`;
+      const taken = this.committedState(resolveVaultPaths(this.projectDir, this.config, goalId));
+      return taken === null ? goalId : singleKickoff(goalId, taken.phase);
+    }
     for (let n = 1; ; n += 1) {
       const goalId = `${day}-${n === 1 ? slug : suffixSlug(slug, n)}`;
       if (!this.goalIdTaken(goalId)) return goalId;
     }
   }
 
-  /** kickoff never reuses a goal directory that holds a kickoff.md or a budget.json. */
+  /** A committed goal holds the id; what an interrupted kickoff left does not (PROTOCOL.md 2.2). */
   private goalIdTaken(goalId: string): boolean {
-    const paths = resolveVaultPaths(this.projectDir, this.config, goalId);
-    return existsSync(paths.kickoff) || existsSync(paths.budget);
+    try {
+      return this.committedState(resolveVaultPaths(this.projectDir, this.config, goalId)) !== null;
+    } catch {
+      // An unreadable budget.json still holds the id.
+      return true;
+    }
   }
 
   /** A PM kicking off leads; the launcher alternates from the previous goal's lead. */
@@ -776,6 +795,17 @@ export class VaultStore {
     }
   }
 
+  /**
+   * The goal's state once its KICKOFF has committed; null when the directory
+   * holds no goal, or only what a kickoff that died before its commit left
+   * (no budget.json, or one without a KICKOFF from before that write moved).
+   */
+  private committedState(paths: GoalPaths): GoalState | null {
+    if (!existsSync(paths.budget)) return null;
+    const state = this.loadState(paths);
+    return state.kickoff_id === null ? null : state;
+  }
+
   /** The commit point: every chat/ file written so far is now accepted. */
   private persist(paths: GoalPaths, state: GoalState): void {
     atomicWrite(paths.budget, `${JSON.stringify(state, null, 2)}\n`, { durable: true });
@@ -830,5 +860,6 @@ function parseStored<T>(path: string, parse: (text: string) => T): T {
 }
 
 function singleKickoff(goalId: string, phase: Phase): Rejection {
+  if (phase === "DONE") return reject("SINGLE_KICKOFF", `Goal ${goalId} is DONE and its id is not reused. Kick off with another slug.`);
   return reject("SINGLE_KICKOFF", `Goal ${goalId} is already active (phase ${phase}). Call read instead of kickoff.`);
 }

@@ -2,7 +2,7 @@
 
 diarchy installs into Claude Code and OpenAI Codex CLI and runs each as a product-manager agent on one goal. The two PMs are peers from different vendors: one leads, the other challenges, and each delegates to its own subagents in private. They talk only through a chat in an Obsidian vault, and every message passes through an MCP server that enforces the protocol in code, so the exchange cannot drift into acknowledgements, repetition, or open-ended debate. The human reads three rendered files and is called in only for a true deadlock, a missing credential, or a spent budget. Every PR is reviewed by the other model before it merges.
 
-Status: pre-alpha, v0.1.0. Requires Node 20.3 or later.
+Status: pre-alpha, v0.1.0. Requires Node 20.3 or later on Linux or macOS. Native Windows is untested and `diarchy start --driver real` refuses to run there; use WSL.
 
 ## How a run works
 

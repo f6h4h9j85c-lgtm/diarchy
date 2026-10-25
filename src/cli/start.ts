@@ -3,16 +3,15 @@
  * agent, and supervise them until the goal is DONE or BLOCKED.
  *
  * Exit codes: 0 DONE, 2 BLOCKED, 1 error (every agent dead, bad input, signal).
+ * On SIGINT, SIGTERM, or SIGHUP it stops both PMs and removes `.diarchy/start.pid` first.
  */
 import { spawn, type ChildProcess } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
 import { createInterface } from "node:readline";
 
 import { AGENT_HUMAN, type DiarchyConfig, type GoalState, type Phase } from "../protocol/index.js";
 import { VaultStore, loadConfig, type GoalRef } from "../vault/index.js";
 import { blockReason, blockSummary, replyHint } from "./brief.js";
-import { CliError, EXIT_BLOCKED, EXIT_ERROR, EXIT_OK, nowHms, sleep } from "./common.js";
+import { CliError, EXIT_BLOCKED, EXIT_ERROR, EXIT_OK, nowHms, onBrokenPipe, sleep } from "./common.js";
 import {
   clearSession,
   defaultFakeScript,
@@ -27,6 +26,8 @@ import {
 } from "./drivers.js";
 import { kickoffInput, type KickoffCliOptions } from "./kickoff.js";
 import { loadLauncherConfig, type LauncherConfig } from "./launcher-config.js";
+import { missingCommands, platformProblem } from "./preflight.js";
+import { claimRunRecord, identify, reapLeftovers, releaseRunRecord, runningSupervisor, saveRunRecord, type RunRecord } from "./run-record.js";
 import { ensureWorktrees, hasCommits, isGitRepo, missingFromWorktrees } from "./worktrees.js";
 
 export interface StartOptions extends KickoffCliOptions {
@@ -40,23 +41,8 @@ export interface StartOptions extends KickoffCliOptions {
 /** A resumed child that dies this fast is treated as a failed resume, not a crash. */
 const FAST_FAIL_MS = 5_000;
 
-export function pidPath(projectDir: string): string {
-  return join(projectDir, ".diarchy", "start.pid");
-}
-
-/** The pid in `.diarchy/start.pid` when that process is still alive. */
-export function runningSupervisor(projectDir: string): number | null {
-  const path = pidPath(projectDir);
-  if (!existsSync(path)) return null;
-  const pid = Number(readFileSync(path, "utf8").trim());
-  if (!Number.isInteger(pid) || pid <= 0) return null;
-  try {
-    process.kill(pid, 0);
-    return pid;
-  } catch {
-    return null;
-  }
-}
+/** The signals on which the supervisor stops its PMs and removes its run record before exiting. */
+const STOP_SIGNALS: readonly NodeJS.Signals[] = ["SIGINT", "SIGTERM", "SIGHUP"];
 
 /** The kickoff inputs given on the command line; they only mean something when no goal is active. */
 function newGoalArgs(goalText: string | undefined, options: KickoffCliOptions): string[] {
@@ -74,13 +60,30 @@ function parseDriver(value: string): DriverName {
   throw new CliError(`--driver must be real or fake, got "${value}"`);
 }
 
+/** The fake PM's mode: --fake-mode, else DIARCHY_FAKE_MODE, else good. Checked before kickoff, since the fake PM rejects anything else at startup. */
+function fakeMode(options: StartOptions): string {
+  const mode = options.fakeMode ?? process.env.DIARCHY_FAKE_MODE ?? "good";
+  if (mode === "good" || mode === "slop") return mode;
+  throw new CliError(`--fake-mode (or DIARCHY_FAKE_MODE) must be good or slop, got "${mode}"`);
+}
+
 export async function runStart(projectDir: string, goalText: string | undefined, options: StartOptions): Promise<number> {
   const driver = parseDriver(options.driver);
+  const platform = platformProblem(process.platform, driver);
+  if (platform !== null) throw new CliError(platform);
+  if (driver === "fake") fakeMode(options);
   const config = loadConfig(projectDir);
   const agents = Object.keys(config.agents);
   const launcher = loadLauncherConfig(projectDir, agents);
   const other = runningSupervisor(projectDir);
   if (other !== null) throw new CliError(`another diarchy start is running (pid ${other}); run diarchy stop first`);
+  for (const leftover of await reapLeftovers(projectDir)) {
+    console.log(`${nowHms()} stopped ${leftover.agent} (pid ${leftover.pid}), left running by an earlier diarchy start`);
+  }
+  if (driver === "real") {
+    const missing = missingCommands(launcher.agents, projectDir, process.env.PATH);
+    if (missing.length > 0) throw new CliError(`${missing.join("; ")}; fix diarchy.config.json or install the CLI`);
+  }
 
   const human = new VaultStore({ projectDir, config, agent: AGENT_HUMAN, pollIntervalMs: Math.min(500, launcher.launcher.poll_ms) });
   let goal = human.activeGoal();
@@ -179,6 +182,7 @@ class Supervisor {
   private lastPhase: Phase | null = null;
   private lastCount = -1;
   private resolveRun: ((code: number) => void) | null = null;
+  private record: RunRecord | null = null;
 
   constructor(input: SupervisorInput) {
     this.input = input;
@@ -186,25 +190,30 @@ class Supervisor {
 
   async run(): Promise<number> {
     const { projectDir } = this.input;
-    mkdirSync(dirname(pidPath(projectDir)), { recursive: true });
-    writeFileSync(pidPath(projectDir), `${process.pid}\n`);
+    const record = claimRunRecord(projectDir);
+    this.record = record;
     const finished = new Promise<number>((resolve) => {
       this.resolveRun = resolve;
     });
-    const onSignal = (signal: NodeJS.Signals): void => {
+    const interrupt = (reason: string): void => {
       const phase = this.readState()?.phase;
-      void this.finish(phase === "BLOCKED" ? EXIT_BLOCKED : EXIT_ERROR, `received ${signal}`);
+      void this.finish(phase === "BLOCKED" ? EXIT_BLOCKED : EXIT_ERROR, reason);
     };
-    process.on("SIGINT", onSignal);
-    process.on("SIGTERM", onSignal);
+    const onSignal = (signal: NodeJS.Signals): void => interrupt(`received ${signal}`);
+    // SIGHUP too: Node resets an inherited SIG_IGN for SIGHUP at startup, so
+    // even under nohup a closed terminal would kill this process outright and
+    // orphan both PMs. Trapped, a hangup stops them like SIGTERM does.
+    for (const signal of STOP_SIGNALS) process.on(signal, onSignal);
+    // `diarchy start | head`: once the reader goes away, stop the PMs as a signal would instead of crashing and orphaning them.
+    // It stays in place after the run, so a late EPIPE cannot exit with the wrong code.
+    onBrokenPipe(() => interrupt("output closed"));
     try {
       for (const agent of this.input.agents) this.spawnChild(this.child(agent));
       void this.loop();
       return await finished;
     } finally {
-      process.off("SIGINT", onSignal);
-      process.off("SIGTERM", onSignal);
-      rmSync(pidPath(projectDir), { force: true });
+      for (const signal of STOP_SIGNALS) process.off(signal, onSignal);
+      releaseRunRecord(projectDir, record);
     }
   }
 
@@ -234,37 +243,62 @@ class Supervisor {
     const worktree = worktrees.get(agent) ?? null;
     const cwd = worktree ?? projectDir;
     if (driver === "fake") {
-      const mode = options.fakeMode ?? process.env.DIARCHY_FAKE_MODE ?? "good";
-      return fakePlan({ projectDir, agent, goalId: goal.goalId, cwd, worktree, script: options.fakeScript ?? defaultFakeScript(), mode });
+      return fakePlan({ projectDir, agent, goalId: goal.goalId, cwd, worktree, script: options.fakeScript ?? defaultFakeScript(), mode: fakeMode(options) });
     }
     const session = loadSession(projectDir, agent, goal.goalId);
-    const plan = realPlan({ projectDir, agent, goalId: goal.goalId, launch: launcher.agents[agent], cwd, worktree, session });
+    const inGitRepo = worktree !== null || isGitRepo(cwd);
+    const plan = realPlan({ projectDir, agent, goalId: goal.goalId, launch: launcher.agents[agent], cwd, worktree, session, inGitRepo });
     if (plan.minted !== null) saveSession(projectDir, plan.minted);
     return plan;
   }
 
   private spawnChild(child: Child): void {
     const plan = this.planFor(child.agent);
-    const proc = spawn(plan.command, plan.args, { cwd: plan.cwd, env: plan.env, stdio: ["ignore", "pipe", "pipe"] });
     let exitedResolve: () => void = () => undefined;
     child.exited = new Promise<void>((resolve) => {
       exitedResolve = resolve;
     });
     child.markExited = exitedResolve;
-    child.proc = proc;
     child.plan = plan;
     child.spawnedAt = Date.now();
+    let proc: ChildProcess;
+    try {
+      proc = spawn(plan.command, plan.args, { cwd: plan.cwd, env: plan.env, stdio: ["ignore", "pipe", "pipe"] });
+    } catch (error) {
+      process.stderr.write(`[${child.agent}] spawn error: ${error instanceof Error ? error.message : String(error)}\n`);
+      child.markExited();
+      process.nextTick(() => this.onExit(child, null, null));
+      return;
+    }
+    child.proc = proc;
+    this.recordChild(child.agent, proc);
     this.log(`${child.agent} started${plan.resumed ? " (resumed session)" : ""}: ${plan.command} ${plan.args.length} args, cwd ${plan.cwd}`);
     if (proc.stdout !== null) this.forward(child, proc.stdout, process.stdout);
     if (proc.stderr !== null) this.forward(child, proc.stderr, process.stderr);
     proc.on("error", (error) => {
       process.stderr.write(`[${child.agent}] spawn error: ${error.message}\n`);
+      // A process that never started emits no "exit", so count the failure as its exit here.
+      if (proc.pid !== undefined || child.proc !== proc) return;
+      child.proc = null;
+      child.markExited();
+      this.onExit(child, null, null);
     });
     proc.on("exit", (code, signal) => {
       child.proc = null;
       child.markExited();
       this.onExit(child, code, signal);
     });
+  }
+
+  /** Note the child in `.diarchy/start.pid` so stop and the next start can reach it if this process dies first. */
+  private recordChild(agent: string, proc: ChildProcess): void {
+    if (this.record === null || proc.pid === undefined) return;
+    this.record.children[agent] = identify(proc.pid);
+    try {
+      saveRunRecord(this.input.projectDir, this.record);
+    } catch (error) {
+      process.stderr.write(`diarchy: could not record ${agent} in start.pid: ${error instanceof Error ? error.message : String(error)}\n`);
+    }
   }
 
   private forward(child: Child, stream: NodeJS.ReadableStream, out: NodeJS.WritableStream): void {
@@ -284,9 +318,12 @@ class Supervisor {
 
   private onExit(child: Child, code: number | null, signal: NodeJS.Signals | null): void {
     if (this.stopping) return;
-    const how = signal !== null ? `signal ${signal}` : `code ${code ?? "?"}`;
+    // Node's "exit" always carries a code or a signal; neither means the spawn itself failed.
+    const started = code !== null || signal !== null;
+    const how = signal !== null ? `signal ${signal}` : code !== null ? `code ${code}` : "never started";
     this.log(`${child.agent} exited (${how})`);
-    if (child.plan?.resumed === true && code !== 0 && Date.now() - child.spawnedAt < FAST_FAIL_MS) {
+    // A CLI that never ran says nothing about its saved session, so only a started one can fail a resume.
+    if (started && child.plan?.resumed === true && code !== 0 && Date.now() - child.spawnedAt < FAST_FAIL_MS) {
       clearSession(this.input.projectDir, child.agent);
       this.log(`${child.agent} resume failed fast; dropped the saved session, next start is fresh`);
     }
@@ -341,7 +378,8 @@ class Supervisor {
     const state = this.readState();
     if (state === null || state.goal !== this.input.goal.goalId) return;
     const count = state.messages.length;
-    if (state.phase !== this.lastPhase || count !== this.lastCount) {
+    const landed = count !== this.lastCount;
+    if (state.phase !== this.lastPhase || landed) {
       if (count !== this.lastCount) for (const child of this.children.values()) child.restarts = 0;
       const last = state.messages[state.messages.length - 1];
       const tail = last === undefined ? "" : ` · last ${last.from} ${last.type}${last.decision_id === null ? "" : ` ${last.decision_id}`}`;
@@ -355,6 +393,14 @@ class Supervisor {
       const reason = blockReason(state, messages);
       this.log(`BLOCKED: ${blockSummary(state, messages)}. Run: ${replyHint(state, messages) ?? "diarchy reply"}`);
       void this.finish(EXIT_BLOCKED, reason);
+    } else if (landed) {
+      // A PM left dead after max_restarts may now owe a reply to what landed.
+      for (const child of this.children.values()) {
+        if (!child.dead) continue;
+        child.dead = false;
+        this.log(`${child.agent} respawning: a message landed`);
+        this.spawnChild(child);
+      }
     }
   }
 

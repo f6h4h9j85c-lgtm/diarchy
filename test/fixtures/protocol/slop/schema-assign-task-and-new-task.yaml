@@ -1,0 +1,24 @@
+description: "SCHEMA: ASSIGN names both an existing task and a new_task; exactly one is allowed."
+state:
+  base: execute
+message:
+  protocol_version: 1
+  id: 20261025T140800Z-0003-claude-ASSIGN
+  goal: 20261025-rate-limit
+  from: claude
+  to: codex
+  type: ASSIGN
+  re:
+    - AC1
+  task: T1
+  new_task: Token-bucket middleware with a Redis fallback
+  kind: implement
+  worktree: .diarchy/worktrees/codex
+  branch: diarchy/20261025-rate-limit/codex
+  phase: EXECUTE
+  ts: 2026-10-25T14:08:00Z
+  body: ""
+expect:
+  ok: false
+  rule: SCHEMA
+  message: 'Field "task": exactly one of task or new_task. Fix it per PROTOCOL.md section 3 and post again.'

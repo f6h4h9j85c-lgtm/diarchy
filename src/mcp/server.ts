@@ -208,7 +208,8 @@ export function createMcpServer(options: McpServerOptions): McpServer {
         const draft: MessageDraft = { ...args, type: "ASSIGN", re: args.re ?? [] };
         if (args.kind === "implement") {
           draft.worktree ??= posix.join(config.worktrees.root, args.to);
-          const goal = store.activeGoal();
+          // The newest goal even after DONE, so a late ASSIGN reaches the engine whole and gets PHASE_GATE, not a SCHEMA about branch.
+          const goal = currentGoal(store);
           if (draft.branch === undefined && goal !== null) draft.branch = `${config.worktrees.branch_prefix}/${goal.goalId}/${args.to}`;
         }
         return store.post(draft);

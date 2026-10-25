@@ -317,6 +317,10 @@ describe("happy path", () => {
     expect(final).toMatchObject({ phase: "DONE", allowed_types: [] });
     expect(final.messages.map((message) => message.type)).toEqual(["ASSIGN", "STATUS", "DONE"]);
     expect(final.budgets.used).toMatchObject({ messages_total: 9, plan_messages: 3, talk_since_work: 0 });
+
+    // The branch default comes from the newest goal even after DONE, so the engine answers with the phase, not a missing branch.
+    const late = await rejected(h.claude, "assign", { to: "codex", new_task: "One more pass", kind: "implement", re: ["AC1"] });
+    expect(late).toEqual({ ok: false, rule: "PHASE_GATE", message: expect.stringMatching(/^ASSIGN is not allowed in phase DONE\./) as unknown });
   });
 });
 

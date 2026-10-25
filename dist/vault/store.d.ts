@@ -12,6 +12,8 @@ export declare class VaultStore {
     private readonly sleep;
     private readonly renderOptions;
     private readonly pollIntervalMs;
+    /** Per goal directory: chat/ files the open transaction wrote since its last budget.json commit. */
+    private readonly uncommitted;
     constructor(options: VaultStoreOptions);
     /** Every goal with a budget.json, oldest first. */
     listGoals(): GoalRef[];
@@ -29,7 +31,7 @@ export declare class VaultStore {
     private kickoffProblem;
     /** A PM kicking off leads; the launcher alternates from the previous goal's lead. */
     private defaultLead;
-    /** One transaction (PROTOCOL.md 2.2): lock, tick, evaluate, write, persist, effects, render. */
+    /** One transaction (PROTOCOL.md 2.2): lock, recover, tick, evaluate, write, effects, persist (the commit), render. */
     post(draft: MessageDraft): Promise<PostResult>;
     /** Assign id, evaluate, and on acceptance write the message file. Call under the lock. */
     private accept;
@@ -62,14 +64,23 @@ export declare class VaultStore {
     /** Leave the goal BLOCKED with a human BLOCKED (external) message saying why. */
     stop(reason: string): Promise<PostResult>;
     private requireHuman;
+    /**
+     * Writing budget.json commits a transaction (PROTOCOL.md 2.2). A throw removes
+     * the chat/ files written since the last commit; a crash's leftovers are moved
+     * aside by the next transaction before it reads anything.
+     */
     private withLock;
+    /** Under the lock: a chat/ file whose id budget.json does not record never committed; move it to chat/.orphans/. */
+    private recoverOrphans;
     private acquireLock;
     /** The store never writes a message whose ts is still in the future. */
     private waitUntil;
     /** chat/ files are writer-owned and immutable: own agent or system only, never overwritten. */
     private writeMessage;
+    /** The committed messages: chat/ files whose id `state` records, in (ts, seq) order. Nothing else is read or rendered. */
     private readMessages;
     private loadState;
+    /** The commit point: every chat/ file written so far is now accepted. */
     private persist;
     private loadKickoff;
     private loadCursor;

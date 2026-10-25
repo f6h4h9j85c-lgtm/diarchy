@@ -1,0 +1,23 @@
+description: "NO_SELF_REVIEW: codex posts review evidence on the PR codex introduced."
+state:
+  base: execute-pr
+message:
+  protocol_version: 1
+  id: 20261025T151400Z-0004-codex-STATUS
+  goal: 20261025-rate-limit
+  from: codex
+  to: all
+  type: STATUS
+  re:
+    - AC1
+  evidence:
+    - kind: review
+      url: https://github.com/acme/api/pull/412
+      verdict: approve
+  phase: EXECUTE
+  ts: 2026-10-25T15:14:00Z
+  body: Self-reviewed the diff line by line.
+expect:
+  ok: false
+  rule: NO_SELF_REVIEW
+  message: You authored https://github.com/acme/api/pull/412. Review evidence must come from the other agent; ask the lead to ASSIGN a review.

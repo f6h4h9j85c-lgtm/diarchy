@@ -1,0 +1,26 @@
+description: "ONE_CHALLENGE: a second CHALLENGE on decision plan."
+state:
+  base: plan-challenged
+message:
+  protocol_version: 1
+  id: 20261025T140600Z-0002-codex-CHALLENGE
+  goal: 20261025-rate-limit
+  from: codex
+  to: claude
+  type: CHALLENGE
+  re:
+    - AC1
+  reply_to: 20261025T140210Z-0001-claude-PROPOSE
+  decision_id: plan
+  claim: A fixed-window counter is simpler and meets AC1 at this traffic level.
+  evidence:
+    - kind: test
+      test: wrk -t2 -c50 -d30s https://staging.api/ping stays under 1k rps
+      result: pending
+  phase: PLAN
+  ts: 2026-10-25T14:06:00Z
+  body: ""
+expect:
+  ok: false
+  rule: ONE_CHALLENGE
+  message: Decision plan was already challenged once. Wait for the lead's DECIDE; reopening needs new evidence.

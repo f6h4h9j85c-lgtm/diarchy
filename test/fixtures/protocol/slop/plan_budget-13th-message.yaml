@@ -1,0 +1,26 @@
+description: "PLAN_BUDGET: 12 PLAN messages spent; a PROPOSE is rejected, only lead DECIDE or BLOCKED pass."
+state:
+  base: plan-proposed
+  used:
+    plan_messages: 12
+    messages_total: 12
+    talk_since_work: 0
+    wall_clock_minutes: 2
+    spend_usd: 0
+message:
+  protocol_version: 1
+  id: 20261025T140300Z-0001-codex-PROPOSE
+  goal: 20261025-rate-limit
+  from: codex
+  to: all
+  type: PROPOSE
+  re:
+    - AC1
+  claim: Per-key limits should live in the gateway config rather than in middleware.
+  phase: PLAN
+  ts: 2026-10-25T14:03:00Z
+  body: ""
+expect:
+  ok: false
+  rule: PLAN_BUDGET
+  message: "PLAN budget (12 messages) is spent. Lead: post DECIDE with decision_id plan now. Challenger: wait."

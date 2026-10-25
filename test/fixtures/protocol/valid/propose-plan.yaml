@@ -1,0 +1,31 @@
+description: PROTOCOL.md example PROPOSE plan by the lead.
+state:
+  base: plan-fresh
+message:
+  protocol_version: 1
+  id: 20261025T140210Z-0001-claude-PROPOSE
+  goal: 20261025-rate-limit
+  from: claude
+  to: all
+  re:
+    - AC1
+    - AC2
+  phase: PLAN
+  ts: 2026-10-25T14:02:10Z
+  body: |
+    Three tasks: middleware, env-driven limit, tests. Redis so all replicas share one counter.
+  type: PROPOSE
+  claim: A token-bucket middleware keyed by API key in the existing Redis client satisfies AC1 and AC2.
+  decision_id: plan
+expect:
+  ok: true
+  phase_after: PLAN
+  state:
+    decisions:
+      plan:
+        status: open
+        proposer: claude
+        messages: 1
+    used:
+      plan_messages: 1
+      messages_total: 1

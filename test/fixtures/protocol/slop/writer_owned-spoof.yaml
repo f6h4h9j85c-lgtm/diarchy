@@ -1,0 +1,23 @@
+description: "WRITER_OWNED: the codex server tries to post as claude."
+state:
+  base: execute-assigned
+caller: codex
+message:
+  protocol_version: 1
+  id: 20261025T142000Z-0004-claude-STATUS
+  goal: 20261025-rate-limit
+  from: claude
+  to: all
+  type: STATUS
+  re:
+    - AC1
+  evidence:
+    - kind: commit
+      sha: 9f3c2ab
+  phase: EXECUTE
+  ts: 2026-10-25T14:20:00Z
+  body: Config task started.
+expect:
+  ok: false
+  rule: WRITER_OWNED
+  message: 'This server posts as "codex". Set from: codex or omit it.'

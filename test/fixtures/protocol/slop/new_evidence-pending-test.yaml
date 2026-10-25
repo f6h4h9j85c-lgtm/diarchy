@@ -1,0 +1,36 @@
+description: "NEW_EVIDENCE: CHALLENGE on a decided thread in EXECUTE with only a pending test."
+state:
+  base: execute
+  decisions:
+    plan:
+      status: decided
+      proposer: claude
+      messages: 1
+      challenges: 0
+      supersedes: null
+      superseded_by: null
+      evidence: []
+      challenge: null
+message:
+  protocol_version: 1
+  id: 20261025T140900Z-0002-codex-CHALLENGE
+  goal: 20261025-rate-limit
+  from: codex
+  to: claude
+  type: CHALLENGE
+  re:
+    - AC1
+  reply_to: 20261025T140730Z-0002-claude-DECIDE
+  decision_id: plan
+  claim: The in-process bucket meets AC1 because the API runs one replica.
+  evidence:
+    - kind: test
+      test: kubectl -n prod get deploy api -o jsonpath='{.spec.replicas}' prints 1
+      result: pending
+  phase: EXECUTE
+  ts: 2026-10-25T14:09:00Z
+  body: ""
+expect:
+  ok: false
+  rule: NEW_EVIDENCE
+  message: "This CHALLENGE needs new evidence: a `test` with result fail, a `human` message, or an `external` URL not cited before on decision plan."

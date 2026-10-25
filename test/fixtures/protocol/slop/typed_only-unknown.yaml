@@ -1,0 +1,19 @@
+description: "TYPED_ONLY: a type outside the nine."
+state:
+  base: plan-proposed
+message:
+  protocol_version: 1
+  id: 20261025T140300Z-0002-claude-SUGGEST
+  goal: 20261025-rate-limit
+  from: claude
+  to: all
+  type: SUGGEST
+  re:
+    - AC1
+  phase: PLAN
+  ts: 2026-10-25T14:03:00Z
+  body: Consider a gateway-level limiter instead.
+expect:
+  ok: false
+  rule: TYPED_ONLY
+  message: Unknown type "SUGGEST". Use one of KICKOFF, PROPOSE, CHALLENGE, DECIDE, ASSIGN, STATUS, DONE, BLOCKED, ASK_HUMAN.

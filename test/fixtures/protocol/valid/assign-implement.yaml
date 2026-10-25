@@ -1,0 +1,32 @@
+description: PROTOCOL.md example ASSIGN T1 (implement) to codex with worktree and branch.
+state:
+  base: execute
+message:
+  protocol_version: 1
+  id: 20261025T140800Z-0003-claude-ASSIGN
+  goal: 20261025-rate-limit
+  from: claude
+  to: codex
+  re:
+    - AC1
+  phase: EXECUTE
+  ts: 2026-10-25T14:08:00Z
+  body: ""
+  type: ASSIGN
+  task: T1
+  kind: implement
+  worktree: .diarchy/worktrees/codex
+  branch: diarchy/20261025-rate-limit/codex
+  reason: availability
+expect:
+  ok: true
+  phase_after: EXECUTE
+  effects:
+    - kind: task
+      id: T1
+      status: assigned
+      assignee: codex
+      branch: diarchy/20261025-rate-limit/codex
+  state:
+    used:
+      talk_since_work: 1

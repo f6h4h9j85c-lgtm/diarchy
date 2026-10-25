@@ -1,0 +1,37 @@
+description: "PROTOCOL.md example DONE with every 9.2 precondition met: EXECUTE -> DONE."
+state:
+  base: execute-reviewed
+message:
+  protocol_version: 1
+  id: 20261025T163000Z-0009-claude-DONE
+  goal: 20261025-rate-limit
+  from: claude
+  to: all
+  re:
+    - AC1
+    - AC2
+    - AC3
+  phase: EXECUTE
+  ts: 2026-10-25T16:30:00Z
+  body: |
+    PRs 412 and 413 merged to main.
+  type: DONE
+  evidence:
+    - kind: commit
+      sha: 1c0ffee42
+    - kind: test
+      test: npm test
+      result: pass
+expect:
+  ok: true
+  phase_after: DONE
+  effects:
+    - kind: ac_status
+      ac: AC2
+      status: passing
+    - kind: ac_status
+      ac: AC3
+      status: passing
+    - kind: phase
+      from: EXECUTE
+      to: DONE

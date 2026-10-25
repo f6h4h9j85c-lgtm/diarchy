@@ -1,0 +1,26 @@
+description: "DONE_PRECONDITION: AC3 has no passing test (the DONE cites AC1 and AC2 only)."
+state:
+  base: execute-reviewed
+message:
+  protocol_version: 1
+  id: 20261025T163000Z-0006-claude-DONE
+  goal: 20261025-rate-limit
+  from: claude
+  to: all
+  type: DONE
+  re:
+    - AC1
+    - AC2
+  evidence:
+    - kind: commit
+      sha: 1c0ffee42
+    - kind: test
+      test: npm test
+      result: pass
+  phase: EXECUTE
+  ts: 2026-10-25T16:30:00Z
+  body: PR 412 merged to main.
+expect:
+  ok: false
+  rule: DONE_PRECONDITION
+  message: "Not done: AC3 has no passing test. Post STATUS with passing tests for each AC and get the other agent's approve review on each PR."

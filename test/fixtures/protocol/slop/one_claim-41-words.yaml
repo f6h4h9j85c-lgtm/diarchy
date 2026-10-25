@@ -1,0 +1,20 @@
+description: "ONE_CLAIM: claim is 41 words."
+state:
+  base: plan-fresh
+message:
+  protocol_version: 1
+  id: 20261025T140210Z-0001-claude-PROPOSE
+  goal: 20261025-rate-limit
+  from: claude
+  to: all
+  type: PROPOSE
+  re:
+    - AC1
+  decision_id: plan
+  claim: A token-bucket middleware keyed by API key and stored in the existing Redis client satisfies AC1 and AC2 because every replica shares one counter, the limit is read from RATE_LIMIT_PER_MIN at startup, and every 429 response carries a Retry-After header too.
+  phase: PLAN
+  ts: 2026-10-25T14:02:10Z
+  body: ""
+expect:
+  ok: false
+  rule: ONE_CLAIM

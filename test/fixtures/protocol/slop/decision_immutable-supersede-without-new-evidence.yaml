@@ -1,0 +1,22 @@
+description: "DECISION_IMMUTABLE: superseding plan with no new evidence of its own or in a CHALLENGE."
+state:
+  base: execute
+message:
+  protocol_version: 1
+  id: 20261025T140900Z-0004-claude-DECIDE
+  goal: 20261025-rate-limit
+  from: claude
+  to: all
+  type: DECIDE
+  re:
+    - AC1
+  supersedes: plan
+  basis: authority
+  claim: Use in-process buckets after all.
+  phase: EXECUTE
+  ts: 2026-10-25T14:09:00Z
+  body: The replica check cannot be rerun from this environment.
+expect:
+  ok: false
+  rule: DECISION_IMMUTABLE
+  message: "Decision plan is decided. To supersede it, cite new evidence: a `test` with result fail, a `human` message, or an `external` URL."

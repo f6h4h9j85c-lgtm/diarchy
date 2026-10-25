@@ -1,0 +1,31 @@
+description: PROTOCOL.md example CHALLENGE with a pending test; arms the deadlock watch.
+state:
+  base: plan-proposed
+message:
+  protocol_version: 1
+  id: 20261025T140455Z-0001-codex-CHALLENGE
+  goal: 20261025-rate-limit
+  from: codex
+  to: claude
+  re:
+    - AC1
+  reply_to: 20261025T140210Z-0001-claude-PROPOSE
+  phase: PLAN
+  ts: 2026-10-25T14:04:55Z
+  body: ""
+  type: CHALLENGE
+  claim: An in-process bucket meets AC1 with no network hop if the API runs as one replica.
+  decision_id: plan
+  evidence:
+    - kind: test
+      test: kubectl -n prod get deploy api -o jsonpath='{.spec.replicas}' prints 1
+      result: pending
+expect:
+  ok: true
+  phase_after: PLAN
+  state:
+    deadlock_watch:
+      decision_id: plan
+      challenge_id: 20261025T140455Z-0001-codex-CHALLENGE
+      remaining: 2
+      deadline: 2026-10-25T14:14:55Z

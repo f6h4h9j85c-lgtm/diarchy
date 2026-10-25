@@ -1,0 +1,26 @@
+description: "SCHEMA (store half): reply_to names a message that does not exist."
+state:
+  base: plan-proposed
+message:
+  protocol_version: 1
+  id: 20261025T140455Z-0001-codex-CHALLENGE
+  goal: 20261025-rate-limit
+  from: codex
+  to: claude
+  type: CHALLENGE
+  re:
+    - AC1
+  reply_to: 20261025T140200Z-0009-claude-PROPOSE
+  decision_id: plan
+  claim: An in-process bucket meets AC1 if the API runs as one replica.
+  evidence:
+    - kind: test
+      test: kubectl -n prod get deploy api -o jsonpath='{.spec.replicas}' prints 1
+      result: pending
+  phase: PLAN
+  ts: 2026-10-25T14:04:55Z
+  body: ""
+expect:
+  ok: false
+  rule: SCHEMA
+  message: 'Field "reply_to": 20261025T140200Z-0009-claude-PROPOSE does not exist. Fix it per PROTOCOL.md section 3 and post again.'

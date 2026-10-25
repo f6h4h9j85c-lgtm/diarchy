@@ -1,0 +1,21 @@
+description: "SCHEMA: DECIDE without `basis`."
+state:
+  base: plan-proposed
+message:
+  protocol_version: 1
+  id: 20261025T140500Z-0002-claude-DECIDE
+  goal: 20261025-rate-limit
+  from: claude
+  to: all
+  type: DECIDE
+  re:
+    - AC1
+  decision_id: plan
+  claim: Use the Redis-backed token bucket.
+  phase: PLAN
+  ts: 2026-10-25T14:05:00Z
+  body: Three replicas share one counter.
+expect:
+  ok: false
+  rule: SCHEMA
+  message: 'Field "basis": required. Fix it per PROTOCOL.md section 3 and post again.'

@@ -1,0 +1,19 @@
+description: "HUMAN_LAST_RESORT: an agent posts ASK_HUMAN instead of BLOCKED."
+state:
+  base: execute-assigned
+message:
+  protocol_version: 1
+  id: 20261025T142000Z-0002-codex-ASK_HUMAN
+  goal: 20261025-rate-limit
+  from: codex
+  to: human
+  type: ASK_HUMAN
+  re:
+    - AC1
+  phase: EXECUTE
+  ts: 2026-10-25T14:20:00Z
+  body: Which Redis instance should the integration test use?
+expect:
+  ok: false
+  rule: HUMAN_LAST_RESORT
+  message: "Agents do not post ASK_HUMAN. Post BLOCKED with kind: external and the store pages the human."

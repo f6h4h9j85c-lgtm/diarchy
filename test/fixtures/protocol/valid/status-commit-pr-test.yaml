@@ -1,0 +1,43 @@
+description: "PROTOCOL.md example STATUS with commit, pr, and passing test: AC1 passing, PR registered, T1 done, talk counter reset."
+state:
+  base: execute-assigned
+message:
+  protocol_version: 1
+  id: 20261025T151200Z-0003-codex-STATUS
+  goal: 20261025-rate-limit
+  from: codex
+  to: all
+  re:
+    - AC1
+  phase: EXECUTE
+  ts: 2026-10-25T15:12:00Z
+  body: |
+    PR 412 ready for review.
+  type: STATUS
+  task: T1
+  task_status: done
+  evidence:
+    - kind: commit
+      sha: 9f3c2ab
+    - kind: pr
+      url: https://github.com/acme/api/pull/412
+    - kind: test
+      test: npm test -- rateLimit
+      result: pass
+expect:
+  ok: true
+  phase_after: EXECUTE
+  effects:
+    - kind: ac_status
+      ac: AC1
+      status: passing
+    - kind: task
+      id: T1
+      status: done
+  state:
+    prs:
+      https://github.com/acme/api/pull/412:
+        author: codex
+        reviews: []
+    used:
+      talk_since_work: 0

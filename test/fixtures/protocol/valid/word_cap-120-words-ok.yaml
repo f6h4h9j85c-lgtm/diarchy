@@ -1,0 +1,20 @@
+description: "WORD_CAP near miss: a 120-word body passes."
+state:
+  base: execute-assigned
+message:
+  protocol_version: 1
+  id: 20261025T142000Z-0002-codex-STATUS
+  goal: 20261025-rate-limit
+  from: codex
+  to: all
+  type: STATUS
+  re:
+    - AC1
+  evidence:
+    - kind: commit
+      sha: 9f3c2ab
+  phase: EXECUTE
+  ts: 2026-10-25T14:20:00Z
+  body: the middleware reads the api key checks the redis bucket and returns 429 when it is empty then refills one token per interval the middleware reads the api key checks the redis bucket and returns 429 when it is empty then refills one token per interval the middleware reads the api key checks the redis bucket and returns 429 when it is empty then refills one token per interval the middleware reads the api key checks the redis bucket and returns 429 when it is empty then refills one token per interval the middleware reads the api key checks the redis bucket and returns 429 when it is empty then refills one token per interval the middleware reads the api
+expect:
+  ok: true

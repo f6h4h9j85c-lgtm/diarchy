@@ -1,0 +1,20 @@
+description: "NO_ACK (c): STATUS with empty evidence is a bare acknowledgement."
+state:
+  base: execute-assigned
+message:
+  protocol_version: 1
+  id: 20261025T142000Z-0002-codex-STATUS
+  goal: 20261025-rate-limit
+  from: codex
+  to: all
+  type: STATUS
+  re:
+    - AC1
+  task: T1
+  task_status: in_progress
+  phase: EXECUTE
+  ts: 2026-10-25T14:20:00Z
+  body: Middleware scaffolded, tests next.
+expect:
+  ok: false
+  rule: NO_ACK

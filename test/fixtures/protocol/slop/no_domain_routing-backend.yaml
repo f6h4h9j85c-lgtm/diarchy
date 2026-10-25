@@ -1,0 +1,23 @@
+description: "NO_DOMAIN_ROUTING: ASSIGN reason routes by model strength."
+state:
+  base: execute
+message:
+  protocol_version: 1
+  id: 20261025T140800Z-0003-claude-ASSIGN
+  goal: 20261025-rate-limit
+  from: claude
+  to: codex
+  type: ASSIGN
+  re:
+    - AC1
+  task: T1
+  kind: implement
+  worktree: .diarchy/worktrees/codex
+  branch: diarchy/20261025-rate-limit/codex
+  reason: codex is better at backend
+  phase: EXECUTE
+  ts: 2026-10-25T14:08:00Z
+  body: ""
+expect:
+  ok: false
+  rule: NO_DOMAIN_ROUTING

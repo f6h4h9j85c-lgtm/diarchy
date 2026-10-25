@@ -1,0 +1,28 @@
+description: Lead assigns the review of codex's PR to the other agent (itself).
+state:
+  base: execute-pr
+message:
+  protocol_version: 1
+  id: 20261025T151300Z-0004-claude-ASSIGN
+  goal: 20261025-rate-limit
+  from: claude
+  to: claude
+  type: ASSIGN
+  re:
+    - AC1
+  new_task: Review PR 412
+  kind: review
+  pr: https://github.com/acme/api/pull/412
+  reason: availability
+  phase: EXECUTE
+  ts: 2026-10-25T15:13:00Z
+  body: ""
+expect:
+  ok: true
+  phase_after: EXECUTE
+  effects:
+    - kind: task
+      id: T4
+      task: Review PR 412
+      status: assigned
+      assignee: claude

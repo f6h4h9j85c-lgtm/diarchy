@@ -1,0 +1,20 @@
+description: "ONE_CLAIM: claim holds two sentences."
+state:
+  base: plan-fresh
+message:
+  protocol_version: 1
+  id: 20261025T140210Z-0001-claude-PROPOSE
+  goal: 20261025-rate-limit
+  from: claude
+  to: all
+  type: PROPOSE
+  re:
+    - AC1
+  decision_id: plan
+  claim: Use Redis for the bucket. It is shared by all replicas.
+  phase: PLAN
+  ts: 2026-10-25T14:02:10Z
+  body: ""
+expect:
+  ok: false
+  rule: ONE_CLAIM

@@ -1,0 +1,21 @@
+description: "TWO_ROUNDS: a second PROPOSE after PROPOSE and CHALLENGE on the open plan thread."
+state:
+  base: plan-challenged
+message:
+  protocol_version: 1
+  id: 20261025T140600Z-0002-claude-PROPOSE
+  goal: 20261025-rate-limit
+  from: claude
+  to: all
+  type: PROPOSE
+  re:
+    - AC1
+  decision_id: plan
+  claim: Keep Redis but add a local cache in front of it for hot keys.
+  phase: PLAN
+  ts: 2026-10-25T14:06:00Z
+  body: ""
+expect:
+  ok: false
+  rule: TWO_ROUNDS
+  message: Decision plan already has a PROPOSE and a CHALLENGE. Only the lead's DECIDE may follow.

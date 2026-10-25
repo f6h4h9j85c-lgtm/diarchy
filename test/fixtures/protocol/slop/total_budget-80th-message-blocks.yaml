@@ -1,0 +1,53 @@
+description: "TOTAL_BUDGET: the 80th PM message is accepted and trips the limit (BLOCKED, system ASK_HUMAN); the next post is rejected."
+state:
+  base: execute-assigned
+  used:
+    plan_messages: 3
+    messages_total: 79
+    talk_since_work: 1
+    wall_clock_minutes: 8
+    spend_usd: 0
+prior:
+  - message:
+      protocol_version: 1
+      id: 20261025T142000Z-0002-codex-STATUS
+      goal: 20261025-rate-limit
+      from: codex
+      to: all
+      type: STATUS
+      re:
+        - AC1
+      evidence:
+        - kind: commit
+          sha: 9f3c2ab
+      phase: EXECUTE
+      ts: 2026-10-25T14:20:00Z
+      body: Scaffold pushed.
+message:
+  protocol_version: 1
+  id: 20261025T142100Z-0004-claude-STATUS
+  goal: 20261025-rate-limit
+  from: claude
+  to: all
+  type: STATUS
+  re:
+    - AC1
+  evidence:
+    - kind: commit
+      sha: 9f3c2ab
+  phase: BLOCKED
+  ts: 2026-10-25T14:21:00Z
+  body: Config task started.
+expect:
+  ok: false
+  rule: TOTAL_BUDGET
+  phase_after: BLOCKED
+  message: Goal used 80 of 80 messages and is BLOCKED. The human has been paged; stop posting and wait.
+  effects:
+    - kind: phase
+      from: EXECUTE
+      to: BLOCKED
+    - kind: system_message
+      type: ASK_HUMAN
+      reason: TOTAL_BUDGET
+      to: human

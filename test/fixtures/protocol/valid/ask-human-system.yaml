@@ -1,0 +1,24 @@
+description: PROTOCOL.md example system ASK_HUMAN recorded in BLOCKED; system messages do not count against budgets.
+state:
+  base: blocked
+message:
+  protocol_version: 1
+  id: 20261025T143501Z-0001-system-ASK_HUMAN
+  goal: 20261025-rate-limit
+  from: system
+  to: human
+  re:
+    - AC1
+  reply_to: 20261025T143500Z-0002-codex-BLOCKED
+  phase: BLOCKED
+  ts: 2026-10-25T14:35:01Z
+  body: |
+    codex is BLOCKED (external): staging REDIS_URL missing. Answer with `diarchy reply "<text>"`.
+  type: ASK_HUMAN
+expect:
+  ok: true
+  phase_after: BLOCKED
+  state:
+    used:
+      messages_total: 5
+      plan_messages: 3

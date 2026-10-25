@@ -1,0 +1,38 @@
+description: Human DECIDE (basis human) from BLOCKED restores blocked_from (EXECUTE) and records D1 superseding plan.
+state:
+  base: blocked
+message:
+  protocol_version: 1
+  id: 20261025T144000Z-0002-human-DECIDE
+  goal: 20261025-rate-limit
+  from: human
+  to: all
+  type: DECIDE
+  re:
+    - AC1
+  supersedes: plan
+  basis: human
+  claim: Use REDIS_URL from the staging vault entry.
+  phase: BLOCKED
+  ts: 2026-10-25T14:40:00Z
+  body: Added REDIS_URL to .env.staging; continue.
+expect:
+  ok: true
+  phase_after: EXECUTE
+  effects:
+    - kind: decision_closed
+      id: D1
+      supersedes: plan
+    - kind: phase
+      from: BLOCKED
+      to: EXECUTE
+  state:
+    blocked_from: null
+    deadlock_watch: null
+    decisions:
+      plan:
+        status: superseded
+        superseded_by: D1
+      D1:
+        status: decided
+        supersedes: plan

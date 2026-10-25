@@ -1,0 +1,29 @@
+description: "PROTOCOL.md example KICKOFF against the pre-kickoff state: opens PLAN and decision plan."
+state:
+  base: initial
+message:
+  protocol_version: 1
+  id: 20261025T140000Z-0001-human-KICKOFF
+  goal: 20261025-rate-limit
+  from: human
+  to: all
+  re:
+    - AC1
+    - AC2
+    - AC3
+  phase: PLAN
+  ts: 2026-10-25T14:00:00Z
+  body: |
+    Add per-API-key rate limiting to the public API.
+  type: KICKOFF
+expect:
+  ok: true
+  phase_after: PLAN
+  effects:
+    - kind: phase
+      from: null
+      to: PLAN
+    - kind: decision_opened
+      id: plan
+  state:
+    kickoff_id: 20261025T140000Z-0001-human-KICKOFF

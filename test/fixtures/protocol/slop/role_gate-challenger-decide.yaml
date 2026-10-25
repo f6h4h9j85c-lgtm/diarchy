@@ -1,0 +1,22 @@
+description: "ROLE_GATE: the challenger tries to DECIDE."
+state:
+  base: plan-challenged
+message:
+  protocol_version: 1
+  id: 20261025T140600Z-0002-codex-DECIDE
+  goal: 20261025-rate-limit
+  from: codex
+  to: all
+  type: DECIDE
+  re:
+    - AC1
+  decision_id: plan
+  basis: authority
+  claim: Use the in-process bucket.
+  phase: PLAN
+  ts: 2026-10-25T14:06:00Z
+  body: The replica check is not worth running.
+expect:
+  ok: false
+  rule: ROLE_GATE
+  message: DECIDE may only be posted by the lead (claude). You are the challenger.

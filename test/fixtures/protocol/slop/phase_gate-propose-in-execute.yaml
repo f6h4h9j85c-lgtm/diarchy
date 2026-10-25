@@ -1,0 +1,20 @@
+description: "PHASE_GATE: PROPOSE during EXECUTE."
+state:
+  base: execute
+message:
+  protocol_version: 1
+  id: 20261025T140900Z-0002-codex-PROPOSE
+  goal: 20261025-rate-limit
+  from: codex
+  to: all
+  type: PROPOSE
+  re:
+    - AC1
+  claim: Add a Retry-After header to every 429 response.
+  phase: EXECUTE
+  ts: 2026-10-25T14:09:00Z
+  body: ""
+expect:
+  ok: false
+  rule: PHASE_GATE
+  message: "PROPOSE is not allowed in phase EXECUTE. Allowed now: STATUS, BLOCKED, CHALLENGE."

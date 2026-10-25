@@ -1,0 +1,24 @@
+description: "CHALLENGE_NEEDS_TEST: CHALLENGE whose evidence has no `test` item."
+state:
+  base: plan-proposed
+message:
+  protocol_version: 1
+  id: 20261025T140455Z-0001-codex-CHALLENGE
+  goal: 20261025-rate-limit
+  from: codex
+  to: claude
+  type: CHALLENGE
+  re:
+    - AC1
+  reply_to: 20261025T140210Z-0001-claude-PROPOSE
+  decision_id: plan
+  claim: An in-process bucket meets AC1 if the API runs as one replica.
+  evidence:
+    - kind: file
+      path: docs/deploy.md
+  phase: PLAN
+  ts: 2026-10-25T14:04:55Z
+  body: ""
+expect:
+  ok: false
+  rule: CHALLENGE_NEEDS_TEST

@@ -1,0 +1,29 @@
+description: "TALK_WORK_RATIO near miss: at the limit a STATUS with evidence is accepted and resets the counter."
+state:
+  base: execute
+  used:
+    plan_messages: 3
+    messages_total: 6
+    talk_since_work: 3
+    wall_clock_minutes: 9
+    spend_usd: 0
+message:
+  protocol_version: 1
+  id: 20261025T140900Z-0002-codex-STATUS
+  goal: 20261025-rate-limit
+  from: codex
+  to: all
+  type: STATUS
+  re:
+    - AC1
+  evidence:
+    - kind: commit
+      sha: 9f3c2ab
+  phase: EXECUTE
+  ts: 2026-10-25T14:09:00Z
+  body: Middleware scaffolded.
+expect:
+  ok: true
+  state:
+    used:
+      talk_since_work: 0

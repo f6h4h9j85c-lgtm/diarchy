@@ -1,0 +1,29 @@
+description: "TALK_WORK_RATIO: fourth EXECUTE message with no STATUS since the last one."
+state:
+  base: execute
+  used:
+    plan_messages: 3
+    messages_total: 6
+    talk_since_work: 3
+    wall_clock_minutes: 9
+    spend_usd: 0
+message:
+  protocol_version: 1
+  id: 20261025T140900Z-0004-claude-ASSIGN
+  goal: 20261025-rate-limit
+  from: claude
+  to: codex
+  type: ASSIGN
+  re:
+    - AC1
+  task: T2
+  kind: implement
+  worktree: .diarchy/worktrees/codex
+  branch: diarchy/20261025-rate-limit/codex
+  phase: EXECUTE
+  ts: 2026-10-25T14:09:00Z
+  body: ""
+expect:
+  ok: false
+  rule: TALK_WORK_RATIO
+  message: 3 messages since the last STATUS with evidence. Post STATUS with evidence, BLOCKED, or DONE before anything else.

@@ -1,0 +1,70 @@
+description: Lead answers a reopening CHALLENGE with a superseding DECIDE; the CHALLENGE's new evidence satisfies DECISION_IMMUTABLE and the store assigns D1.
+state:
+  base: execute
+  decisions:
+    plan:
+      status: decided
+      proposer: claude
+      messages: 1
+      challenges: 0
+      supersedes: null
+      superseded_by: null
+      evidence: []
+      challenge: null
+prior:
+  - message:
+      protocol_version: 1
+      id: 20261025T140900Z-0002-codex-CHALLENGE
+      goal: 20261025-rate-limit
+      from: codex
+      to: claude
+      type: CHALLENGE
+      re:
+        - AC1
+      reply_to: 20261025T140730Z-0002-claude-DECIDE
+      decision_id: plan
+      claim: The in-process bucket meets AC1 because the API now runs one replica.
+      evidence:
+        - kind: test
+          test: kubectl -n prod get deploy api -o jsonpath='{.spec.replicas}' prints 3
+          result: fail
+          log: .diarchy/logs/replicas-2.txt
+      phase: EXECUTE
+      ts: 2026-10-25T14:09:00Z
+      body: ""
+message:
+  protocol_version: 1
+  id: 20261025T141000Z-0004-claude-DECIDE
+  goal: 20261025-rate-limit
+  from: claude
+  to: all
+  type: DECIDE
+  re:
+    - AC1
+    - AC2
+    - AC3
+  reply_to: 20261025T140900Z-0002-codex-CHALLENGE
+  supersedes: plan
+  basis: adopted-challenge
+  claim: Use an in-process bucket because the API now runs one replica.
+  phase: EXECUTE
+  ts: 2026-10-25T14:10:00Z
+  body: Replica count dropped to one after the autoscaler change.
+expect:
+  ok: true
+  phase_after: EXECUTE
+  effects:
+    - kind: decision_closed
+      id: D1
+      supersedes: plan
+  state:
+    deadlock_watch: null
+    decisions:
+      plan:
+        status: superseded
+        superseded_by: D1
+      D1:
+        status: decided
+        supersedes: plan
+    used:
+      talk_since_work: 1

@@ -1,0 +1,21 @@
+description: BLOCKED (internal) is recorded without a phase change or a page.
+state:
+  base: execute-assigned
+message:
+  protocol_version: 1
+  id: 20261025T143000Z-0002-codex-BLOCKED
+  goal: 20261025-rate-limit
+  from: codex
+  to: all
+  type: BLOCKED
+  re:
+    - AC1
+  kind: internal
+  phase: EXECUTE
+  ts: 2026-10-25T14:30:00Z
+  body: Waiting on the T1 branch rebase before the integration tests can run.
+expect:
+  ok: true
+  phase_after: EXECUTE
+  state:
+    blocked_from: null

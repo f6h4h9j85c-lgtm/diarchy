@@ -1,0 +1,46 @@
+description: "NEW_EVIDENCE near miss: CHALLENGE on the decided plan thread in EXECUTE carrying a failed test is accepted."
+state:
+  base: execute
+  decisions:
+    plan:
+      status: decided
+      proposer: claude
+      messages: 1
+      challenges: 0
+      supersedes: null
+      superseded_by: null
+      evidence: []
+      challenge: null
+message:
+  protocol_version: 1
+  id: 20261025T140900Z-0002-codex-CHALLENGE
+  goal: 20261025-rate-limit
+  from: codex
+  to: claude
+  type: CHALLENGE
+  re:
+    - AC1
+  reply_to: 20261025T140730Z-0002-claude-DECIDE
+  decision_id: plan
+  claim: The in-process bucket meets AC1 because the API now runs one replica.
+  evidence:
+    - kind: test
+      test: kubectl -n prod get deploy api -o jsonpath='{.spec.replicas}' prints 3
+      result: fail
+      log: .diarchy/logs/replicas-2.txt
+  phase: EXECUTE
+  ts: 2026-10-25T14:09:00Z
+  body: ""
+expect:
+  ok: true
+  phase_after: EXECUTE
+  state:
+    deadlock_watch:
+      decision_id: plan
+      challenge_id: 20261025T140900Z-0002-codex-CHALLENGE
+    decisions:
+      plan:
+        status: decided
+        challenges: 1
+    used:
+      talk_since_work: 1

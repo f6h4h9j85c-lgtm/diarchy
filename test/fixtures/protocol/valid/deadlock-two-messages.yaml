@@ -1,0 +1,53 @@
+description: "DEADLOCK trigger: two accepted messages after a CHALLENGE without the lead's DECIDE block the goal and page the human."
+state:
+  base: plan-challenged
+prior:
+  - message:
+      protocol_version: 1
+      id: 20261025T140530Z-0002-codex-STATUS
+      goal: 20261025-rate-limit
+      from: codex
+      to: all
+      type: STATUS
+      re:
+        - AC1
+      evidence:
+        - kind: file
+          path: docs/replicas.md
+      phase: PLAN
+      ts: 2026-10-25T14:05:30Z
+      body: Replica count written to docs/replicas.md.
+message:
+  protocol_version: 1
+  id: 20261025T140600Z-0002-claude-STATUS
+  goal: 20261025-rate-limit
+  from: claude
+  to: all
+  type: STATUS
+  re:
+    - AC1
+  evidence:
+    - kind: file
+      path: docs/plan.md
+  phase: PLAN
+  ts: 2026-10-25T14:06:00Z
+  body: Plan notes updated.
+expect:
+  ok: true
+  phase_after: BLOCKED
+  effects:
+    - kind: phase
+      from: PLAN
+      to: BLOCKED
+    - kind: system_message
+      type: ASK_HUMAN
+      reason: DEADLOCK
+      reply_to: 20261025T140455Z-0001-codex-CHALLENGE
+      decision_id: plan
+      re:
+        - AC1
+      body: Lead did not DECIDE plan within 2 messages or 10 minutes. Goal BLOCKED; human paged.
+  state:
+    blocked_from: PLAN
+    deadlock_watch:
+      remaining: 0

@@ -1,0 +1,46 @@
+description: "Lead adopts the CHALLENGE (basis adopted-challenge), closing plan: PLAN -> EXECUTE, tasks created, watch cleared."
+state:
+  base: plan-challenged
+message:
+  protocol_version: 1
+  id: 20261025T140730Z-0002-claude-DECIDE
+  goal: 20261025-rate-limit
+  from: claude
+  to: all
+  type: DECIDE
+  re:
+    - AC1
+    - AC2
+    - AC3
+  reply_to: 20261025T140455Z-0001-codex-CHALLENGE
+  decision_id: plan
+  claim: Use an in-process bucket because the API runs as one replica.
+  basis: adopted-challenge
+  tasks:
+    - Token-bucket middleware in src/middleware/rateLimit.ts
+    - RATE_LIMIT_PER_MIN config, default 100
+    - Tests for 429 and config override; full suite green
+  phase: PLAN
+  ts: 2026-10-25T14:07:30Z
+  body: ""
+expect:
+  ok: true
+  phase_after: EXECUTE
+  effects:
+    - kind: decision_closed
+      id: plan
+      supersedes: null
+    - kind: task
+      id: T1
+      status: todo
+    - kind: task
+      id: T3
+      status: todo
+    - kind: phase
+      from: PLAN
+      to: EXECUTE
+  state:
+    deadlock_watch: null
+    decisions:
+      plan:
+        status: decided

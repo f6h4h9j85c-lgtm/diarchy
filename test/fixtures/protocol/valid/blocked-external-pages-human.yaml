@@ -1,0 +1,33 @@
+description: "PROTOCOL.md example BLOCKED (external): EXECUTE -> BLOCKED with a system ASK_HUMAN replying to it."
+state:
+  base: execute-assigned
+message:
+  protocol_version: 1
+  id: 20261025T143500Z-0002-codex-BLOCKED
+  goal: 20261025-rate-limit
+  from: codex
+  to: all
+  re:
+    - AC1
+  phase: EXECUTE
+  ts: 2026-10-25T14:35:00Z
+  body: |
+    Integration test needs staging REDIS_URL. Not in .env.example or the vault; I will not guess a credential.
+  type: BLOCKED
+  kind: external
+expect:
+  ok: true
+  phase_after: BLOCKED
+  effects:
+    - kind: phase
+      from: EXECUTE
+      to: BLOCKED
+    - kind: system_message
+      type: ASK_HUMAN
+      reason: BLOCKED
+      to: human
+      re:
+        - AC1
+      reply_to: 20261025T143500Z-0002-codex-BLOCKED
+  state:
+    blocked_from: EXECUTE

@@ -1,0 +1,35 @@
+description: "Reviewer posts review evidence (approve): PR gets its cross-review, review task closes."
+state:
+  base: execute-review-assigned
+message:
+  protocol_version: 1
+  id: 20261025T152000Z-0005-claude-STATUS
+  goal: 20261025-rate-limit
+  from: claude
+  to: all
+  type: STATUS
+  re:
+    - AC1
+  task: T4
+  task_status: done
+  evidence:
+    - kind: review
+      url: https://github.com/acme/api/pull/412
+      verdict: approve
+  phase: EXECUTE
+  ts: 2026-10-25T15:20:00Z
+  body: Bucket refill math checked against the spec.
+expect:
+  ok: true
+  phase_after: EXECUTE
+  effects:
+    - kind: task
+      id: T4
+      status: done
+  state:
+    prs:
+      https://github.com/acme/api/pull/412:
+        author: codex
+        reviews:
+          - by: claude
+            verdict: approve

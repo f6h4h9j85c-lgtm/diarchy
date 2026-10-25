@@ -1,0 +1,33 @@
+description: Human DECIDE with `budgets` lifts an exhausted messages_total so the goal can resume.
+state:
+  base: blocked
+  used:
+    plan_messages: 3
+    messages_total: 80
+    talk_since_work: 1
+    wall_clock_minutes: 35
+    spend_usd: 0
+message:
+  protocol_version: 1
+  id: 20261025T144000Z-0002-human-DECIDE
+  goal: 20261025-rate-limit
+  from: human
+  to: all
+  type: DECIDE
+  re:
+    - AC1
+  supersedes: plan
+  basis: human
+  claim: Continue with a larger message budget.
+  budgets:
+    messages_total: 160
+  phase: BLOCKED
+  ts: 2026-10-25T14:40:00Z
+  body: Raising messages_total to 160.
+expect:
+  ok: true
+  phase_after: EXECUTE
+  state:
+    limits:
+      messages_total: 160
+    blocked_from: null

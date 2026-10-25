@@ -1,0 +1,38 @@
+description: Human DECIDE without `budgets` on an exhausted messages_total is accepted, then the goal re-blocks at once.
+state:
+  base: blocked
+  used:
+    plan_messages: 3
+    messages_total: 80
+    talk_since_work: 1
+    wall_clock_minutes: 35
+    spend_usd: 0
+message:
+  protocol_version: 1
+  id: 20261025T144000Z-0002-human-DECIDE
+  goal: 20261025-rate-limit
+  from: human
+  to: all
+  type: DECIDE
+  re:
+    - AC1
+  supersedes: plan
+  basis: human
+  claim: Continue as planned.
+  phase: BLOCKED
+  ts: 2026-10-25T14:40:00Z
+  body: Nothing else to add.
+expect:
+  ok: true
+  phase_after: BLOCKED
+  effects:
+    - kind: phase
+      from: BLOCKED
+      to: EXECUTE
+    - kind: phase
+      from: EXECUTE
+      to: BLOCKED
+    - kind: system_message
+      reason: TOTAL_BUDGET
+  state:
+    blocked_from: EXECUTE

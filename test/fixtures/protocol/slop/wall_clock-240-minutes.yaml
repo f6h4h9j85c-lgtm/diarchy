@@ -1,0 +1,23 @@
+description: "WALL_CLOCK: 240 minutes after kickoff.created, posts are rejected."
+state:
+  base: execute-assigned
+now: 2026-10-25T18:00:00Z
+message:
+  protocol_version: 1
+  id: 20261025T180000Z-0002-codex-STATUS
+  goal: 20261025-rate-limit
+  from: codex
+  to: all
+  type: STATUS
+  re:
+    - AC1
+  evidence:
+    - kind: commit
+      sha: 9f3c2ab
+  phase: EXECUTE
+  ts: 2026-10-25T18:00:00Z
+  body: Config task started.
+expect:
+  ok: false
+  rule: WALL_CLOCK
+  message: Wall clock 240 min exceeded; goal is BLOCKED. The human has been paged; stop posting and wait.

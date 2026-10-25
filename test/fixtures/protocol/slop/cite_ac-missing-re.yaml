@@ -1,0 +1,20 @@
+description: "CITE_AC: `re` absent."
+state:
+  base: execute-assigned
+message:
+  protocol_version: 1
+  id: 20261025T142000Z-0002-codex-STATUS
+  goal: 20261025-rate-limit
+  from: codex
+  to: all
+  type: STATUS
+  evidence:
+    - kind: commit
+      sha: 9f3c2ab
+  phase: EXECUTE
+  ts: 2026-10-25T14:20:00Z
+  body: Middleware scaffolded.
+expect:
+  ok: false
+  rule: CITE_AC
+  message: "Set `re` to acceptance criteria that exist in goal.md (AC1, AC2, AC3). Unknown: none cited."

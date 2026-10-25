@@ -1,0 +1,21 @@
+description: "SINGLE_KICKOFF: a second KICKOFF while the goal is active."
+state:
+  base: plan-fresh
+message:
+  protocol_version: 1
+  id: 20261025T140100Z-0002-human-KICKOFF
+  goal: 20261025-rate-limit
+  from: human
+  to: all
+  type: KICKOFF
+  re:
+    - AC1
+    - AC2
+    - AC3
+  phase: PLAN
+  ts: 2026-10-25T14:01:00Z
+  body: Add per-API-key rate limiting to the public API.
+expect:
+  ok: false
+  rule: SINGLE_KICKOFF
+  message: Goal 20261025-rate-limit is already active (phase PLAN). Call read instead of kickoff.

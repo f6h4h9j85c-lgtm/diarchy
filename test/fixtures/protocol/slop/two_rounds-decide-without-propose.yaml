@@ -1,0 +1,27 @@
+description: "TWO_ROUNDS: the lead DECIDEs plan right after KICKOFF, before any PROPOSE plan, which would skip the PLAN debate."
+state:
+  base: plan-fresh
+message:
+  protocol_version: 1
+  id: 20261025T140100Z-0001-claude-DECIDE
+  goal: 20261025-rate-limit
+  from: claude
+  to: all
+  type: DECIDE
+  re:
+    - AC1
+    - AC2
+    - AC3
+  decision_id: plan
+  basis: authority
+  claim: A Redis-backed token bucket keyed by API key satisfies AC1 and AC2.
+  tasks:
+    - Token-bucket middleware in src/middleware/rateLimit.ts
+  phase: PLAN
+  ts: 2026-10-25T14:01:00Z
+  body: No time to debate the design.
+expect:
+  ok: false
+  rule: TWO_ROUNDS
+  message: Decision plan has no PROPOSE yet. Only the lead's PROPOSE may follow.
+  phase_after: PLAN

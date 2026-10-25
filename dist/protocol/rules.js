@@ -103,8 +103,15 @@ function threadProblem(message, state) {
         return { field: "decision_id", problem: `unknown decision ${message.decision_id}; omit it and the store assigns one` };
     }
     if (message.type === "CHALLENGE" && message.decision_id !== undefined) {
-        if (!(message.decision_id in state.decisions)) {
+        const decision = state.decisions[message.decision_id];
+        if (decision === undefined)
             return { field: "decision_id", problem: `unknown decision ${message.decision_id}` };
+        if (decision.status === "superseded") {
+            // No DECIDE can answer it: the lead supersedes only the live decision (decideProblem).
+            return {
+                field: "decision_id",
+                problem: `${message.decision_id} is superseded by ${decision.superseded_by}; challenge that instead`,
+            };
         }
         const target = message.reply_to === undefined ? undefined : messageRef(state, message.reply_to);
         if (target !== undefined && target.decision_id !== message.decision_id) {
@@ -218,7 +225,11 @@ const phaseGate = ({ message, state, callerAgent }) => {
     const planDecideWhileOpen = message.type === "DECIDE" &&
         message.decision_id === "plan" &&
         openThreads(state).some((id) => id !== "plan");
-    if (phaseAllows(state, message.type) && !planDecideWhileOpen)
+    // One watch at a time: a second CHALLENGE would replace it and leave the first one unenforced.
+    const challengeWhileWatched = message.type === "CHALLENGE" &&
+        state.deadlock_watch !== null &&
+        message.decision_id !== state.deadlock_watch.decision_id;
+    if (phaseAllows(state, message.type) && !planDecideWhileOpen && !challengeWhileWatched)
         return null;
     const allowed = allowedTypes(state, callerAgent);
     return reject("PHASE_GATE", `${message.type} is not allowed in phase ${state.phase}. Allowed now: ${allowed.length > 0 ? allowed.join(", ") : "none"}.`);
@@ -289,10 +300,18 @@ const oneChallenge = ({ message, state }) => {
     return reject("ONE_CHALLENGE", `Decision ${message.decision_id} was already challenged once. Wait for the lead's DECIDE; reopening needs new evidence.`);
 };
 const twoRounds = ({ message, state }) => {
-    if ((message.type !== "PROPOSE" && message.type !== "CHALLENGE") || message.decision_id === undefined)
+    if (message.decision_id === undefined)
         return null;
     const decision = state.decisions[message.decision_id];
     if (decision === undefined || decision.status !== "open")
+        return null;
+    if (message.type === "DECIDE") {
+        // The human may rule on any thread, and a spent PLAN budget leaves the lead's DECIDE as the only way out.
+        if (decision.messages > 0 || message.from === AGENT_HUMAN || planBudgetSpent(state))
+            return null;
+        return reject("TWO_ROUNDS", `Decision ${message.decision_id} has no PROPOSE yet. Only the lead's PROPOSE may follow.`);
+    }
+    if (message.type !== "PROPOSE" && message.type !== "CHALLENGE")
         return null;
     const overflow = message.type === "PROPOSE" ? decision.messages >= 1 : decision.messages >= state.limits.rounds_per_decision;
     if (!overflow)
@@ -377,6 +396,10 @@ export function doneMissing(message, state) {
     }
     for (const id of openThreads(state))
         missing.push(`decision ${id} is open`);
+    for (const [id, decision] of Object.entries(state.decisions)) {
+        if (decision.challenge !== null)
+            missing.push(`decision ${id} has an unanswered CHALLENGE`);
+    }
     if (state.deadlock_watch !== null)
         missing.push(`deadlock watch on ${state.deadlock_watch.decision_id} is active`);
     for (const task of Object.values(state.tasks)) {

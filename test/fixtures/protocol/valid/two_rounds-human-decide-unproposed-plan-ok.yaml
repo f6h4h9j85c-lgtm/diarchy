@@ -1,0 +1,30 @@
+description: "TWO_ROUNDS near miss: the human may rule on plan before any PROPOSE (diarchy reply --decision plan from a PLAN block); the goal resumes and plan closes into EXECUTE."
+state:
+  base: plan-fresh
+  phase: BLOCKED
+  blocked_from: PLAN
+message:
+  protocol_version: 1
+  id: 20261025T141000Z-0001-human-DECIDE
+  goal: 20261025-rate-limit
+  from: human
+  to: all
+  type: DECIDE
+  re:
+    - AC1
+    - AC2
+    - AC3
+  decision_id: plan
+  basis: human
+  claim: Use a Redis-backed token bucket keyed by API key.
+  phase: BLOCKED
+  ts: 2026-10-25T14:10:00Z
+  body: ""
+expect:
+  ok: true
+  phase_after: EXECUTE
+  state:
+    blocked_from: null
+    decisions:
+      plan:
+        status: decided

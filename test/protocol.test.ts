@@ -245,6 +245,16 @@ describe("ANTI-SLOP.md", () => {
   });
 });
 
+describe("PROTOCOL.md section 7", () => {
+  const protocol = readFileSync(join(DOCS, "PROTOCOL.md"), "utf8");
+  const section = protocol.slice(protocol.indexOf("## 7. "), protocol.indexOf("## 8. "));
+
+  it("states the pending-test rule NEW_EVIDENCE enforces (valid/challenge-pending-test-with-external.yaml), not a stricter one", () => {
+    expect(section).not.toMatch(/`result: pending` is allowed only/);
+    expect(section).toMatch(/A `pending` test is not new evidence \(3\.1\)[^.]*only in PLAN on an open thread[^.]*\(NEW_EVIDENCE\)/);
+  });
+});
+
 // ---------------------------------------------------------------------------
 // PROTOCOL.md examples
 // ---------------------------------------------------------------------------
@@ -571,8 +581,12 @@ describe("allowedTypes", () => {
   it("follows phase and role", () => {
     expect(allowedTypes(loadBase("initial"), "human")).toEqual(["KICKOFF"]);
     expect(allowedTypes(loadBase("initial"), "codex")).toEqual([]);
-    expect(allowedTypes(loadBase("plan-fresh"), "claude")).toEqual(["PROPOSE", "DECIDE", "STATUS", "BLOCKED"]);
+    // No DECIDE before plan has a PROPOSE (TWO_ROUNDS).
+    expect(allowedTypes(loadBase("plan-fresh"), "claude")).toEqual(["PROPOSE", "STATUS", "BLOCKED"]);
+    expect(allowedTypes(loadBase("plan-proposed"), "claude")).toEqual(["PROPOSE", "DECIDE", "STATUS", "BLOCKED"]);
     expect(allowedTypes(loadBase("plan-fresh"), "codex")).toEqual(["PROPOSE", "CHALLENGE", "STATUS", "BLOCKED"]);
+    // No second CHALLENGE while the deadlock watch waits on the lead's DECIDE (PHASE_GATE).
+    expect(allowedTypes(loadBase("plan-challenged"), "codex")).toEqual(["PROPOSE", "STATUS", "BLOCKED"]);
     expect(allowedTypes(loadBase("execute"), "claude")).toEqual(["STATUS", "ASSIGN", "BLOCKED", "DONE", "DECIDE"]);
     expect(allowedTypes(loadBase("execute"), "codex")).toEqual(["STATUS", "BLOCKED", "CHALLENGE"]);
     expect(allowedTypes(loadBase("blocked"), "claude")).toEqual([]);
@@ -585,6 +599,8 @@ describe("allowedTypes", () => {
     const spent: GoalState = { ...plan, used: { ...plan.used, plan_messages: 12 } };
     expect(allowedTypes(spent, "claude")).toEqual(["DECIDE", "BLOCKED"]);
     expect(allowedTypes(spent, "codex")).toEqual(["BLOCKED"]);
+    const fresh = loadBase("plan-fresh");
+    expect(allowedTypes({ ...fresh, used: { ...fresh.used, plan_messages: 12 } }, "claude")).toEqual(["DECIDE", "BLOCKED"]);
     const exec = loadBase("execute");
     const talky: GoalState = { ...exec, used: { ...exec.used, talk_since_work: 3 } };
     expect(allowedTypes(talky, "claude")).toEqual(["STATUS", "BLOCKED", "DONE", "DECIDE"]);

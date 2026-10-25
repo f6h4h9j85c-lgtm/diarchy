@@ -77,7 +77,7 @@ function loadBase(name: string): GoalState {
 /** `base:` names a shared state; the remaining keys override it shallowly. */
 function resolveState(spec: Fixture["state"]): GoalState {
   const { base, ...overrides } = spec;
-  const baseState: Record<string, unknown> = base === undefined ? {} : loadBase(base);
+  const baseState: Partial<GoalState> = base === undefined ? {} : loadBase(base);
   return parseGoalState({ ...baseState, ...overrides });
 }
 

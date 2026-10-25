@@ -36,7 +36,7 @@ interface Run {
 /** Run the CLI from source; stdin is always closed so hook commands see end-of-input. */
 function cli(args: string[], options: { input?: string } = {}): Promise<Run> {
   return new Promise((resolve, reject) => {
-    const env = { ...process.env, ...GIT_ENV };
+    const env: NodeJS.ProcessEnv = { ...process.env, ...GIT_ENV };
     delete env.DIARCHY_PROJECT;
     delete env.DIARCHY_FAKE_MODE;
     const child = spawn(process.execPath, ["--import", "tsx", CLI, ...args], { cwd: ROOT, env, stdio: ["pipe", "pipe", "pipe"] });

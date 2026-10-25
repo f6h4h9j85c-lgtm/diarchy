@@ -1,4 +1,4 @@
-import { GENERATED, SEP, GLYPHS, bodyParagraph, budgetLine, budgetTrigger, byId, challengerList, code, evidenceBullet, hms, humanSlot, inline, inlineText, italic, link, localHint, messageRef, navLine, sortMessages, utcDate, } from "./shared.js";
+import { GENERATED, SEP, GLYPHS, budgetLine, budgetTrigger, byId, challengerList, code, escapePunctuation, evidenceBullet, hms, humanSlot, italic, link, localHint, messageRef, navLine, oneLine, plainBlock, plainInline, sortMessages, utcDate, visible, } from "./shared.js";
 const SUMMARY_MAX = 80;
 export function renderChat(messages, state, kickoff, opts = {}) {
     const ordered = sortMessages(messages);
@@ -55,13 +55,13 @@ function strip(messages, state, kickoff, opts) {
     const nav = `${blocked ? "Question and how to answer: " : ""}${navLine(messages)}`;
     return callout(blocked ? "WARNING" : "NOTE", [stateLine, budgetLine(state), latest, nav]);
 }
-/** Claim, else the first body line, cut at 80 characters on whitespace, then escaped as one-line agent text. */
+/** Claim, else the first body line, cut at 80 characters on whitespace, then escaped as plain text (1.1). */
 function summary(message) {
-    const text = inline(message.claim ?? message.body.trim().split("\n")[0] ?? "").trim();
+    const text = oneLine(message.claim ?? visible(message.body).trim().split("\n")[0] ?? "");
     if (text.length <= SUMMARY_MAX)
-        return inlineText(text);
+        return escapePunctuation(text);
     const cut = text.lastIndexOf(" ", SUMMARY_MAX);
-    return `${inlineText((cut > 0 ? text.slice(0, cut) : text.slice(0, SUMMARY_MAX)).trimEnd())}…`;
+    return `${escapePunctuation((cut > 0 ? text.slice(0, cut) : text.slice(0, SUMMARY_MAX)).trimEnd())}…`;
 }
 // ---------------------------------------------------------------------------
 // 2.2 Message block
@@ -75,7 +75,7 @@ function block(message, ctx) {
         parts.push(fields);
     if (message.claim !== undefined)
         parts.push(italic(message.claim));
-    const body = bodyParagraph(message.body);
+    const body = plainBlock(message.body);
     if (body !== "")
         parts.push(body);
     const evidence = message.evidence ?? [];
@@ -83,11 +83,11 @@ function block(message, ctx) {
         parts.push(evidence.map((item) => evidenceBullet(item, ctx.byId)).join("\n"));
     const tasks = message.type === "DECIDE" && message.decision_id === "plan" ? (message.tasks ?? []) : [];
     if (tasks.length > 0) {
-        parts.push(["Tasks:", ...tasks.map((task, index) => `- T${index + 1}: ${inlineText(task)}`)].join("\n"));
+        parts.push(["Tasks:", ...tasks.map((task, index) => `- T${index + 1}: ${plainInline(task)}`)].join("\n"));
     }
     const added = message.type === "DECIDE" && message.decision_id === "plan" ? (message.ac_add ?? []) : [];
     if (added.length > 0) {
-        const lines = added.map((criterion, index) => `- AC${ctx.acCount + index + 1}: ${inlineText(criterion)}`);
+        const lines = added.map((criterion, index) => `- AC${ctx.acCount + index + 1}: ${plainInline(criterion)}`);
         parts.push(["Acceptance criteria added:", ...lines].join("\n"));
     }
     return parts.join("\n\n");
@@ -145,10 +145,10 @@ function assignFields(message, ctx) {
         const task = message.task ?? ctx.newTaskIds.get(message.id) ?? "";
         segments.push(`implement ${task} on ${code(message.branch ?? "")}`);
         if (message.new_task !== undefined)
-            segments.push(`new task: ${inlineText(message.new_task)}`);
+            segments.push(`new task: ${plainInline(message.new_task)}`);
     }
     if (message.reason !== undefined)
-        segments.push(`reason: ${inlineText(message.reason)}`);
+        segments.push(`reason: ${plainInline(message.reason)}`);
     return segments;
 }
 // ---------------------------------------------------------------------------

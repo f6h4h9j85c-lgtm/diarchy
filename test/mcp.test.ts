@@ -800,7 +800,8 @@ describe("resources", () => {
     const goalText = resourceText(goal);
     expect(goalText.startsWith(GENERATED)).toBe(true);
     expect(goalText).toContain(`# ${GOAL_ID}`);
-    expect(goalText).toContain(ACS[0]);
+    // goal.md shows agent text as plain text (RENDERING.md 1.1): the criterion's final period is escaped.
+    expect(goalText).toContain("| AC1 | Requests over the limit get 429\\. | open |");
     const chatText = resourceText(await h.codex.readResource({ uri: "diarchy://chat" }));
     expect(chatText.startsWith(`${GENERATED}\n# Chat: ${GOAL_ID}`)).toBe(true);
     expect(chatText).toContain("KICKOFF");

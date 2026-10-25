@@ -6,11 +6,11 @@
 >
 > **codex is blocked (external), re AC1:**
 >
-> > Integration test needs staging REDIS_URL. Not in .env.example or the vault; I will not guess a credential.
+> > Integration test needs staging REDIS\_URL\. Not in \.env\.example or the vault\; I will not guess a credential\.
 >
 > **To answer:** run `diarchy reply "<your answer>"`. It is posted as a DECIDE with basis human, recorded in decisions.md, and EXECUTE resumes. `diarchy stop` ends the run and leaves it BLOCKED.
 
-Add per-API-key rate limiting to the public API.
+Add per\-API\-key rate limiting to the public API\.
 
 [chat](chat.md) · [decisions (2)](decisions.md)
 
@@ -26,14 +26,14 @@ Add per-API-key rate limiting to the public API.
 
 | id | criterion | status |
 |---|---|---|
-| AC1 | Requests over the per-key limit get HTTP 429 with a Retry-After header, and the count is shared across all API replicas. | open |
-| AC2 | The limit is configurable through RATE_LIMIT_PER_MIN with a documented default. | open |
-| AC3 | Tests cover the 429 path and the config override, and the full suite is green on main. | open |
+| AC1 | Requests over the per\-key limit get HTTP 429 with a Retry\-After header\, and the count is shared across all API replicas\. | open |
+| AC2 | The limit is configurable through RATE\_LIMIT\_PER\_MIN with a documented default\. | open |
+| AC3 | Tests cover the 429 path and the config override\, and the full suite is green on main\. | open |
 
 ## Tasks
 
 | id | task | assignee | branch | status |
 |---|---|---|---|---|
-| T1 | Token-bucket middleware in src/middleware/rateLimit.ts | codex | `diarchy/20261025-rate-limit/codex` | assigned |
-| T2 | RATE_LIMIT_PER_MIN config, default 100 | claude | `diarchy/20261025-rate-limit/claude` | assigned |
-| T3 | Tests for 429 and config override; full suite green | codex | `diarchy/20261025-rate-limit/codex` | assigned |
+| T1 | Token\-bucket middleware in src\/middleware\/rateLimit\.ts | codex | `diarchy/20261025-rate-limit/codex` | assigned |
+| T2 | RATE\_LIMIT\_PER\_MIN config\, default 100 | claude | `diarchy/20261025-rate-limit/claude` | assigned |
+| T3 | Tests for 429 and config override\; full suite green | codex | `diarchy/20261025-rate-limit/codex` | assigned |

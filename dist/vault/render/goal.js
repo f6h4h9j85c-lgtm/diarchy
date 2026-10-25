@@ -1,10 +1,10 @@
-import { GENERATED, SEP, blockText, blockTrigger, budgetLine, budgetTrigger, byId, cell, challengerList, code, decisionCount, hms, humanSlot, italic, localHint, sortMessages, tableRow, tableSeparator, utcDate, } from "./shared.js";
+import { GENERATED, SEP, blockTrigger, budgetLine, budgetTrigger, byId, cellCode, challengerList, code, decisionCount, hms, humanSlot, italic, localHint, plainBlock, plainInline, sortMessages, tableRow, tableSeparator, utcDate, } from "./shared.js";
 export function renderGoal(messages, state, kickoff, opts = {}) {
     const ordered = sortMessages(messages);
     const chunks = [`${GENERATED}\n# ${kickoff.goal}`];
     if (state?.phase === "BLOCKED")
         chunks.push(questionCallout(ordered, state, opts));
-    chunks.push(blockText(kickoff.goal_text), `[chat](chat.md)${SEP}[decisions (${decisionCount(ordered)})](decisions.md)`, "## Status", statusTable(ordered, state, kickoff), `${budgetLine(state)}${SEP}${humanSlot(state, ordered)}`, "## Acceptance Criteria", acTable(state, kickoff), "## Tasks", tasksTable(state));
+    chunks.push(plainBlock(kickoff.goal_text), `[chat](chat.md)${SEP}[decisions (${decisionCount(ordered)})](decisions.md)`, "## Status", statusTable(ordered, state, kickoff), `${budgetLine(state)}${SEP}${humanSlot(state, ordered)}`, "## Acceptance Criteria", acTable(state, kickoff), "## Tasks", tasksTable(state));
     return `${chunks.join("\n\n")}\n`;
 }
 // ---------------------------------------------------------------------------
@@ -23,10 +23,10 @@ function statusTable(messages, state, kickoff) {
 }
 function acTable(state, kickoff) {
     const rows = state === null
-        ? kickoff.acceptance_criteria.map((criterion, index) => [`AC${index + 1}`, cell(criterion), "open"])
+        ? kickoff.acceptance_criteria.map((criterion, index) => [`AC${index + 1}`, plainInline(criterion), "open"])
         : Object.entries(state.acs).map(([id, ac]) => [
             id,
-            cell(ac.criterion),
+            plainInline(ac.criterion),
             ac.status === "failing" ? "**failing**" : ac.status,
         ]);
     return [tableRow(["id", "criterion", "status"]), tableSeparator(3), ...rows.map(tableRow)].join("\n");
@@ -39,7 +39,7 @@ function tasksTable(state) {
     const tasks = Object.values(state?.tasks ?? {})
         .filter((task) => task.kind !== "review")
         .sort((a, b) => taskNumber(a) - taskNumber(b));
-    const rows = tasks.map((task) => tableRow([task.id, cell(task.task), task.assignee ?? "", task.branch === null ? "" : code(task.branch), task.status]));
+    const rows = tasks.map((task) => tableRow([task.id, plainInline(task.task), task.assignee ?? "", task.branch === null ? "" : cellCode(task.branch), task.status]));
     return [tableRow(["id", "task", "assignee", "branch", "status"]), tableSeparator(5), ...rows].join("\n");
 }
 // ---------------------------------------------------------------------------
@@ -54,9 +54,9 @@ function quote(paragraphs) {
     });
     return lines.map((line) => (line === "" ? ">" : `> ${line}`)).join("\n");
 }
-/** The BLOCKED body as a nested quote inside the callout. */
+/** The BLOCKED body as plain text (1.1) in a nested quote inside the callout. */
 function nested(body) {
-    return blockText(body.trim())
+    return plainBlock(body)
         .split("\n")
         .map((line) => (line === "" ? ">" : `> ${line}`))
         .join("\n");

@@ -4,9 +4,9 @@ import {
   GENERATED,
   SEP,
   byId,
-  cell,
   evidenceSummary,
   hms,
+  plainInline,
   sortMessages,
   tableRow,
   tableSeparator,
@@ -30,9 +30,9 @@ export function renderDecisions(messages: Message[], _state: GoalState | null, k
       superseded.has(id) ? `~~${id}~~` : id,
       `[${time}](chat/${message.id}.md)`,
       message.from,
-      cell(message.claim ?? ""),
+      plainInline(message.claim ?? ""),
       message.basis ?? "",
-      cell((message.evidence ?? []).map((item) => evidenceSummary(item, ids)).join("; ")),
+      (message.evidence ?? []).map((item) => evidenceSummary(item, ids)).join("; "),
       message.supersedes ?? "",
     ]);
   });

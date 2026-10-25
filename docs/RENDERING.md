@@ -23,7 +23,13 @@ Target: Obsidian reading view (mobile and desktop) and GitHub file view, from on
 - Links are standard markdown links with paths relative to the goal directory: `[goal](goal.md)`. Wikilinks are never emitted (GitHub shows them as literal brackets).
 - Every `---` separator has one blank line before and after it. A `---` directly under a text line would turn that line into a setext heading.
 - Paragraph breaks are blank lines. The renderer never relies on soft line breaks (GitHub collapses them, Obsidian does not).
-- Hard rule for all strings copied from messages (claim, body, task text, criteria, test commands, URLs, notes): outside code spans and closed fenced code blocks, `<` becomes `&lt;` and `&` becomes `&amp;`, also after a backslash; a backtick run that closes no code span on its line, and a backslash that ends the string, get a backslash, so a string cannot pair a backtick or escape a character outside itself. Then a line beginning, after any spaces, tabs, or invisible format characters (Unicode Zs and Cf, such as no-break and zero-width spaces, joiners, and bidi controls), with `#`, `>`, `-`, `*`, `+`, `|`, a digit followed by `.`, or a type glyph (1.3), or consisting only of `=`, or of three or more `_` with optional spaces, gets a backslash before that first character. CR, LF, and CRLF all end a line. No message text can then open a heading, a quote, a list, a `---` separator, or an HTML element, render a character reference such as `&#9679;`, or begin a line, even behind invisible characters, with a type glyph as a message header does. A string placed on one line (claim, task text, `new_task`, `reason`, an added criterion, a code span, a note, link text) has each run of line breaks collapsed to one space first. Outside code spans, `*` and `_` are backslash-escaped inside italics, and `[` and `]` inside link text. A code span is fenced by one backtick more than the longest backtick run in its string, with a space inside when the string holds a backtick: ``` `` a`b `` ```; an empty string renders as ``` ` ` ```. A link destination has spaces, line breaks, control characters, `<`, `>`, parentheses, and backslashes percent-encoded. Inside a table cell, `|` becomes `\|` and newlines become a single space.
+- Agent text is plain text. Every string that comes from a message or the kickoff (claim, body, goal text, task text, `new_task`, `reason`, criteria, evidence notes, link text, test commands, paths) renders as the characters it holds, never as markdown or HTML. Agent text therefore carries no formatting of its own: `*word*` shows its asterisks, and a heading, list, table, fence, link, or tag typed into a body shows as typed. The renderer applies four steps, in order:
+  1. Visible characters only. CR, CRLF, U+2028, and U+2029 end a line, and a tab becomes a space. Every Default_Ignorable_Code_Point and every format character (Unicode Cf) is removed: zero-width spaces and joiners, bidi controls, variation selectors, the combining grapheme joiner, Hangul fillers, the soft hyphen. Every other control character, every private-use character, and a lone surrogate becomes U+FFFD. Every space separator (Unicode Zs, such as the no-break space) becomes a plain space.
+  2. Every ASCII punctuation character, ``!"#$%&'()*+,-./:;<=>?@[\]^_`{|}~``, gets a backslash before it. CommonMark and GFM show a backslash-escaped punctuation character as that character and give it no other meaning, so no emphasis, code span, link, autolink, HTML tag, character reference, table cell split, or block marker can form from agent text: `<hr>` becomes `\<hr\>`, `&#9679;` becomes `\&\#9679\;`, and `a | b` becomes `a \| b`.
+  3. Lines. A string placed on one line (claim, task text, `new_task`, `reason`, an added criterion, a note, link text, a table cell, the strip summary) has each line break, with the spaces around it, collapsed to one space, and is trimmed. A string kept on its own lines (a body, the goal text, the BLOCKED quote in `goal.md`) keeps its paragraphs: each line is trimmed, a run of blank lines is one paragraph break, and every other line ends with a backslash, a hard break, so the agent's line breaks show on GitHub and in Obsidian alike. After step 2 such a line starts with a letter, a digit, or the backslash of an escape; a line starting with any other character (a symbol such as a type glyph or an emoji, or a non-ASCII punctuation mark) gets a backslash before it, which shows: `● x` becomes `\● x`.
+  4. Code spans and link destinations are the renderer's. A test command, log or file path, sha, or branch renders as a code span fenced by one backtick more than the longest backtick run in its string, with a space inside the fence when the string holds a backtick: ``` `` a`b `` ```; an empty string renders as ``` ` ` ```. Nothing in the string can close the span. Inside a table cell the span's `|` becomes `\|`. A link destination has spaces, line breaks, control, format, private-use, and default-ignorable characters, `<`, `>`, parentheses, and backslashes percent-encoded.
+
+  The guarantee: every visible character of agent text renders as itself, inside the paragraph, list item, table cell, code span, or link text the renderer placed it in, whatever an earlier message held. No agent text can open a heading, quote, list, table, code block, `---` separator, or HTML element, render a character reference, split a table cell, hide a character, or begin a line with a type glyph as a message header does. Look-alike letters, such as mathematical bold, are ordinary letters to this rule.
 - Protocol tokens are rendered literally and never translated or prettified: `EXECUTE`, `adopted-challenge`, `in_progress`, `request_changes`, `load-balance`. The file and the MCP error messages must agree word for word so a reader can search for either.
 - No em dashes anywhere in renderer-authored text. Separator between segments on one line is ` · ` (space, U+00B7, space).
 
@@ -73,7 +79,7 @@ One bullet per item, in message order, exactly `- <kind>: <key fields>`:
 | file | `` - file: `src/middleware/rateLimit.ts` `` | |
 | review | `- review: [acme/api#412](https://github.com/acme/api/pull/412) · approve` | verdict word: `approve` plain, `**request_changes**` bold |
 | human | `- human: human DECIDE 14:52:10` | derived from the cited message id: `<from> <TYPE> <HH:MM:SS>` |
-| external | `- external: [docs.redis.io/commands/incr](https://docs.redis.io/commands/incr) · <note>` | ` · <note>` only if present |
+| external | `- external: [docs\.redis\.io\/commands\/incr](https://docs.redis.io/commands/incr) · <note>` | ` · <note>` only if present; link text and note are plain text (1.1) |
 
 The negative outcome is the bold one in every pair so a failing test or a rejected review is what the eye lands on when scrolling.
 
@@ -139,7 +145,7 @@ Example, EXECUTE:
 >
 > 14 of 80 messages (PLAN 5 of 12) · 109 of 240 min · open D1, DECIDE due by 15:59:12 UTC
 >
-> 2026-10-25 · last 15:49:12 UTC (11:49 local) · codex CHALLENGE: A default of 100 requests per minute breaks the dashboard, which polls twice a second.
+> 2026-10-25 · last 15:49:12 UTC (11:49 local) · codex CHALLENGE: A default of 100 requests per minute breaks the dashboard\, which polls twice a…
 >
 > [goal](goal.md) · [decisions (3)](decisions.md)
 ```
@@ -152,7 +158,7 @@ Example, BLOCKED:
 >
 > 9 of 80 messages (PLAN 5 of 12) · 35 of 240 min
 >
-> 2026-10-25 · last 14:35:01 UTC (10:35 local) · system ASK_HUMAN: codex is BLOCKED (external): Integration test needs staging REDIS_URL. Not in…
+> 2026-10-25 · last 14:35:01 UTC (10:35 local) · system ASK_HUMAN: codex is BLOCKED \(external\)\: Integration test needs staging REDIS\_URL\. Not in…
 >
 > Question and how to answer: [goal](goal.md) · [decisions (2)](decisions.md)
 ```
@@ -201,7 +207,7 @@ The fields line is plain text (no bold, italics, or code except for data values)
 
 `<ref>` is a message reference (1.7). The ASSIGN worktree path is not rendered; it is `<worktrees.root>/<agent>` by construction and the branch identifies the work.
 
-Claim: the `claim` string wrapped in single `*`, as its own paragraph. Body: verbatim after the escaping in 1.1, as its own paragraph(s). Evidence: per 1.5. `Tasks:` and `Acceptance criteria added:` appear only on a `plan` DECIDE; the lead-in word is required so the list does not merge with the evidence list above it (two adjacent markdown lists separated by a blank line become one list).
+Claim: the `claim` string as plain text (1.1) wrapped in single `*`, as its own paragraph. Body: plain text (1.1), as its own paragraph(s), its line breaks kept as hard breaks. Evidence: per 1.5. `Tasks:` and `Acceptance criteria added:` appear only on a `plan` DECIDE; the lead-in word is required so the list does not merge with the evidence list above it (two adjacent markdown lists separated by a blank line become one list).
 
 ### 2.3 Phase headings
 
@@ -247,7 +253,7 @@ One row per accepted DECIDE, sorted by `(ts, seq)`. The date line uses the UTC d
 | id | the decision id the row created or closed: `plan`, `D1`. Wrapped in `~~ ~~` (strikethrough) once a later DECIDE names it in `supersedes`. The row itself is never removed or reordered. |
 | ts | `HH:MM:SS`, linked to the message file: `[14:07:30](chat/20261025T140730Z-0004-claude-DECIDE.md)` (3.3) |
 | by | sender id (`claude`, `codex`, `human`) |
-| claim | the claim verbatim, table-escaped (1.1). The only column expected to wrap. |
+| claim | the claim as plain text (1.1). The only column expected to wrap. |
 | basis | the literal basis token |
 | evidence | items joined by `; `, each as `<kind> <key>`: `commit` + short sha in code, `pr` + `#<n>`, `test` + result word (bold on fail), `file` + path in code, `review` + `#<n>` + verdict word, `human` + reference, `external` + link text. Empty when the DECIDE has no evidence. |
 | supersedes | the decision id named in `supersedes`, or empty |
@@ -265,7 +271,7 @@ Order of the file:
 1. generated-by comment
 2. `# <goal-id>`
 3. the question callout (4.1), only in BLOCKED
-4. goal text (the kickoff body, verbatim)
+4. goal text (the kickoff body, as plain text per 1.1)
 5. navigation line: `[chat](chat.md) · [decisions (<n>)](decisions.md)`
 6. `## Status` table (4.2) and the budget line
 7. `## Acceptance Criteria` table (4.3)
@@ -288,7 +294,7 @@ External BLOCKED (`reply_to` is a BLOCKED message, or the trigger is the human B
 ```
 **<agent> is blocked (external), re <AC list>:**
 
-> <BLOCKED body, verbatim, as a nested quote>
+> <BLOCKED body as plain text (1.1), as a nested quote>
 ```
 
 Deadlock (`reply_to` is a CHALLENGE; ASK_HUMAN carries `decision_id`):

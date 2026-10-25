@@ -3,12 +3,11 @@ import type { GoalState, Kickoff, Message, Phase, TaskState } from "../../protoc
 import {
   GENERATED,
   SEP,
-  blockText,
   blockTrigger,
   budgetLine,
   budgetTrigger,
   byId,
-  cell,
+  cellCode,
   challengerList,
   code,
   decisionCount,
@@ -16,6 +15,8 @@ import {
   humanSlot,
   italic,
   localHint,
+  plainBlock,
+  plainInline,
   sortMessages,
   tableRow,
   tableSeparator,
@@ -33,7 +34,7 @@ export function renderGoal(
   const chunks = [`${GENERATED}\n# ${kickoff.goal}`];
   if (state?.phase === "BLOCKED") chunks.push(questionCallout(ordered, state, opts));
   chunks.push(
-    blockText(kickoff.goal_text),
+    plainBlock(kickoff.goal_text),
     `[chat](chat.md)${SEP}[decisions (${decisionCount(ordered)})](decisions.md)`,
     "## Status",
     statusTable(ordered, state, kickoff),
@@ -65,10 +66,10 @@ function statusTable(messages: Message[], state: GoalState | null, kickoff: Kick
 function acTable(state: GoalState | null, kickoff: Kickoff): string {
   const rows =
     state === null
-      ? kickoff.acceptance_criteria.map((criterion, index) => [`AC${index + 1}`, cell(criterion), "open"])
+      ? kickoff.acceptance_criteria.map((criterion, index) => [`AC${index + 1}`, plainInline(criterion), "open"])
       : Object.entries(state.acs).map(([id, ac]) => [
           id,
-          cell(ac.criterion),
+          plainInline(ac.criterion),
           ac.status === "failing" ? "**failing**" : ac.status,
         ]);
   return [tableRow(["id", "criterion", "status"]), tableSeparator(3), ...rows.map(tableRow)].join("\n");
@@ -84,7 +85,7 @@ function tasksTable(state: GoalState | null): string {
     .filter((task) => task.kind !== "review")
     .sort((a, b) => taskNumber(a) - taskNumber(b));
   const rows = tasks.map((task) =>
-    tableRow([task.id, cell(task.task), task.assignee ?? "", task.branch === null ? "" : code(task.branch), task.status]),
+    tableRow([task.id, plainInline(task.task), task.assignee ?? "", task.branch === null ? "" : cellCode(task.branch), task.status]),
   );
   return [tableRow(["id", "task", "assignee", "branch", "status"]), tableSeparator(5), ...rows].join("\n");
 }
@@ -102,9 +103,9 @@ function quote(paragraphs: string[]): string {
   return lines.map((line) => (line === "" ? ">" : `> ${line}`)).join("\n");
 }
 
-/** The BLOCKED body as a nested quote inside the callout. */
+/** The BLOCKED body as plain text (1.1) in a nested quote inside the callout. */
 function nested(body: string): string {
-  return blockText(body.trim())
+  return plainBlock(body)
     .split("\n")
     .map((line) => (line === "" ? ">" : `> ${line}`))
     .join("\n");

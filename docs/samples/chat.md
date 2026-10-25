@@ -6,7 +6,7 @@
 >
 > 18 of 80 messages (PLAN 5 of 12) · 150 of 240 min
 >
-> 2026-10-25 · last 16:30:00 UTC (12:30 local) · claude DONE: PRs 412 and 413 merged to main.
+> 2026-10-25 · last 16:30:00 UTC (12:30 local) · claude DONE: PRs 412 and 413 merged to main\.
 >
 > [goal](goal.md) · [decisions (4)](decisions.md)
 
@@ -14,7 +14,7 @@
 
 ▸ **human → all · KICKOFF · re AC1, AC2, AC3 · 14:00:00**
 
-Add per-API-key rate limiting to the public API.
+Add per\-API\-key rate limiting to the public API\.
 
 ---
 
@@ -22,9 +22,9 @@ Add per-API-key rate limiting to the public API.
 
 ○ **claude → all · PROPOSE · D1 · re AC2 · 14:00:50**
 
-*RATE\_LIMIT\_PER\_MIN defaults to 100, matching the limit\_req rate nginx already enforces per IP.*
+*RATE\_LIMIT\_PER\_MIN defaults to 100\, matching the limit\_req rate nginx already enforces per IP\.*
 
-infra/nginx.conf sets limit_req rate=100r/m per IP today. Keeping the same number means ops has one figure to reason about.
+infra\/nginx\.conf sets limit\_req rate\=100r\/m per IP today\. Keeping the same number means ops has one figure to reason about\.
 
 ---
 
@@ -32,17 +32,17 @@ infra/nginx.conf sets limit_req rate=100r/m per IP today. Keeping the same numbe
 
 basis: authority
 
-*RATE\_LIMIT\_PER\_MIN defaults to 100, matching the limit\_req rate nginx already enforces per IP.*
+*RATE\_LIMIT\_PER\_MIN defaults to 100\, matching the limit\_req rate nginx already enforces per IP\.*
 
-No runnable test settles a default before the middleware exists; the nginx figure is the only prior art. Revisit if a client breaks under it.
+No runnable test settles a default before the middleware exists\; the nginx figure is the only prior art\. Revisit if a client breaks under it\.
 
 ---
 
 ○ **claude → all · PROPOSE · plan · re AC1, AC2 · 14:02:10**
 
-*A token-bucket middleware keyed by API key in the existing Redis client satisfies AC1 and AC2.*
+*A token\-bucket middleware keyed by API key in the existing Redis client satisfies AC1 and AC2\.*
 
-Three tasks: middleware, env-driven limit, tests. Redis so all replicas share one counter.
+Three tasks\: middleware\, env\-driven limit\, tests\. Redis so all replicas share one counter\.
 
 ---
 
@@ -50,7 +50,7 @@ Three tasks: middleware, env-driven limit, tests. Redis so all replicas share on
 
 replying to claude PROPOSE 14:02:10
 
-*An in-process bucket meets AC1 with no network hop if the API runs as one replica.*
+*An in\-process bucket meets AC1 with no network hop if the API runs as one replica\.*
 
 - test: `kubectl -n prod get deploy api -o jsonpath='{.spec.replicas}' prints 1` · pending
 
@@ -60,16 +60,16 @@ replying to claude PROPOSE 14:02:10
 
 basis: test · replying to codex CHALLENGE 14:04:55
 
-*Use the Redis-backed token bucket because the API runs three replicas.*
+*Use the Redis\-backed token bucket because the API runs three replicas\.*
 
-Printed 3. In-process buckets would triple the effective limit.
+Printed 3\. In\-process buckets would triple the effective limit\.
 
 - test: `kubectl -n prod get deploy api -o jsonpath='{.spec.replicas}' prints 1` · **fail** · log `.diarchy/logs/replicas.txt`
 
 Tasks:
-- T1: Token-bucket middleware in src/middleware/rateLimit.ts
-- T2: RATE_LIMIT_PER_MIN config, default 100
-- T3: Tests for 429 and config override; full suite green
+- T1: Token\-bucket middleware in src\/middleware\/rateLimit\.ts
+- T2: RATE\_LIMIT\_PER\_MIN config\, default 100
+- T3: Tests for 429 and config override\; full suite green
 
 ---
 
@@ -83,7 +83,7 @@ implement T1 on `diarchy/20261025-rate-limit/codex` · reason: availability
 
 ↦ **claude → claude · ASSIGN · re AC2 · 14:08:20**
 
-implement T2 on `diarchy/20261025-rate-limit/claude` · reason: load-balance
+implement T2 on `diarchy/20261025-rate-limit/claude` · reason: load\-balance
 
 ---
 
@@ -91,7 +91,7 @@ implement T2 on `diarchy/20261025-rate-limit/claude` · reason: load-balance
 
 implement T3 on `diarchy/20261025-rate-limit/codex` · reason: continuity
 
-Same branch as T1; the 429 tests exercise the middleware directly.
+Same branch as T1\; the 429 tests exercise the middleware directly\.
 
 ---
 
@@ -99,7 +99,7 @@ Same branch as T1; the 429 tests exercise the middleware directly.
 
 kind: external · the human is paged
 
-Integration test needs staging REDIS_URL. Not in .env.example or the vault; I will not guess a credential.
+Integration test needs staging REDIS\_URL\. Not in \.env\.example or the vault\; I will not guess a credential\.
 
 ---
 
@@ -109,7 +109,7 @@ Integration test needs staging REDIS_URL. Not in .env.example or the vault; I wi
 
 replying to codex BLOCKED 14:35:00
 
-codex is BLOCKED (external): Integration test needs staging REDIS_URL. Not in .env.example or the vault; I will not guess a credential. The human has been paged; goal.md says how to answer.
+codex is BLOCKED \(external\)\: Integration test needs staging REDIS\_URL\. Not in \.env\.example or the vault\; I will not guess a credential\. The human has been paged\; goal\.md says how to answer\.
 
 ---
 
@@ -117,9 +117,9 @@ codex is BLOCKED (external): Integration test needs staging REDIS_URL. Not in .e
 
 basis: human · replying to system ASK_HUMAN 14:35:01
 
-*Read REDIS\_URL from .env.staging in the project root; it is gitignored and must never be committed.*
+*Read REDIS\_URL from \.env\.staging in the project root\; it is gitignored and must never be committed\.*
 
-Added it just now from the 1Password item "staging-redis". Use it for the integration test only; production keys stay out of this repo.
+Added it just now from the 1Password item \"staging\-redis\"\. Use it for the integration test only\; production keys stay out of this repo\.
 
 ---
 
@@ -129,7 +129,7 @@ Added it just now from the 1Password item "staging-redis". Use it for the integr
 
 T1 done
 
-PR 412 ready for review.
+PR 412 ready for review\.
 
 - commit: `9f3c2ab`
 - pr: [acme/api#412](https://github.com/acme/api/pull/412)
@@ -147,7 +147,7 @@ review [acme/api#412](https://github.com/acme/api/pull/412)
 
 T2 done
 
-412: refill math holds for a one-second burst at the limit; approved with one naming comment. 413 adds RATE_LIMIT_PER_MIN with the D1 default and reads it once at boot.
+412\: refill math holds for a one\-second burst at the limit\; approved with one naming comment\. 413 adds RATE\_LIMIT\_PER\_MIN with the D1 default and reads it once at boot\.
 
 - review: [acme/api#412](https://github.com/acme/api/pull/412) · approve
 - commit: `4e1b7d0`
@@ -166,9 +166,9 @@ review [acme/api#413](https://github.com/acme/api/pull/413)
 
 replying to claude DECIDE 14:01:40
 
-*A default of 100 requests per minute breaks the dashboard, which polls twice a second.*
+*A default of 100 requests per minute breaks the dashboard\, which polls twice a second\.*
 
-Ran the dashboard e2e against 413: 14 of the first 60 requests in a minute came back 429. The per-key limit is right; the default number is not.
+Ran the dashboard e2e against 413\: 14 of the first 60 requests in a minute came back 429\. The per\-key limit is right\; the default number is not\.
 
 - test: `npm run e2e -- dashboard` · **fail** · log `.diarchy/logs/e2e-dashboard.txt`
 
@@ -178,9 +178,9 @@ Ran the dashboard e2e against 413: 14 of the first 60 requests in a minute came 
 
 basis: adopted-challenge · supersedes: D1 · replying to codex CHALLENGE 15:49:12
 
-*RATE\_LIMIT\_PER\_MIN defaults to 300 so the dashboard's two polls per second stay under the limit.*
+*RATE\_LIMIT\_PER\_MIN defaults to 300 so the dashboard\'s two polls per second stay under the limit\.*
 
-Default raised in 413 and e2e re-run. The nginx 100r/m is per IP and retires once this middleware ships, so there is no second figure to keep in step.
+Default raised in 413 and e2e re\-run\. The nginx 100r\/m is per IP and retires once this middleware ships\, so there is no second figure to keep in step\.
 
 - commit: `3a9e4c1`
 - test: `npm run e2e -- dashboard` · pass
@@ -191,7 +191,7 @@ Default raised in 413 and e2e re-run. The nginx 100r/m is per IP and retires onc
 
 T3 done
 
-413 approved after the default change. 429 and override tests added on the 412 branch; full suite green locally.
+413 approved after the default change\. 429 and override tests added on the 412 branch\; full suite green locally\.
 
 - review: [acme/api#413](https://github.com/acme/api/pull/413) · approve
 - commit: `b7d2e91`
@@ -201,7 +201,7 @@ T3 done
 
 ◇ **codex → all · STATUS · re AC1, AC3 · 16:20:00**
 
-412 merged to main.
+412 merged to main\.
 
 - commit: `e5d0c47`
 - test: `npm test` · pass
@@ -210,7 +210,7 @@ T3 done
 
 ■ **claude → all · DONE · re AC1, AC2, AC3 · 16:30:00**
 
-PRs 412 and 413 merged to main.
+PRs 412 and 413 merged to main\.
 
 - commit: `1c0ffee`
 - test: `npm test` · pass

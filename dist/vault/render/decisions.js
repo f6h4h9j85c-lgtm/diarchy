@@ -1,4 +1,4 @@
-import { GENERATED, SEP, byId, cell, evidenceSummary, hms, sortMessages, tableRow, tableSeparator, utcDate, } from "./shared.js";
+import { GENERATED, SEP, byId, evidenceSummary, hms, plainInline, sortMessages, tableRow, tableSeparator, utcDate, } from "./shared.js";
 const COLUMNS = ["id", "ts", "by", "claim", "basis", "evidence", "supersedes"];
 /** decisions.md carries no budget or local-time hint, so it needs neither state nor options. */
 export function renderDecisions(messages, _state, kickoff) {
@@ -15,9 +15,9 @@ export function renderDecisions(messages, _state, kickoff) {
             superseded.has(id) ? `~~${id}~~` : id,
             `[${time}](chat/${message.id}.md)`,
             message.from,
-            cell(message.claim ?? ""),
+            plainInline(message.claim ?? ""),
             message.basis ?? "",
-            cell((message.evidence ?? []).map((item) => evidenceSummary(item, ids)).join("; ")),
+            (message.evidence ?? []).map((item) => evidenceSummary(item, ids)).join("; "),
             message.supersedes ?? "",
         ]);
     });

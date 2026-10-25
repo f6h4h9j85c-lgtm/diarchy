@@ -5,7 +5,7 @@
 
 | id | ts | by | claim | basis | evidence | supersedes |
 |---|---|---|---|---|---|---|
-| ~~D1~~ | [14:01:40](chat/20261025T140140Z-0002-claude-DECIDE.md) | claude | RATE_LIMIT_PER_MIN defaults to 100, matching the limit_req rate nginx already enforces per IP. | authority | | |
-| plan | [14:07:30](chat/20261025T140730Z-0004-claude-DECIDE.md) | claude | Use the Redis-backed token bucket because the API runs three replicas. | test | test **fail** | |
-| D2 | [14:52:10](chat/20261025T145210Z-0002-human-DECIDE.md) | human | Read REDIS_URL from .env.staging in the project root; it is gitignored and must never be committed. | human | | |
-| D3 | [15:55:30](chat/20261025T155530Z-0011-claude-DECIDE.md) | claude | RATE_LIMIT_PER_MIN defaults to 300 so the dashboard's two polls per second stay under the limit. | adopted-challenge | commit `3a9e4c1`; test pass | D1 |
+| ~~D1~~ | [14:01:40](chat/20261025T140140Z-0002-claude-DECIDE.md) | claude | RATE\_LIMIT\_PER\_MIN defaults to 100\, matching the limit\_req rate nginx already enforces per IP\. | authority | | |
+| plan | [14:07:30](chat/20261025T140730Z-0004-claude-DECIDE.md) | claude | Use the Redis\-backed token bucket because the API runs three replicas\. | test | test **fail** | |
+| D2 | [14:52:10](chat/20261025T145210Z-0002-human-DECIDE.md) | human | Read REDIS\_URL from \.env\.staging in the project root\; it is gitignored and must never be committed\. | human | | |
+| D3 | [15:55:30](chat/20261025T155530Z-0011-claude-DECIDE.md) | claude | RATE\_LIMIT\_PER\_MIN defaults to 300 so the dashboard\'s two polls per second stay under the limit\. | adopted-challenge | commit `3a9e4c1`; test pass | D1 |

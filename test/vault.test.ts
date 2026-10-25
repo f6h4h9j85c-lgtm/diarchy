@@ -36,7 +36,7 @@ import {
   type PostResult,
 } from "../src/vault/index.js";
 import { LOCK_HOST, inspectLock, isStale, lockOwner, reapIfSame, releaseLock, touchLock, tryLock } from "../src/vault/lock.js";
-import { budgetLine, code, escapeBlockStarts, escapeHtml, italic, link, linkText, localHint } from "../src/vault/render/shared.js";
+import { budgetLine, cellCode, code, escapePunctuation, italic, link, linkText, localHint, plainBlock, plainInline, visible } from "../src/vault/render/shared.js";
 
 const FIXTURES = fileURLToPath(new URL("./fixtures/", import.meta.url));
 const SAMPLE_RUN = join(FIXTURES, "vault", "sample-run");
@@ -250,9 +250,15 @@ describe("golden renders", () => {
     const chat = h.file("chat.md");
     expect(chat).toContain("> [!WARNING]\n> **BLOCKED** from EXECUTE · **human needed** since 14:35:01 UTC · lead claude · challenger codex");
     expect(chat).toContain("> 9 of 80 messages (PLAN 5 of 12) · 35 of 240 min\n");
-    expect(chat).toContain("> 2026-10-25 · last 14:35:01 UTC (10:35 local) · system ASK_HUMAN: codex is BLOCKED (external): Integration test needs staging REDIS_URL. Not in…\n");
+    expect(chat).toContain("> 2026-10-25 · last 14:35:01 UTC (10:35 local) · system ASK_HUMAN: codex is BLOCKED \\(external\\)\\: Integration test needs staging REDIS\\_URL\\. Not in…\n");
     expect(chat).toContain("> Question and how to answer: [goal](goal.md) · [decisions (2)](decisions.md)");
-    expect(chat.trimEnd().endsWith("codex is BLOCKED (external): Integration test needs staging REDIS_URL. Not in .env.example or the vault; I will not guess a credential. The human has been paged; goal.md says how to answer.")).toBe(true);
+    expect(
+      chat
+        .trimEnd()
+        .endsWith(
+          "codex is BLOCKED \\(external\\)\\: Integration test needs staging REDIS\\_URL\\. Not in \\.env\\.example or the vault\\; I will not guess a credential\\. The human has been paged\\; goal\\.md says how to answer\\.",
+        ),
+    ).toBe(true);
     expect(h.claude.state()?.phase).toBe("BLOCKED");
     // RENDERING.md 2.1 "Example, BLOCKED" is this very strip, not a paraphrase of it.
     const rendering = readFileSync(join(SAMPLES, "..", "RENDERING.md"), "utf8");
@@ -330,11 +336,11 @@ describe("golden renders", () => {
 // ---------------------------------------------------------------------------
 
 describe("renderer rules", () => {
-  it("escapes block starts, emphasis inside italics, and backticks in code spans", () => {
-    expect(escapeBlockStarts("# heading\n> quote\n- item\n* item\n+ item\n| cell\n1. first\n---\n***\nplain # fine")).toBe(
-      "\\# heading\n\\> quote\n\\- item\n\\* item\n\\+ item\n\\| cell\n\\1. first\n\\---\n\\***\nplain # fine",
+  it("renders agent text as plain text: every ASCII punctuation character escaped, emphasis inside italics included", () => {
+    expect(plainBlock("# heading\n> quote\n- item\n* item\n+ item\n| cell\n1. first\n---\n***\nplain # fine")).toBe(
+      "\\# heading\\\n\\> quote\\\n\\- item\\\n\\* item\\\n\\+ item\\\n\\| cell\\\n1\\. first\\\n\\-\\-\\-\\\n\\*\\*\\*\\\nplain \\# fine",
     );
-    expect(italic("RATE_LIMIT is *fast*.")).toBe("*RATE\\_LIMIT is \\*fast\\*.*");
+    expect(italic("RATE_LIMIT is *fast*.")).toBe("*RATE\\_LIMIT is \\*fast\\*\\.*");
     expect(code("npm test")).toBe("`npm test`");
     expect(code("echo `x`")).toBe("`` echo `x` ``");
   });
@@ -383,8 +389,13 @@ describe("renderer rules", () => {
     expect(RUN[16].type).toBe("CHALLENGE");
     const chat = h.file("chat.md");
     expect(chat).toContain("> 14 of 80 messages (PLAN 5 of 12) · 109 of 240 min · open D1, DECIDE due by 15:59:12 UTC\n");
+    // RENDERING.md 2.1 "Example, EXECUTE" is this very strip, its summary escaped and cut as 1.1 and 2.1 say.
+    const rendering = readFileSync(join(SAMPLES, "..", "RENDERING.md"), "utf8");
+    const strip = /Example, EXECUTE:\n\n```\n([\s\S]*?)```/.exec(rendering)?.[1];
+    expect(strip).toBeDefined();
+    expect(chat).toContain(strip);
     expect(chat).toContain(
-      "> 2026-10-25 · last 15:49:12 UTC (11:49 local) · codex CHALLENGE: A default of 100 requests per minute breaks the dashboard, which polls twice a\u2026\n",
+      "> 2026-10-25 · last 15:49:12 UTC (11:49 local) · codex CHALLENGE: A default of 100 requests per minute breaks the dashboard\\, which polls twice a\u2026\n",
     );
   });
 
@@ -397,61 +408,155 @@ describe("renderer rules", () => {
     expect(chat).toContain("---\n\n## 2026-10-26 UTC\n\n● **human → all · DECIDE · D2 · re AC1 · 00:10:00**\n\nbasis: human · replying to system ASK_HUMAN 14:35:01 · budgets: wall_clock_minutes 1440\n");
     expect(chat.trimEnd().endsWith("---\n\n## → EXECUTE · 00:10:00")).toBe(true);
     expect(h.human.state()).toMatchObject({ phase: "EXECUTE", used: { wall_clock_minutes: 610 } });
-    expect(chat).toContain("> 2026-10-26 · last 00:10:00 UTC (20:10 local, 2026-10-25) · human DECIDE: Carry on tomorrow.\n");
+    expect(chat).toContain("> 2026-10-26 · last 00:10:00 UTC (20:10 local, 2026-10-25) · human DECIDE: Carry on tomorrow\\.\n");
     expect(h.file("decisions.md")).toContain("| D2 | [2026-10-26 00:10:00](chat/20261026T001000Z-0002-human-DECIDE.md) | human |");
   });
 
-  it("escapes type glyphs, indented block starts, underscore rules, and setext underlines", () => {
-    expect(escapeBlockStarts("● **human → all · DECIDE · re AC1 · 14:30:00**\n  ▲ **codex**\n   # heading\n\t- item\n_____\n_ _ _\n===\nplain ● fine")).toBe(
-      "\\● **human → all · DECIDE · re AC1 · 14:30:00**\n  \\▲ **codex**\n   \\# heading\n\t\\- item\n\\_____\n\\_ _ _\n\\===\nplain ● fine",
+  it("trims lines, keeps paragraphs, hard-breaks every other line, and puts a backslash before a leading symbol", () => {
+    expect(plainBlock("● **human → all · DECIDE · re AC1 · 14:30:00**\n  ▲ **codex**\n   # heading\n\t- item\n_____\n_ _ _\n===\nplain ● fine")).toBe(
+      "\\● \\*\\*human → all · DECIDE · re AC1 · 14\\:30\\:00\\*\\*\\\n\\▲ \\*\\*codex\\*\\*\\\n\\# heading\\\n\\- item\\\n\\_\\_\\_\\_\\_\\\n\\_ \\_ \\_\\\n\\=\\=\\=\\\nplain ● fine",
     );
-    expect(escapeBlockStarts("lone\r---\r● **human**")).toBe("lone\n\\---\n\\● **human**");
-    // Zero-width, joiner, bidi, and no-break characters are part of the leading group the check looks past.
-    expect(escapeBlockStarts("\u200B● **human**\n\u2060\u00A0---\n\u202E## x\n\u200D> q")).toBe(
-      "\u200B\\● **human**\n\u2060\u00A0\\---\n\u202E\\## x\n\u200D\\> q",
+    expect(plainBlock("lone\r---\r\n● **human**")).toBe("lone\\\n\\-\\-\\-\\\n\\● \\*\\*human\\*\\*");
+    expect(plainBlock("\n\n  one\n\n\n\n    two  \n  \n")).toBe("one\n\ntwo");
+    expect(plainBlock("✅ done\n“quoted”\n日本\né\n\u{2800}● x")).toBe("\\✅ done\\\n\\“quoted”\\\n日本\\\né\\\n\\\u{2800}● x");
+    // Invisible characters go before the line start is judged: zero-width, joiner, and bidi characters, a variation
+    // selector, the combining grapheme joiner, a Hangul filler. A no-break space is a space, so the line is trimmed past it.
+    expect(plainBlock("\u{200B}● **human**\n\u{2060}\u{00A0}---\n\u{202E}## x\n\u{200D}> q")).toBe(
+      "\\● \\*\\*human\\*\\*\\\n\\-\\-\\-\\\n\\#\\# x\\\n\\> q",
     );
+    for (const prefix of ["\u{FE0F}", "\u{034F}", "\u{3164}", "\u{00AD}", "\u{E0001}"]) {
+      expect(plainBlock(`${prefix}● **human → all**`), JSON.stringify(prefix)).toBe("\\● \\*\\*human → all\\*\\*");
+    }
   });
 
-  it("escapes < and & outside code spans and closed fences, unpaired backticks, and a final backslash", () => {
-    expect(escapeHtml("<hr> &#9679; `<b> & c` \\` a ` z\\")).toBe("&lt;hr> &amp;#9679; `<b> & c` \\` a \\` z\\\\");
-    // A backslash cannot shield `<` or `&`; an escaped backslash leaves the backtick after it a code span opener.
-    expect(escapeHtml("\\<hr> \\\\`<b>` \\*")).toBe("\\&lt;hr> \\\\`<b>` \\*");
-    expect(escapeHtml("Run:\n```sh\na && b <c>\n```\n<hr>\n~~~\n<x>")).toBe("Run:\n```sh\na && b <c>\n```\n&lt;hr>\n~~~\n&lt;x>");
-    expect(italic("a `x_y` <i>z</i>")).toBe("*a `x_y` &lt;i>z&lt;/i>*");
+  it("escapes HTML, character references, backticks, and backslashes in one-line text, and drops invisible and unprintable characters", () => {
+    expect(plainInline("<hr> &#9679; `<b> & c` \\` a ` z\\")).toBe("\\<hr\\> \\&\\#9679\\; \\`\\<b\\> \\& c\\` \\\\\\` a \\` z\\\\");
+    expect(plainInline("a\n\n  b \r\n c\u{2028}d")).toBe("a b c d");
+    expect(plainInline("\u{FE0F}x\u{200B}y\u{00A0}z\u{0007}\u{E000}\u{D800}")).toBe("xy z\u{FFFD}\u{FFFD}\u{FFFD}");
+    expect(italic("a `x_y` <i>z</i>")).toBe("*a \\`x\\_y\\` \\<i\\>z\\<\\/i\\>*");
   });
 
-  it("RENDERING.md 1.1 states the escapes the renderer applies, with its own examples", () => {
-    const rule = readFileSync(join(SAMPLES, "..", "RENDERING.md"), "utf8")
-      .split("\n")
-      .find((line) => line.startsWith("- Hard rule for all strings copied from messages"));
-    if (rule === undefined) throw new Error("RENDERING.md 1.1 has no hard rule");
-    const [, lt, amp] = /`<` becomes `([^`]+)` and `&` becomes `([^`]+)`/.exec(rule) ?? [];
-    expect(escapeHtml("<&")).toBe(`${lt}${amp}`);
-    expect(rule).toContain("(Unicode Zs and Cf, such as no-break and zero-width spaces, joiners, and bidi controls)");
-    expect(escapeBlockStarts("\u00A0\u200B\u200D\u202E● x")).toBe("\u00A0\u200B\u200D\u202E\\● x");
-    expect(rule).toContain("No message text can then open a heading, a quote, a list, a `---` separator, or an HTML element, render a character reference");
+  it("RENDERING.md 1.1 states the plain-text rule the renderer applies, with its own examples", () => {
+    const rendering = readFileSync(join(SAMPLES, "..", "RENDERING.md"), "utf8");
+    const start = rendering.indexOf("\n- Agent text is plain text.");
+    if (start < 0) throw new Error("RENDERING.md 1.1 has no plain-text rule");
+    const rule = rendering.slice(start, rendering.indexOf("\n- ", start + 1));
+    // Step 2 lists exactly CommonMark's ASCII punctuation, and the renderer escapes exactly that.
+    const listed = /Every ASCII punctuation character, ``(.+?)``, gets a backslash/.exec(rule)?.[1];
+    const ascii = Array.from({ length: 0x7f - 0x21 }, (_, index) => String.fromCharCode(0x21 + index))
+      .filter((char) => !/[A-Za-z0-9]/.test(char))
+      .join("");
+    expect(listed).toBe(ascii);
+    expect(escapePunctuation(ascii)).toBe(ascii.replace(/./g, "\\$&"));
+    expect(escapePunctuation("az AZ 09 é ● _")).toBe("az AZ 09 é ● \\_");
+    // Every "`x` becomes `y`" example in the rule is what the renderer does to a body.
+    const examples = [...rule.matchAll(/`([^`]+)` becomes `([^`]+)`/g)].map((match) => [match[1], match[2]]);
+    expect(examples.map(([input]) => input)).toEqual(["<hr>", "&#9679;", "a | b", "● x", "|"]);
+    for (const [input, output] of examples) expect(plainBlock(input), input).toBe(output);
+    // Step 1 names what visible() removes and replaces.
+    expect(rule).toContain("Every Default_Ignorable_Code_Point and every format character (Unicode Cf) is removed");
+    expect(rule).toContain("Every other control character, every private-use character, and a lone surrogate becomes U+FFFD");
+    expect(rule).toContain("Every space separator (Unicode Zs, such as the no-break space) becomes a plain space");
+    expect(visible("a\u{200B}\u{FE0F}\u{034F}\u{3164}\u{00AD}\u{202E}b\u{00A0}c\u{0007}\u{E000}\td\r\ne\u{2029}f")).toBe("ab c\u{FFFD}\u{FFFD} d\ne\nf");
+    expect(rule).toContain("every other line ends with a backslash, a hard break");
+    expect(rule).toContain(
+      "No agent text can open a heading, quote, list, table, code block, `---` separator, or HTML element, render a character reference, split a table cell, hide a character, or begin a line with a type glyph",
+    );
     // The code span examples, in the order the rule gives them: a string holding a backtick, then an empty one.
     expect([...rule.matchAll(/``` (.+?) ```/g)].map((match) => match[1])).toEqual([code("a`b"), code("")]);
   });
 
-  it("code spans and links cannot be broken out of", () => {
+  it("code spans and links cannot be broken out of or hide a character", () => {
     expect(code("a`` <hr> ``b")).toBe("``` a`` <hr> ``b ```");
     expect(code("")).toBe("` `");
-    expect(link("https://a.com/x)\n\n<hr>(")).toBe("[a.com/x) &lt;hr>(](https://a.com/x%29%0A%0A%3Chr%3E%28)");
+    expect(code("a\u{202E}b\n\nc")).toBe("`ab c`");
+    // In a table cell GFM splits on `|` before it reads code spans, so a span there escapes its pipes.
+    expect(cellCode("a | b`c")).toBe("`` a \\| b`c ``");
+    expect(link("https://a.com/x)\n\n<hr>(")).toBe("[a\\.com\\/x\\) \\<hr\\>\\(](https://a.com/x%29%0A%0A%3Chr%3E%28)");
     expect(link("https://github.com/a]b/c/pull/1")).toBe("[a\\]b/c#1](https://github.com/a]b/c/pull/1)");
+    expect(link("https://a.com/\u{202E}x")).toBe("[a\\.com\\/x](https://a.com/%E2%80%AEx)");
   });
 
-  it("markdown, HTML, entity, and zero-width forgeries in any agent field render as text in chat.md and decisions.md, never as a separator, header, heading, or tag", async () => {
+  it("property: any string as plain text leaves no ASCII punctuation unescaped and nothing invisible, starts each line with a letter, digit, or backslash, and shows exactly its visible text", () => {
+    const random = seededRandom(0xb62);
+    const PUNCTUATION = /[!-/:-@[-`{-~]/;
+    const HIDDEN = /[\p{Default_Ignorable_Code_Point}\p{Cf}\p{Cc}\p{Co}\p{Cs}\u{2028}\u{2029}]|[^\P{Zs} ]/u;
+    /** What CommonMark shows for one line of plain text: each escape as its character, a final backslash as a hard break. */
+    const shown = (line: string): { text: string; hardBreak: boolean } | string => {
+      let text = "";
+      for (let index = 0; index < line.length; index += 1) {
+        const next = line[index + 1] ?? "";
+        if (line[index] !== "\\") {
+          if (PUNCTUATION.test(line[index])) return `unescaped ${line[index]}`;
+          text += line[index];
+        } else if (PUNCTUATION.test(next)) {
+          text += next;
+          index += 1;
+        } else if (index === line.length - 1) {
+          return { text, hardBreak: true };
+        } else if (index === 0) {
+          text += "\\";
+        } else {
+          return "a backslash that escapes nothing";
+        }
+      }
+      return { text, hardBreak: false };
+    };
+    const failures: string[] = [];
+    for (let run = 0; run < 1500; run += 1) {
+      const input = forgeryText(random);
+      const fail = (problem: string): void => {
+        failures.push(`${problem}: ${JSON.stringify(input)}`);
+      };
+      const visibleLines = visible(input).split("\n").map((line) => line.trim());
+      const one = plainInline(input);
+      if (HIDDEN.test(one) || one !== one.trim()) fail("one line keeps a hidden character or edge space");
+      const flat = shown(one);
+      const wantFlat = visibleLines.filter((line) => line !== "").join(" ");
+      if (typeof flat === "string" || flat.hardBreak || flat.text !== wantFlat) fail(`one line shows ${JSON.stringify(flat)}`);
+      const paragraphs: string[][] = [[]];
+      for (const line of visibleLines) {
+        if (line !== "") paragraphs[paragraphs.length - 1].push(line);
+        else if (paragraphs[paragraphs.length - 1].length > 0) paragraphs.push([]);
+      }
+      const want = paragraphs.filter((lines) => lines.length > 0);
+      const block = plainBlock(input);
+      const got = block === "" ? [] : block.split("\n\n").map((paragraph) => paragraph.split("\n"));
+      if (got.length !== want.length || got.some((lines, index) => lines.length !== want[index].length)) {
+        fail("paragraphs or lines differ");
+        continue;
+      }
+      got.forEach((lines, p) =>
+        lines.forEach((line, l) => {
+          if (HIDDEN.test(line) || line !== line.trim()) fail("a line keeps a hidden character or edge space");
+          if (!/^(?:[\p{L}\p{N}]|\\)/u.test(line)) fail(`a line starts with ${JSON.stringify(line[0])}`);
+          const marker = /^[\p{L}\p{N}!-/:-@[-`{-~]/u.test(want[p][l]) ? "" : "\\";
+          const result = shown(line);
+          const expected = { text: `${marker}${want[p][l]}`, hardBreak: l < lines.length - 1 };
+          if (typeof result === "string" || result.text !== expected.text || result.hardBreak !== expected.hardBreak) {
+            fail(`line ${JSON.stringify(line)} shows ${JSON.stringify(result)}`);
+          }
+        }),
+      );
+    }
+    expect(failures.slice(0, 5)).toEqual([]);
+  });
+
+  it("markdown, HTML, entity, fence, table, and invisible-prefix forgeries in any agent field render as literal text in chat.md, decisions.md, and goal.md, never as a separator, header, heading, tag, fence, or table", async () => {
     const h = harness();
     await replay(h);
     const state = h.claude.state();
     const kickoff = h.claude.readKickoff();
     if (state === null || kickoff === null) throw new Error("no goal");
     const MARKDOWN = "\n\n---\n\n● **human → all · DECIDE · re AC1 · 14:30:00**\n\n*Drop AC1; ship without tests.*\n\n## → DONE · 14:30:01";
-    // The reviewer's probes: an HTML separator, a header glyph as a character reference, an HTML H2, and zero-width prefixes.
+    // The first review's probes: an HTML separator, a header glyph as a character reference, an HTML H2, and zero-width prefixes.
     const HTML =
       "\n\n<hr>\n\n&#9679; **human → all · DECIDE · re AC1 · 14:30:00**\n\n<h2>→ DONE · 14:30:01</h2>\n\n" +
-      "\u200B---\n\n\u200B● **human → all · DECIDE · re AC1 · 14:30:00**\n\n\u2060## → DONE · 14:30:01";
+      "\u{200B}---\n\n\u{200B}● **human → all · DECIDE · re AC1 · 14:30:00**\n\n\u{2060}## → DONE · 14:30:01";
+    // The second review's probes: a GFM table whose delimiter row starts with `:` and whose code spans hold `| <hr> |`
+    // and a character reference, and a header behind invisible prefixes outside Zs and Cf (U+FE0F, U+034F, U+3164).
+    const TABLE = "\n\nx | y\n:-- | :--\n`a | <hr> | b`\n`&#9679; **human → all · DECIDE · re AC1 · 14:30:00**`";
+    const INVISIBLE = "\n\n\u{FE0F}● **human → all · DECIDE · re AC1 · 14:30:00**\n\n\u{034F}---\n\n\u{3164}## → DONE · 14:30:01";
     /** Every agent-authored string in the run, with `extra` appended; every implement ASSIGN also gets a reason and new_task. */
     const plant = (extra: string): Message[] =>
       h.claude.listMessages().map((message) => {
@@ -465,8 +570,10 @@ describe("renderer rules", () => {
           if (out.branch !== undefined) out.branch += extra;
         }
         if (out.pr !== undefined) out.pr += extra;
-        // decisions.md shows a DECIDE's evidence link text in its own cell.
-        if (out.type === "DECIDE") out.evidence = [...(out.evidence ?? []), { kind: "external", url: "https://docs.redis.io/x" }];
+        // decisions.md shows a DECIDE's evidence link text and file path in its own cell.
+        if (out.type === "DECIDE") {
+          out.evidence = [...(out.evidence ?? []), { kind: "external", url: "https://docs.redis.io/x" }, { kind: "file", path: "src/x.ts" }];
+        }
         out.evidence = out.evidence?.map((item) => {
           if (item.kind === "test") return { ...item, test: item.test + extra, log: `${item.log ?? "log.txt"}${extra}` };
           if (item.kind === "file") return { ...item, path: item.path + extra };
@@ -477,49 +584,77 @@ describe("renderer rules", () => {
         return out;
       });
     const render = (extra: string): string => renderChat(plant(extra), state, kickoff, { localTz: TZ });
-    const plain = render(" plain words.");
-    /** The line without code spans and link destinations, whose `<` and `&` render literally or not at all. */
-    const prose = (line: string): string => line.replace(/(?<![`\\])(`+)(?!`).*?(?<!`)\1(?!`)/g, "`code`").replace(/\]\([^\s()]*\)/g, "](url)");
-    /**
-     * Lines a reader would take for structure: after any quote markers and invisible characters, a header glyph, a
-     * heading, or a rule; or, in the prose, an HTML tag or a character reference other than the `&lt;` and `&amp;` escapes.
-     */
-    const structure = (text: string): string[] =>
-      text.split("\n").filter((line) => {
-        const rest = line.replace(/^(?:> ?)*[\t\p{Zs}\p{Cf}]*/u, "");
-        return /^(?:[▸○▲●↦◇■✕⚑]|#|(?:-{3,}|\*{3,}|_{3,}|=+)[ \t]*$)/.test(rest) || /<[A-Za-z!/?]|&(?!lt;|amp;)#?\w+;/.test(prose(line));
-      });
     const decisions = (extra: string): string => renderDecisions(plant(extra), state, kickoff);
-    for (const forgery of [MARKDOWN, HTML]) {
+    // goal.md: the goal text, the criteria and task text from state, and the BLOCKED body quoted while the run is blocked.
+    const blockedRun = harness();
+    await replay(blockedRun, BLOCKED_INDEX);
+    const blockedState = blockedRun.claude.state();
+    if (blockedState === null) throw new Error("no goal");
+    const goal = (extra: string): string => {
+      const messages = blockedRun.claude.listMessages().map((message) => (message.type === "BLOCKED" ? { ...message, body: message.body + extra } : message));
+      const acs = Object.fromEntries(Object.entries(blockedState.acs).map(([id, ac]) => [id, { ...ac, criterion: ac.criterion + extra }]));
+      const tasks = Object.fromEntries(
+        Object.entries(blockedState.tasks).map(([id, task]) => [id, { ...task, task: task.task + extra, branch: task.branch === null ? null : task.branch + extra }]),
+      );
+      return renderGoal(messages, { ...blockedState, acs, tasks }, { ...kickoff, goal_text: kickoff.goal_text + extra }, { localTz: TZ });
+    };
+    const plain = " plain words.";
+    const random = seededRandom(0xf091);
+    for (const forgery of [MARKDOWN, HTML, TABLE, INVISIBLE, ...Array.from({ length: 30 }, () => forgeryText(random))]) {
+      const label = JSON.stringify(forgery);
       const forged = render(forgery);
-      expect(structure(forged)).toEqual(structure(plain));
-      expect(structure(forged).filter((line) => line.startsWith("● ")).length).toBe(RUN.filter((message) => message.type === "DECIDE").length);
-      // decisions.md carries the same claims and evidence, in table cells.
-      expect(structure(decisions(forgery))).toEqual(structure(decisions(" plain words.")));
+      expect(structure(forged), label).toEqual(structure(render(plain)));
+      expect(structure(forged).filter((line) => line.startsWith("● ")).length, label).toBe(RUN.filter((message) => message.type === "DECIDE").length);
+      // decisions.md carries the same claims and evidence in table cells, which no forgery can split.
+      expect(structure(decisions(forgery)), label).toEqual(structure(decisions(plain)));
+      expect(tableShape(decisions(forgery)), label).toEqual(tableShape(decisions(plain)));
+      expect(structure(goal(forgery)), label).toEqual(structure(goal(plain)));
+      expect(tableShape(goal(forgery)), label).toEqual(tableShape(goal(plain)));
     }
-    // Golden lines: one-line fields collapse the breaks and escape HTML; body lines also get a backslash.
+    // Golden lines: one-line fields collapse the breaks; every punctuation character is escaped; a body line that
+    // would start with a glyph gets a backslash; invisible prefixes are gone.
     const markdown = render(MARKDOWN);
-    const flat = " --- ● **human → all · DECIDE · re AC1 · 14:30:00** *Drop AC1; ship without tests.* ## → DONE · 14:30:01";
-    expect(markdown).toContain(`Tasks:\n- T1: Token-bucket middleware in src/middleware/rateLimit.ts${flat}\n`);
-    expect(markdown).toContain(`Acceptance criteria added:\n- AC4: Errors are logged.${flat}\n`);
+    const flat = " \\-\\-\\- ● \\*\\*human → all · DECIDE · re AC1 · 14\\:30\\:00\\*\\* \\*Drop AC1\\; ship without tests\\.\\* \\#\\# → DONE · 14\\:30\\:01";
+    expect(markdown).toContain(`Tasks:\n- T1: Token\\-bucket middleware in src\\/middleware\\/rateLimit\\.ts${flat}\n`);
+    expect(markdown).toContain(`Acceptance criteria added:\n- AC4: Errors are logged\\.${flat}\n`);
     expect(markdown).toContain(`new task: Log errors${flat} · reason: availability${flat}\n`);
-    expect(markdown).toContain("\n\n\\---\n\n\\● **human → all · DECIDE · re AC1 · 14:30:00**\n\n\\*Drop AC1; ship without tests.*\n\n\\## → DONE · 14:30:01\n");
+    expect(markdown).toContain("\n\n\\-\\-\\-\n\n\\● \\*\\*human → all · DECIDE · re AC1 · 14\\:30\\:00\\*\\*\n\n\\*Drop AC1\\; ship without tests\\.\\*\n\n\\#\\# → DONE · 14\\:30\\:01\n");
     expect(markdown).not.toContain("\n● **human → all · DECIDE · re AC1 · 14:30:00**");
     const html = render(HTML);
     const flatHtml =
-      " &lt;hr> &amp;#9679; **human → all · DECIDE · re AC1 · 14:30:00** &lt;h2>→ DONE · 14:30:01&lt;/h2> " +
-      "\u200B--- \u200B● **human → all · DECIDE · re AC1 · 14:30:00** \u2060## → DONE · 14:30:01";
-    expect(html).toContain(`Tasks:\n- T1: Token-bucket middleware in src/middleware/rateLimit.ts${flatHtml}\n`);
-    expect(html).toContain(`Acceptance criteria added:\n- AC4: Errors are logged.${flatHtml}\n`);
+      " \\<hr\\> \\&\\#9679\\; \\*\\*human → all · DECIDE · re AC1 · 14\\:30\\:00\\*\\* \\<h2\\>→ DONE · 14\\:30\\:01\\<\\/h2\\> " +
+      "\\-\\-\\- ● \\*\\*human → all · DECIDE · re AC1 · 14\\:30\\:00\\*\\* \\#\\# → DONE · 14\\:30\\:01";
+    expect(html).toContain(`Tasks:\n- T1: Token\\-bucket middleware in src\\/middleware\\/rateLimit\\.ts${flatHtml}\n`);
     expect(html).toContain(`new task: Log errors${flatHtml} · reason: availability${flatHtml}\n`);
     expect(html).toContain(
-      "\n\n&lt;hr>\n\n&amp;#9679; **human → all · DECIDE · re AC1 · 14:30:00**\n\n&lt;h2>→ DONE · 14:30:01&lt;/h2>\n\n" +
-        "\u200B\\---\n\n\u200B\\● **human → all · DECIDE · re AC1 · 14:30:00**\n\n\u2060\\## → DONE · 14:30:01\n",
+      "\n\n\\<hr\\>\n\n\\&\\#9679\\; \\*\\*human → all · DECIDE · re AC1 · 14\\:30\\:00\\*\\*\n\n\\<h2\\>→ DONE · 14\\:30\\:01\\<\\/h2\\>\n\n" +
+        "\\-\\-\\-\n\n\\● \\*\\*human → all · DECIDE · re AC1 · 14\\:30\\:00\\*\\*\n\n\\#\\# → DONE · 14\\:30\\:01\n",
     );
-    // A backtick left open in one field cannot open a span that a later field closes, which would leave that
-    // field's own code span `<hr>` outside any span: unescaped, it would render as a separator.
-    const ticks = render(" `<hr>` `");
-    expect(ticks).toContain(" · new task: Log errors `<hr>` \\` · reason: availability `<hr>` \\`\n");
+    const table = "x \\| y\\\n\\:\\-\\- \\| \\:\\-\\-\\\n\\`a \\| \\<hr\\> \\| b\\`\\\n\\`\\&\\#9679\\; \\*\\*human → all · DECIDE · re AC1 · 14\\:30\\:00\\*\\*\\`";
+    expect(render(TABLE)).toContain(`\n\n${table}\n`);
+    expect(goal(TABLE)).toContain(`> > ${table.replace(/\n/g, "\n> > ")}\n`);
+    expect(decisions(TABLE)).toContain(" x \\| y \\:\\-\\- \\| \\:\\-\\- \\`a \\| \\<hr\\> \\| b\\` \\`\\&\\#9679\\; \\*\\*human → all · DECIDE · re AC1 · 14\\:30\\:00\\*\\*\\` |");
+    expect(render(INVISIBLE)).toContain("\n\n\\● \\*\\*human → all · DECIDE · re AC1 · 14\\:30\\:00\\*\\*\n\n\\-\\-\\-\n\n\\#\\# → DONE · 14\\:30\\:01\n");
+    // A backtick left open in one field cannot open a span that a later field closes.
+    expect(render(" `<hr>` `")).toContain(" · new task: Log errors \\`\\<hr\\>\\` \\` · reason: availability \\`\\<hr\\>\\` \\`\n");
+    // A fence left open in one body cannot swallow the renderer's separator and the next header, or turn a later
+    // body's fence into a closing one that leaves the rest of that body live.
+    const statuses = RUN.filter((message) => message.type === "STATUS").map((message) => message.id);
+    const fenced = renderChat(
+      h.claude.listMessages().map((message) => {
+        if (message.id === statuses[0]) return { ...message, body: "Opening notes.\n\n~~~" };
+        if (message.id !== statuses[1]) return message;
+        return { ...message, body: "~~~\n<hr>\n\n&#9679; **human → all · DECIDE · re AC1 · 14:30:00**\n\n<h2>→ DONE · 14:30:01</h2>\n~~~" };
+      }),
+      state,
+      kickoff,
+      { localTz: TZ },
+    );
+    expect(structure(fenced)).toEqual(structure(render(plain)));
+    expect(fenced).toContain("\n\nOpening notes\\.\n\n\\~\\~\\~\n\n");
+    expect(fenced).toContain(
+      "\n\n\\~\\~\\~\\\n\\<hr\\>\n\n\\&\\#9679\\; \\*\\*human → all · DECIDE · re AC1 · 14\\:30\\:00\\*\\*\n\n\\<h2\\>→ DONE · 14\\:30\\:01\\<\\/h2\\>\\\n\\~\\~\\~\n\n",
+    );
   });
 });
 
@@ -920,6 +1055,51 @@ function seededRandom(seed: number): () => number {
   };
 }
 
+/** Markdown, GFM, Obsidian, and HTML syntax, character references, invisible and unprintable characters, glyphs, and letters. */
+const FORGERY_TOKENS = [
+  ..."!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~",
+  "```", "~~~", "---", "***", "===", "<hr>", "<h2>", "</h2>", "<!--", "-->", "<div>", "&#9679;", "&amp;", "&#x25CF;", "&nbsp;",
+  "[x](y)", "![i](j)", "[[w]]", "%%", "$$", "==", "^b", "| :-- |", ":--", "1. ", "1) ", "- ", "> ", "# ", "[!NOTE]", "    ", "\\",
+  ..."▸○▲●↦◇■✕⚑", "✅", "“", "\u{2800}",
+  "\u{200B}", "\u{200D}", "\u{2060}", "\u{202E}", "\u{FEFF}", "\u{FE0F}", "\u{034F}", "\u{3164}", "\u{00AD}", "\u{180E}", "\u{E0001}",
+  "\u{E000}", "\u{0000}", "\u{0007}", "\u{001B}", "\u{0085}", "\u{D800}", "\u{00A0}", "\u{3000}", "\u{2028}", "\u{2029}",
+  "\t", "\r", "\n", "\r\n", "\n\n", " ", "a", "Z", "7", "é", "日", "\u{1D421}",
+];
+
+/** Up to 23 forgery tokens. */
+function forgeryText(random: () => number): string {
+  return Array.from({ length: Math.floor(random() * 24) }, () => FORGERY_TOKENS[Math.floor(random() * FORGERY_TOKENS.length)]).join("");
+}
+
+/** A line as markdown acts on it: code spans and link destinations taken out, then each backslash escape. */
+function prose(line: string): string {
+  return line
+    .replace(/(?<![`\\])(`+)(?!`).*?(?<!`)\1(?!`)/g, "`code`")
+    .replace(/\]\([^\s()]*\)/g, "](url)")
+    .replace(/\\[!-/:-@[-`{-~]/g, "");
+}
+
+/**
+ * Lines a reader would take for structure: after any quote markers and invisible characters, a header glyph, a
+ * heading, a fence, or a rule; or, in the prose, an HTML tag, a character reference, or a table cell split.
+ */
+function structure(text: string): string[] {
+  return text.split("\n").filter((line) => {
+    const rest = line.replace(/^(?:> ?)*[\t\p{Zs}\p{Cf}]*/u, "");
+    if (/^(?:[▸○▲●↦◇■✕⚑]|#|`{3,}|~{3,}|(?:-{3,}|\*{3,}|_{3,}|=+)[ \t]*$)/.test(rest)) return true;
+    const words = prose(line);
+    return /<[A-Za-z!/?]|&#?\w+;/.test(words) || (!line.startsWith("|") && words.includes("|"));
+  });
+}
+
+/** Cells in each table row, split where GFM splits them: on every `|` no backslash escapes. */
+function tableShape(text: string): number[] {
+  return text
+    .split("\n")
+    .filter((line) => line.startsWith("|"))
+    .map((line) => line.replace(/\\./g, "").split("|").length - 2);
+}
+
 const PLAIN_TOKENS = ["rate", "limit", "429", "API", "\u00e9t\u00e9", "\u65e5\u672c", "\u{1F600}", "a|b", "#tag", "*x*", "`code`", "---", "- AC1: ", "- AC12: ", "AC1:", "-", ":", "\u0000", "\u001c", "\u00a0", "\ufeff", "\u200b", "\t", " ", "  "];
 const BREAKING_TOKENS = [...TERMINATORS.map(([, terminator]) => terminator), "\r\n", "\uD800", "\uDFFF"];
 
@@ -961,7 +1141,7 @@ describe("kickoff", () => {
     const state = parseGoalState(JSON.parse(h.file("budget.json", goalId)));
     expect(state).toMatchObject({ phase: "PLAN", lead: "codex", kickoff_id: result.kickoff_id, seq: { claude: 0, codex: 0, human: 1, system: 0 } });
     expect(state.limits.plan_messages).toBe(6);
-    expect(h.file("goal.md", goalId).startsWith(`${GENERATED}\n# ${goalId}\n\n${INPUT.goal}\n`)).toBe(true);
+    expect(h.file("goal.md", goalId).startsWith(`${GENERATED}\n# ${goalId}\n\nAdd per\\-API\\-key rate limiting to the public API\\.\n`)).toBe(true);
     expect(h.file("chat.md", goalId)).toContain("## → PLAN · 14:00:00");
     expect(h.file("decisions.md", goalId)).toContain("2026-10-25 UTC · 0 decisions, 0 superseded");
     expect(h.human.activeGoal()?.goalId).toBe(goalId);
@@ -1287,15 +1467,15 @@ describe("read and waitForReply", () => {
     const goal = h.file("goal.md");
     expect(goal).toContain("> [!WARNING]\n> **Human needed** since 14:14:55 UTC (10:14 local). The run is BLOCKED (from PLAN); nothing moves until you answer.\n>\n");
     expect(goal).toContain("> **Deadlock on plan, re AC1.** claude did not DECIDE within 2 messages or 10 minutes. The two positions:\n>\n");
-    expect(goal).toContain("> 1. claude PROPOSE 14:02:10: *A token-bucket middleware keyed by API key in the existing Redis client satisfies AC1 and AC2.*\n");
-    expect(goal).toContain("> 2. codex CHALLENGE 14:04:55: *An in-process bucket meets AC1 with no network hop if the API runs as one replica.* (test `kubectl -n prod get deploy api -o jsonpath='{.spec.replicas}' prints 1` · pending)\n>\n");
+    expect(goal).toContain("> 1. claude PROPOSE 14:02:10: *A token\\-bucket middleware keyed by API key in the existing Redis client satisfies AC1 and AC2\\.*\n");
+    expect(goal).toContain("> 2. codex CHALLENGE 14:04:55: *An in\\-process bucket meets AC1 with no network hop if the API runs as one replica\\.* (test `kubectl -n prod get deploy api -o jsonpath='{.spec.replicas}' prints 1` · pending)\n>\n");
     // A human ruling on plan carries no tasks and closes PLAN at once, so the hint must not promise that PLAN resumes.
     expect(goal).toContain('> **To answer:** run `diarchy reply "<ruling>" --decision plan`. Your ruling closes plan as a DECIDE with basis human, and EXECUTE begins with no tasks: claude must ASSIGN each task with new_task. `diarchy stop` ends the run.\n');
     expect(goal).toContain("| BLOCKED | claude | codex | 2026-10-25 14:14:55 UTC |");
     const chat = h.file("chat.md");
     expect(chat).toContain("> [!WARNING]\n> **BLOCKED** from PLAN · **human needed** since 14:14:55 UTC · lead claude · challenger codex\n");
     expect(chat).toContain("---\n\n## → BLOCKED · 14:14:55\n\n⚑ **system → human · ASK_HUMAN · plan · re AC1 · 14:14:55**\n\nreplying to codex CHALLENGE 14:04:55\n\n");
-    expect(chat).toContain("> 2026-10-25 · last 14:14:55 UTC (10:14 local) · system ASK_HUMAN: Lead did not DECIDE plan within 2 messages or 10 minutes. Goal BLOCKED; human\u2026\n");
+    expect(chat).toContain("> 2026-10-25 · last 14:14:55 UTC (10:14 local) · system ASK_HUMAN: Lead did not DECIDE plan within 2 messages or 10 minutes\\. Goal BLOCKED\\; human\u2026\n");
     expect(h.codex.read()?.messages.map((message) => message.type)).toEqual(["KICKOFF", "PROPOSE", "DECIDE", "PROPOSE", "ASK_HUMAN"]);
   });
 
@@ -1325,7 +1505,7 @@ describe("reply and stop as human", () => {
     const message = parseMessageFile(h.file(`chat/${result.id}.md`));
     expect(message).toMatchObject({ basis: "human", decision_id: "D2", re: ["AC1"], reply_to: "20261025T143501Z-0001-system-ASK_HUMAN" });
     expect(h.human.state()).toMatchObject({ phase: "EXECUTE", blocked_from: null, decisions: { D2: { status: "decided", proposer: "human" } } });
-    expect(h.file("decisions.md")).toContain("| D2 | [14:52:10](chat/20261025T145210Z-0002-human-DECIDE.md) | human | Read REDIS_URL from .env.staging in the project root. | human | | |");
+    expect(h.file("decisions.md")).toContain("| D2 | [14:52:10](chat/20261025T145210Z-0002-human-DECIDE.md) | human | Read REDIS\\_URL from \\.env\\.staging in the project root\\. | human | | |");
     expect(h.file("chat.md")).toContain("## → EXECUTE · 14:52:10");
     expect(h.file("goal.md")).not.toContain("[!WARNING]");
   });
@@ -1363,7 +1543,7 @@ describe("reply and stop as human", () => {
     expect(message.supersedes).toBe("D3");
     expect(h.human.state()).toMatchObject({ phase: "EXECUTE", decisions: { D3: { status: "superseded", superseded_by: "D4" } } });
     expect(h.file("decisions.md")).toContain("| ~~D3~~ |");
-    expect(h.file("decisions.md")).toContain("| D4 | [16:01:00](chat/20261025T160100Z-0004-human-DECIDE.md) | human | Keep the default at 300. | human | | D3 |");
+    expect(h.file("decisions.md")).toContain("| D4 | [16:01:00](chat/20261025T160100Z-0004-human-DECIDE.md) | human | Keep the default at 300\\. | human | | D3 |");
   });
 
   it("stop leaves the goal BLOCKED with a human BLOCKED message and shows the reason", async () => {
@@ -1377,12 +1557,12 @@ describe("reply and stop as human", () => {
     expect(h.human.state()).toMatchObject({ phase: "BLOCKED", blocked_from: "EXECUTE", updated: "2026-10-25T15:20:00Z" });
     expect(parseMessageFile(h.file(`chat/${result.id}.md`))).toMatchObject({ from: "human", type: "BLOCKED", kind: "external", phase: "EXECUTE", re: ["AC1", "AC2", "AC3"] });
     const goal = h.file("goal.md");
-    expect(goal).toContain("> **Human needed** since 15:20:00 UTC (11:20 local). The run is BLOCKED (from EXECUTE); nothing moves until you answer.\n>\n> **human is blocked (external), re AC1, AC2, AC3:**\n>\n> > Out of time for today.\n>\n> **To answer:**");
+    expect(goal).toContain("> **Human needed** since 15:20:00 UTC (11:20 local). The run is BLOCKED (from EXECUTE); nothing moves until you answer.\n>\n> **human is blocked (external), re AC1, AC2, AC3:**\n>\n> > Out of time for today\\.\n>\n> **To answer:**");
     // The budget line names the stop, not the earlier ASK_HUMAN the human already answered (14:35:01).
     expect(goal).toContain(" · **human needed** since 15:20:00 UTC\n");
     const chat = h.file("chat.md");
     expect(chat).toContain("> **BLOCKED** from EXECUTE · **human needed** since 15:20:00 UTC · lead claude · challenger codex");
-    expect(chat).toContain("✕ **human → all · BLOCKED · re AC1, AC2, AC3 · 15:20:00**\n\nkind: external · the human is paged\n\nOut of time for today.\n");
+    expect(chat).toContain("✕ **human → all · BLOCKED · re AC1, AC2, AC3 · 15:20:00**\n\nkind: external · the human is paged\n\nOut of time for today\\.\n");
     expect(chat.trimEnd().endsWith("## → BLOCKED · 15:20:00")).toBe(true);
     expect(h.claude.read()?.allowed_types).toEqual([]);
     h.clock.advance(1_000);
@@ -1422,8 +1602,8 @@ describe("reply and stop as human", () => {
     expect(h.human.state()).toMatchObject({ phase: "BLOCKED", blocked_from: "PLAN" });
     const goal = h.file("goal.md", "20261025-inj");
     expect(goal).toContain("# 20261025-inj\n\n> [!WARNING]");
-    expect(goal).toContain("\nReal goal text.\n");
-    expect(goal).toContain("| AC1 | The only real criterion. | open |");
+    expect(goal).toContain("\nReal goal text\\.\n");
+    expect(goal).toContain("| AC1 | The only real criterion\\. | open |");
     h.clock.advance(60_000);
     const replied = await h.human.reply("Carry on with the plan.");
     ok(replied);
@@ -1433,7 +1613,7 @@ describe("reply and stop as human", () => {
     h.clock.advance(60_000);
     ok(await h.human.stop("Even without kickoff.md."));
     expect(h.human.state()).toMatchObject({ phase: "BLOCKED", blocked_from: "PLAN" });
-    expect(h.file("goal.md", "20261025-inj")).toContain("\nReal goal text.\n");
+    expect(h.file("goal.md", "20261025-inj")).toContain("\nReal goal text\\.\n");
   });
 
   it("a corrupt kickoff.md names the file for PM posts, yet a PM's BLOCKED kind external still pages the human", async () => {
@@ -1449,7 +1629,7 @@ describe("reply and stop as human", () => {
     ok(await h.claude.post({ type: "BLOCKED", to: "all", re: ["AC1"], kind: "external", body: `kickoff.md is corrupt: ${path}` }));
     expect(h.human.state()).toMatchObject({ phase: "BLOCKED", blocked_from: "PLAN" });
     expect(h.file("goal.md", "20261025-inj")).toContain("**claude is blocked (external), re AC1:**");
-    expect(h.file("goal.md", "20261025-inj")).toContain("\nReal goal text.\n");
+    expect(h.file("goal.md", "20261025-inj")).toContain("\nReal goal text\\.\n");
     expect(await h.codex.post({ type: "BLOCKED", to: "all", re: ["AC1"], kind: "internal", body: "Also stuck." }).catch((caught: unknown) => caught)).toBeInstanceOf(CorruptVaultFileError);
   });
 
@@ -1478,7 +1658,7 @@ describe("reply and stop as human", () => {
     h.clock.advance(60_000);
     ok(await h.human.stop("Retiring it until the file is fixed."));
     expect(h.human.state()).toMatchObject({ phase: "BLOCKED", blocked_from: "PLAN" });
-    expect(h.file("chat.md", "20261025-bad")).toContain("Retiring it until the file is fixed.");
+    expect(h.file("chat.md", "20261025-bad")).toContain("Retiring it until the file is fixed\\.");
   });
 
   it("budget exhaustion blocks with the budget question and reply --budget resumes", async () => {

@@ -1,6 +1,6 @@
 /**
  * Helpers shared by the three renderers (docs/RENDERING.md section 1):
- * glyphs, time formatting, escaping, link text, evidence, references.
+ * glyphs, time formatting, plain text, link text, evidence, references.
  */
 import { AGENT_HUMAN, type EvidenceItem, type GoalState, type Message, type MessageType } from "../../protocol/index.js";
 
@@ -61,124 +61,74 @@ export function localHint(ts: string, localTz: string | undefined): string {
 }
 
 // ---------------------------------------------------------------------------
-// Escaping (1.1)
+// Plain text (1.1)
 // ---------------------------------------------------------------------------
 
 /**
- * After any spaces, tabs, or invisible format characters (Unicode Zs and Cf:
- * zero-width space and joiners, bidi controls): a block marker, a type glyph
- * that would pass for a message header (1.3), an underscore rule, or a setext
- * `=` underline.
+ * Agent text with nothing invisible left in it (1.1 step 1): CR, CRLF, U+2028, and U+2029 become LF, a tab
+ * becomes a space, Default_Ignorable and format (Cf) characters are dropped, any other control character, a
+ * private-use character, or a lone surrogate becomes U+FFFD, and every space separator (Zs) a plain space.
  */
-const BLOCK_START = new RegExp(
-  `^([\\t\\p{Zs}\\p{Cf}]*)(?=[#>*+|\\-${Object.values(GLYPHS).join("")}]|\\d+\\.|(?:_[ \\t]*){3,}$|=+[ \\t]*$)`,
-  "u",
-);
-
-/** Backslash-prefix any line that would start a block construct or pass for a message header. */
-export function escapeBlockStarts(text: string): string {
+export function visible(text: string): string {
   return text
-    .split(/\r\n?|\n/)
-    .map((line) => line.replace(BLOCK_START, "$1\\"))
-    .join("\n");
+    .replace(/\r\n?|[\u{2028}\u{2029}]/gu, "\n")
+    .replace(/\t/g, " ")
+    .replace(/[\p{Default_Ignorable_Code_Point}\p{Cf}]/gu, "")
+    .replace(/[^\P{Cc}\n]|[\p{Co}\p{Cs}]/gu, "\u{FFFD}")
+    .replace(/\p{Zs}/gu, " ");
 }
 
-/** Text placed on one line (a list item, the fields line, a span): each run of line breaks becomes one space. */
-export function inline(text: string): string {
-  return text.replace(/[\r\n\u2028\u2029]+/g, " ");
+/** CommonMark's ASCII punctuation: each may take a backslash, which renders it as itself. */
+const ASCII_PUNCTUATION = /[!-/:-@[-`{-~]/g;
+
+/** 1.1 step 2: a backslash before every ASCII punctuation character, so no markdown, HTML, or character reference forms. */
+export function escapePunctuation(text: string): string {
+  return text.replace(ASCII_PUNCTUATION, "\\$&");
 }
 
-/** A line that opens a fenced code block: up to 3 spaces, then 3+ backticks (no backtick after) or 3+ tildes. */
-const FENCE_OPEN = /^ {0,3}(`{3,}(?=[^`]*$)|~{3,})/;
-const FENCE_CLOSE = /^ {0,3}(`{3,}|~{3,})[ \t]*$/;
-
-/** Start of the first backtick run of exactly `length` at or after `from`, else -1. */
-function closingRun(line: string, from: number, length: number): number {
-  const runs = /`+/g;
-  runs.lastIndex = from;
-  for (let run = runs.exec(line); run !== null; run = runs.exec(line)) {
-    if (run[0].length === length) return run.index;
-  }
-  return -1;
+/** Agent text for one line, before escaping: visible characters, each line break and the spaces around it one space, trimmed. */
+export function oneLine(text: string): string {
+  return visible(text).replace(/ *\n[ \n]*/g, " ").trim();
 }
 
-/** A backslash and the ASCII punctuation it escapes; `<` and `&` are left to the entity escape. */
-const ESCAPE_PAIR = /^\\[!-%'-/:;=>?@[-`{-~]/;
+/** One-line agent text as plain text (1.1): claim, task text, `new_task`, `reason`, a criterion, a note, a table cell. */
+export function plainInline(text: string): string {
+  return escapePunctuation(oneLine(text));
+}
+
+/** A line of agent text may begin with a letter, a digit, or the backslash of an escape; anything else gets a backslash. */
+const LINE_START = /^[\p{L}\p{N}\\]/u;
 
 /**
- * One line outside fenced code: `<` and `&` become `&lt;` and `&amp;` except
- * inside a code span closed on the same line, and each character of `extra`
- * gets a backslash there. A backtick run that closes no span on the line is
- * backslash-escaped, and so is a backslash ending the text, so the text
- * cannot pair a backtick or escape a character around it.
+ * Agent text kept on its own lines as plain text (1.1): a body, the goal text, the BLOCKED quote. Each line is
+ * trimmed and escaped; blank lines separate paragraphs, and every other line break is a hard break.
  */
-function escapeHtmlLine(line: string, last: boolean, extra: string): string {
-  let out = "";
-  let index = 0;
-  while (index < line.length) {
-    const char = line[index];
-    const pair = ESCAPE_PAIR.exec(line.slice(index, index + 2))?.[0];
-    if (pair !== undefined) {
-      out += pair;
-      index += 2;
-    } else if (char === "`") {
-      const run = /^`+/.exec(line.slice(index))?.[0] ?? "`";
-      const close = closingRun(line, index + run.length, run.length);
-      const end = close < 0 ? index + run.length : close + run.length;
-      out += close < 0 ? run.replace(/`/g, "\\`") : line.slice(index, end);
-      index = end;
-    } else {
-      if (char === "<") out += "&lt;";
-      else if (char === "&") out += "&amp;";
-      else if (extra.includes(char) || (char === "\\" && last && index === line.length - 1)) out += `\\${char}`;
-      else out += char;
-      index += 1;
+export function plainBlock(text: string): string {
+  const paragraphs: string[][] = [];
+  let lines: string[] = [];
+  for (const raw of visible(text).split("\n")) {
+    const line = escapePunctuation(raw.trim());
+    if (line !== "") lines.push(LINE_START.test(line) ? line : `\\${line}`);
+    else if (lines.length > 0) {
+      paragraphs.push(lines);
+      lines = [];
     }
   }
-  return out;
+  if (lines.length > 0) paragraphs.push(lines);
+  return paragraphs.map((paragraph) => paragraph.join("\\\n")).join("\n\n");
 }
 
-/**
- * Agent text with no raw HTML and no character reference (1.1): `<` and `&`
- * are entity-escaped, and the characters of `extra` backslash-escaped,
- * everywhere but in code spans and closed fenced code blocks, which keep
- * them literal.
- */
-export function escapeHtml(text: string, extra = ""): string {
-  const lines = text.split(/\r\n?|\n/);
-  const out: string[] = [];
-  for (let index = 0; index < lines.length; index += 1) {
-    const fence = FENCE_OPEN.exec(lines[index])?.[1];
-    const close =
-      fence === undefined
-        ? -1
-        : lines.findIndex((line, at) => {
-            const closer = at > index ? FENCE_CLOSE.exec(line)?.[1] : undefined;
-            return closer !== undefined && closer[0] === fence[0] && closer.length >= fence.length;
-          });
-    if (close > index) {
-      out.push(...lines.slice(index, close + 1));
-      index = close;
-    } else {
-      out.push(escapeHtmlLine(lines[index], index === lines.length - 1, extra));
-    }
-  }
-  return out.join("\n");
-}
-
-/** Agent text placed on one line: line breaks collapsed, HTML and character references escaped. */
-export function inlineText(text: string, extra = ""): string {
-  return escapeHtml(inline(text), extra);
-}
-
-/** Claim inside single `*`: one-line agent text with emphasis delimiters escaped. */
+/** Claim inside single `*`: one-line plain text, which no `*` of its own can close. */
 export function italic(text: string): string {
-  return `*${inlineText(text, "*_")}*`;
+  return `*${plainInline(text)}*`;
 }
 
-/** One-line code span, fenced by one backtick more than the longest backtick run inside, with inner spaces then. */
+/**
+ * A renderer-owned code span (1.1 step 4): visible characters on one line, fenced by one backtick more than
+ * the longest backtick run inside, with a space inside the fence when the text holds a backtick.
+ */
 export function code(text: string): string {
-  const flat = inline(text);
+  const flat = visible(text).replace(/\n+/g, " ");
   if (flat === "") return "` `";
   const longest = Math.max(0, ...(flat.match(/`+/g) ?? []).map((run) => run.length));
   if (longest === 0) return `\`${flat}\``;
@@ -186,9 +136,9 @@ export function code(text: string): string {
   return `${fence} ${flat} ${fence}`;
 }
 
-/** Table cell: one line, HTML escaped, pipes escaped. */
-export function cell(text: string): string {
-  return inlineText(text).replace(/\|/g, "\\|");
+/** A code span inside a table cell: GFM splits cells before it parses spans, so the span's `|` is escaped. */
+export function cellCode(text: string): string {
+  return code(text).replace(/\|/g, "\\|");
 }
 
 /** `| a | b |` with an empty cell rendered as a single space, as in the samples. */
@@ -198,16 +148,6 @@ export function tableRow(cells: string[]): string {
 
 export function tableSeparator(columns: number): string {
   return `|${Array.from({ length: columns }, () => "---").join("|")}|`;
-}
-
-/** Body text as its own paragraph(s): trimmed, then as `blockText`. */
-export function bodyParagraph(body: string): string {
-  return blockText(body.trim());
-}
-
-/** Agent text kept on its own lines: HTML and character references escaped, then block starts. */
-export function blockText(text: string): string {
-  return escapeBlockStarts(escapeHtml(text));
 }
 
 // ---------------------------------------------------------------------------
@@ -227,21 +167,33 @@ export function linkText(url: string): string {
   return bare.length > LINK_TEXT_MAX ? `${bare.slice(0, LINK_TEXT_MAX)}\u2026` : bare;
 }
 
-/** A character a link destination cannot hold as is (space, line break, control, `<`, `>`, parentheses, backslash), percent-encoded. */
+/**
+ * Link text as plain text (1.1): the owner, repo, and bare URL are agent text; the `/`, `#`, and `@` the
+ * renderer puts between owner, repo, and number or sha are its own.
+ */
+export function linkLabel(url: string): string {
+  const pr = GITHUB_PR.exec(url);
+  if (pr) return `${plainInline(pr[1])}/${plainInline(pr[2])}#${pr[3]}`;
+  const commit = GITHUB_COMMIT.exec(url);
+  if (commit) return `${plainInline(commit[1])}/${plainInline(commit[2])}@${commit[3].slice(0, 7)}`;
+  return plainInline(linkText(url));
+}
+
+/** A character a link destination cannot hold as is (space, line break, an invisible or unprintable character, `<`, `>`, parentheses, backslash), percent-encoded. */
 function percentEncode(char: string): string {
   return Array.from(new TextEncoder().encode(char), (byte) => `%${byte.toString(16).toUpperCase().padStart(2, "0")}`).join("");
 }
 
-/** `[text](url)`: the text escaped as one-line agent text with brackets escaped; the destination cannot end early or span lines. */
+/** `[text](url)`: plain link text; the destination cannot end early, span lines, or hide a character. */
 export function link(url: string): string {
-  const text = inlineText(linkText(url), "[]");
-  return `[${text}](${url.replace(/[\s\p{Cc}<>()\\]/gu, percentEncode)})`;
+  const destination = url.replace(/[\s\p{Cc}\p{Cf}\p{Co}\p{Cs}\p{Default_Ignorable_Code_Point}<>()\\]/gu, percentEncode);
+  return `[${linkLabel(url)}](${destination})`;
 }
 
-/** `#412` for a GitHub PR, else the link text (decisions.md evidence column). */
+/** `#412` for a GitHub PR, else the plain link text (decisions.md evidence column). */
 export function prNumber(url: string): string {
   const pr = GITHUB_PR.exec(url);
-  return pr ? `#${pr[3]}` : linkText(url);
+  return pr ? `#${pr[3]}` : plainInline(linkText(url));
 }
 
 export function shortSha(sha: string): string {
@@ -280,27 +232,27 @@ export function evidenceBullet(item: EvidenceItem, byId: Map<string, Message>): 
     case "human":
       return `- human: ${messageRef(item.id, byId)}`;
     case "external":
-      return `- external: ${link(item.url)}${item.note === undefined ? "" : `${SEP}${inlineText(item.note)}`}`;
+      return `- external: ${link(item.url)}${item.note === undefined ? "" : `${SEP}${plainInline(item.note)}`}`;
   }
 }
 
-/** `<kind> <key>` for the decisions.md evidence column (3.2). */
+/** `<kind> <key>` for the decisions.md evidence column (3.2), ready for a table cell. */
 export function evidenceSummary(item: EvidenceItem, byId: Map<string, Message>): string {
   switch (item.kind) {
     case "commit":
-      return `commit ${code(shortSha(item.sha))}`;
+      return `commit ${cellCode(shortSha(item.sha))}`;
     case "pr":
       return `pr ${prNumber(item.url)}`;
     case "test":
       return `test ${resultWord(item.result)}`;
     case "file":
-      return `file ${code(item.path)}`;
+      return `file ${cellCode(item.path)}`;
     case "review":
       return `review ${prNumber(item.url)} ${verdictWord(item.verdict)}`;
     case "human":
       return `human ${messageRef(item.id, byId)}`;
     case "external":
-      return `external ${linkText(item.url)}`;
+      return `external ${plainInline(linkText(item.url))}`;
   }
 }
 

@@ -8,7 +8,7 @@ brief, a PreToolUse hook that denies a shell call to the human's `diarchy reply`
 and `diarchy stop`, and a Stop hook that keeps the turn open while you owe the
 other PM a reply.
 
-Requirements: Node 20 or later on `PATH`, Claude Code 2.1.275 or later, Linux or macOS.
+Requirements: Node 20.3 or later on `PATH`, Claude Code 2.1.275 or later, Linux or macOS.
 Native Windows is untested and `diarchy start --driver real` refuses to run there; use WSL.
 
 ## Path A: from inside Claude Code
@@ -46,7 +46,7 @@ after editing `src/`, run `npm run build` (see CONTRIBUTING.md).
 1. Start Claude Code in the project and run `/mcp`. `diarchy` must be listed as
    connected with seven tools. If it shows as failed, run
    `node <plugin root>/bin/diarchy.js mcp --agent claude` by hand and read the
-   error; a Node older than 20 is the usual cause. `dist/` is committed, so a
+   error; a Node older than 20.3 is the usual cause. `dist/` is committed, so a
    marketplace install always has it; if the error names `dist/` anyway, the
    copy was modified (`git checkout -- dist` or `npm run build` restores it),
    and `bin/diarchy.js` runs a `diarchy` from `PATH` instead when one is
@@ -54,7 +54,8 @@ after editing `src/`, run `npm run build` (see CONTRIBUTING.md).
 2. Run `/plugin` and check `diarchy@diarchy` is enabled.
 3. Ask Claude to call the diarchy `read` tool. With no goal in the vault it
    answers `{ ok: false, rule: "NO_GOAL", ... }`; that is the server working.
-   Once a goal exists it returns the phase, your role, and unread messages.
+   Once a goal exists it returns the goal text (`goal_text`), every acceptance
+   criterion with its status (`acs`), the phase, your role, and unread messages.
 4. On the next session start, with a goal active, the first lines of context are
    the inbox brief from `diarchy inbox-skim`. With no goal active nothing is
    printed; that is expected.

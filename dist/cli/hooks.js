@@ -15,7 +15,7 @@
  */
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { roleOf } from "../protocol/index.js";
+import { FIELD_MAX_CHARS, oneLine, roleOf } from "../protocol/index.js";
 import { budgetLine } from "../vault/render/shared.js";
 import { nextStep, openAssignments, unreadFor } from "./brief.js";
 import { headerLine, humanStore } from "./common.js";
@@ -37,7 +37,7 @@ export function runInboxSkim(projectDir, agent) {
     lines.push(`budget: ${budgetLine(state)}`);
     const owed = openAssignments(state, agent);
     if (owed.length > 0) {
-        const items = owed.map((item) => (item.kind === "review" ? `review of ${item.pr ?? "?"}` : `${item.task} implement`));
+        const items = owed.map((item) => (item.kind === "review" ? `review of ${oneLine(item.pr ?? "?", FIELD_MAX_CHARS)}` : `${item.task} implement`));
         lines.push(`your open assignments: ${items.join(", ")}`);
     }
     lines.push(`unread: ${unread.length} message${unread.length === 1 ? "" : "s"}`);
@@ -47,7 +47,8 @@ export function runInboxSkim(projectDir, agent) {
     for (const message of shown)
         lines.push(`  ${headerLine(message)}`);
     lines.push(`next: ${nextStep(state, messages, agent, unread).text}`);
-    return lines.slice(0, SKIM_MAX_LINES);
+    // Cap output lines, not array entries, so no entry can stretch the brief past 15 lines.
+    return lines.join("\n").split("\n").slice(0, SKIM_MAX_LINES);
 }
 export function gateRecordPath(projectDir, agent) {
     return join(projectDir, ".diarchy", `gate-${agent}.json`);

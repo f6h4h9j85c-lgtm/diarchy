@@ -1,4 +1,4 @@
-import type { AgentLaunch } from "./launcher-config.js";
+import { type AgentLaunch } from "./launcher-config.js";
 export type DriverName = "real" | "fake";
 export interface SpawnPlan {
     command: string;
@@ -25,6 +25,12 @@ export declare function detectSessionId(line: string): string | null;
 export declare function buildPrompt(agent: string, goalId: string): string;
 export type Flavor = "claude" | "codex" | "generic";
 export declare function flavorOf(command: string): Flavor;
+/**
+ * The line `diarchy start` prints for a Codex PM launched under
+ * `--sandbox workspace-write`, else null: that sandbox keeps the worktree's
+ * gitdir read-only and the network off, and `codex exec` never escalates.
+ */
+export declare function sandboxNotice(agent: string, launch: AgentLaunch): string | null;
 export interface RealPlanInput {
     projectDir: string;
     agent: string;

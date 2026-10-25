@@ -30,7 +30,15 @@ export interface LauncherConfig {
  * diarchy.config.json, for example `Bash(make *)`.
  */
 export declare const CLAUDE_ALLOWED_TOOLS: string[];
+/** Codex flag that runs enabled hooks without persisted /hooks trust for one invocation. */
+export declare const HOOK_TRUST_BYPASS = "--dangerously-bypass-hook-trust";
 export declare const DEFAULT_AGENT_LAUNCH: Record<string, AgentLaunch>;
+/** Codex flag that turns off the sandbox and approvals: the PM runs with the user's full OS permissions. */
+export declare const SANDBOX_BYPASS = "--dangerously-bypass-approvals-and-sandbox";
+/** `agents.codex.args` written by `diarchy init --codex-full-access`. */
+export declare const CODEX_FULL_ACCESS_ARGS: readonly string[];
+/** True when these launch args keep Codex in the workspace-write sandbox (`--sandbox workspace-write`, `-s`, or `-c sandbox_mode=`). */
+export declare function runsInWorkspaceWrite(args: readonly string[]): boolean;
 export declare const DEFAULT_LAUNCHER: LauncherKnobs;
 /**
  * The spawn recipe for one agent. `args` present: used verbatim. Absent: a

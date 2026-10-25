@@ -1,5 +1,7 @@
 # Design notes: diarchy rendered files
 
+A design review written alongside RENDERING.md on 2026-10-25. RENDERING.md, PROTOCOL.md, and `samples/` are normative; where they and these notes differ, the notes are out of date.
+
 ## Intent
 
 The reader is a human on a phone, in Obsidian, who did not watch the run. In the first three seconds they need, in this order: do I have to do something; what phase is it in; who is leading; how much of the budget is gone; what happened last. Everything else is scrolling.
@@ -26,7 +28,7 @@ Goal (title), human slot, phase, lead, budget, recency, last event, two links. N
 
 `samples/goal-blocked.md`, lines 4 to 10: the first thing after the title is a `WARNING` callout whose first words are `**Human needed** since 14:35:01 UTC (10:35 local)`. The agent's own words are a nested quote, so the reader sees exactly what codex said rather than a paraphrase. The last paragraph tells them the one command to run and what it does.
 
-Scanning for disagreement in `chat.md`: the two ▲ lines (14:04:55 and 15:49:12) and the four ● lines are the only heavy glyphs in the PLAN and EXECUTE sections besides the terminal ■. A thumb-scroll at speed stops on them.
+Scanning for disagreement in `chat.md`: the two ▲ lines (14:04:55 and 15:49:12), the three agent ● lines, and codex's ✕ BLOCKED (14:35:00) are the only heavy glyphs in the PLAN and EXECUTE sections besides the terminal ■, and a thumb-scroll at speed stops on them. The human's ● DECIDE (14:52:10) and the ⚑ ASK_HUMAN sit under `## → BLOCKED`.
 
 Finding what was decided: `samples/decisions.md` has one struck id (`~~D1~~`), and the last row's `supersedes` cell says `D1`, so the chain reads downward without a legend. All four bases (`authority`, `test`, `human`, `adopted-challenge`) appear once, which is why the scenario was extended the way it was.
 
@@ -48,11 +50,13 @@ Consciously kept:
 - **Code spans for shas, branches, commands, paths only.** Monospace is data here, not a house voice; prose, labels, and the fields line stay in the body face.
 - **Mandated 7-column decisions table and 5-column tasks table.** Both will scroll horizontally on a phone. Kept because the columns are mandated; proposed changes are listed below.
 - **No "latest" section.** Duplicating blocks breaks "one block per message", doubles every search hit, and costs a screen; the strip's third paragraph plus the outline headings do the job.
-- **Faithful AC statuses in `goal-blocked.md`.** All three ACs read `**failing**` at 14:35 because PROTOCOL 2.3 sets AC status from any `test` evidence in a message whose `re` includes the AC, and the plan DECIDE's replica-count test failed. That is honest to the spec and misleading to the reader. Rendered as specified; flagged as the first proposed protocol change.
+- **Faithful AC statuses in `goal-blocked.md`.** All three ACs read `open` at 14:35 even though the plan DECIDE's replica-count test failed. The first draft of PROTOCOL 2.3 set AC status from any `test` evidence citing the AC, which would have shown `**failing**` before any code existed; proposed change 1 below limited it to work evidence, applied as a STATUS accepted in EXECUTE, so a probe test in a CHALLENGE or DECIDE (or the DONE's own attestation) never moves an AC (PROTOCOL 2.3, RENDERING 4.3).
 
-## Proposed changes to PROTOCOL.md 2.3 (not applied)
+## Proposed changes to PROTOCOL.md 2.3
 
-1. **AC status should come from work evidence, not debate evidence.** Limit the "latest `test` evidence citing it" rule to STATUS and DONE messages. Today a CHALLENGE's or DECIDE's probe test (replica count, a grep) flips every cited AC to `failing` or `passing` before any code exists. The blocked sample shows the damage.
+Changes 1, 2, 3, 5, and 6 were applied in protocol_version 1. Change 4 is still open: the Tasks table keeps its `branch` column.
+
+1. **AC status should come from work evidence, not debate evidence.** Limit the "latest `test` evidence citing it" rule to STATUS and DONE messages. Without it, a CHALLENGE's or DECIDE's probe test (replica count, a grep) flips every cited AC to `failing` or `passing` before any code exists, as the first draft of the blocked sample showed.
 2. **Give the human DECIDE a defined `decision_id`.** `diarchy reply` without `--decision` must still produce a DECIDE with a `decision_id` or `supersedes`; the samples assume the store assigns the next `D<n>`. Say so, or decisions.md cannot have "one row per accepted DECIDE".
 3. **Allow the Status table to carry the budget.** Add `messages` and `clock` columns (or allow a budget line under the table, which is what the samples do). The reader's fourth question has no mandated home in `goal.md`.
 4. **Drop or shorten the Tasks `branch` column.** Every branch is `<prefix>/<goal-id>/<agent>`, so the column repeats the assignee at 33 characters and forces horizontal scroll on a phone. Keep it in the raw ASSIGN; show it in `goal.md` only when it differs from the default.

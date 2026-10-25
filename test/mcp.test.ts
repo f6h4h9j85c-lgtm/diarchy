@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -8,10 +8,18 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import type { RequestOptions } from "@modelcontextprotocol/sdk/shared/protocol.js";
-import { CallToolResultSchema, LoggingMessageNotificationSchema, type Progress, type ReadResourceResult } from "@modelcontextprotocol/sdk/types.js";
+import {
+  CallToolResultSchema,
+  ErrorCode,
+  LoggingMessageNotificationSchema,
+  type JSONRPCMessage,
+  type Progress,
+  type ReadResourceResult,
+} from "@modelcontextprotocol/sdk/types.js";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { TOOL_NAMES, createMcpServer } from "../src/mcp/index.js";
+import { SERVER_ERRORS, TOOL_NAMES, createMcpServer } from "../src/mcp/index.js";
+import { RULE_IDS } from "../src/protocol/index.js";
 import {
   CONFIG_FILENAME,
   GENERATED,
@@ -179,6 +187,118 @@ describe("tools/list", () => {
       expect(tool.description, tool.name).not.toContain("—");
     }
   });
+
+  it("the read description and the PROTOCOL.md section 10 read row name goal_text and acs", async () => {
+    const h = await harness();
+    const { tools } = await h.claude.listTools();
+    const read = tools.find((tool) => tool.name === "read");
+    const row = readFileSync(join(ROOT, "docs", "PROTOCOL.md"), "utf8")
+      .split("\n")
+      .find((line) => line.startsWith("| read |"));
+    for (const field of ["goal_text", "acs"]) {
+      expect(read?.description, field).toContain(field);
+      expect(row, field).toContain(field);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// PROTOCOL.md section 10 is the wire contract: parsed so the doc and the server cannot drift
+// ---------------------------------------------------------------------------
+
+const PROTOCOL = readFileSync(join(ROOT, "docs", "PROTOCOL.md"), "utf8");
+const SECTION_10 = PROTOCOL.slice(PROTOCOL.indexOf("## 10. MCP tools"), PROTOCOL.indexOf("## 11."));
+
+function tableRows(text: string): string[][] {
+  return text
+    .split("\n")
+    .filter((line) => line.startsWith("|") && !/^\|\s*-+/.test(line))
+    .map((line) => line.split("|").slice(1, -1).map((cell) => cell.trim()));
+}
+
+const TOOL_ROWS = new Map(tableRows(SECTION_10).filter(([name]) => (TOOL_NAMES as readonly string[]).includes(name)).map((cells) => [cells[0], cells]));
+const CODE_ROWS = tableRows(SECTION_10).filter((cells) => cells.length === 3 && /^[A-Z_]+$/.test(cells[0]));
+
+interface Shape {
+  required: string[];
+  optional: string[];
+}
+
+/** `name: type; other?: type` or `{ a, b: { c }, d? }`: top-level names, `?` marking the optional ones. */
+function fields(list: string, separator: string): Shape {
+  const shape: Shape = { required: [], optional: [] };
+  for (const part of list.split(separator)) {
+    const match = /^\s*([a-z_]+)(\?)?/.exec(part);
+    if (match === null) throw new Error(`no field name in "${part}"`);
+    (match[2] === "?" ? shape.optional : shape.required).push(match[1]);
+  }
+  return shape;
+}
+
+function documentedShape(pattern: RegExp): Shape {
+  const match = pattern.exec(SECTION_10);
+  if (match === null) throw new Error(`PROTOCOL.md section 10 has no shape matching ${pattern.source}`);
+  let inner = match[1].trim().replace(/^\{|\}$/g, "");
+  while (/\{[^{}]*\}/.test(inner)) inner = inner.replace(/\{[^{}]*\}/g, "");
+  return fields(inner, ",");
+}
+
+function expectShape(result: object, shape: Shape, label: string): void {
+  const keys = Object.keys(result);
+  for (const key of shape.required) expect(keys, `${label} has ${key}`).toContain(key);
+  for (const key of keys) expect([...shape.required, ...shape.optional], `${label} documents ${key}`).toContain(key);
+}
+
+describe("PROTOCOL.md section 10", () => {
+  it("documents each tool's input fields exactly, with ? on the optional ones", async () => {
+    const h = await harness();
+    const { tools } = await h.claude.listTools();
+    expect([...TOOL_ROWS.keys()].sort()).toEqual(SORTED_TOOLS);
+    for (const tool of tools) {
+      const row = TOOL_ROWS.get(tool.name) ?? [];
+      const doc = fields(row[1] ?? "", ";");
+      const properties = Object.keys(tool.inputSchema.properties ?? {});
+      const required = tool.inputSchema.required ?? [];
+      expect([...doc.required, ...doc.optional].sort(), tool.name).toEqual([...properties].sort());
+      expect([...doc.required].sort(), `${tool.name} required`).toEqual([...required].sort());
+    }
+  });
+
+  it("lists the server codes with the server's messages, and every typical error is a known code", async () => {
+    expect(CODE_ROWS.map(([code]) => code).sort()).toEqual([...SERVER_ERRORS].sort());
+    const message = (code: string): string => CODE_ROWS.find(([name]) => name === code)?.[2] ?? "";
+    expect(message("NO_GOAL")).toBe(NO_GOAL.message);
+    const h = await harness();
+    await h.kickoff();
+    const wrong = await rejected(h.claude, "post", { ...PROPOSE, type: "DECIDE" });
+    expect(wrong.rule).toBe("WRONG_TOOL");
+    const template = message("WRONG_TOOL").split(/\{[a-z_]+\}/).map((part) => part.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+    expect(wrong.message).toMatch(new RegExp(`^${template.join(".+?")}$`));
+
+    const known = new Set<string>([...RULE_IDS, ...SERVER_ERRORS]);
+    for (const [name, , , errors] of TOOL_ROWS.values()) {
+      for (const code of errors.split(",").map((part) => part.trim())) {
+        if (code !== "any rule") expect(known.has(code), `${name} lists ${code}`).toBe(true);
+      }
+    }
+    // TWO_ROUNDS gates only PROPOSE and CHALLENGE (rules.ts twoRounds); the happy path decides after both.
+    expect(TOOL_ROWS.get("decide")?.[3]).not.toContain("TWO_ROUNDS");
+  });
+
+  it("posting and read results carry exactly the documented keys", async () => {
+    const posting = documentedShape(/answers `(\{ ok: true[^`]*\})`/);
+    const kickoffExtras = fields(/`kickoff` adds `([^`]+)`/.exec(SECTION_10)?.[1] ?? "", ",");
+    const read = documentedShape(/`read` answers `(\{[^`]*\})`/);
+    expect(read.required).not.toContain("ok");
+
+    const h = await harness();
+    const kick = await h.kickoff();
+    expectShape(kick, { required: [...posting.required, ...kickoffExtras.required], optional: posting.optional }, "kickoff");
+    expectShape(await accepted(h.claude, "post", PROPOSE), posting, "post");
+    expectShape(await accepted(h.codex, "read"), read, "read");
+    await accepted(h.claude, "status", { re: ["AC1"], evidence: [{ kind: "file", path: "docs/plan.md" }], body: "Plan notes written down." });
+    expectShape(await accepted(h.codex, "wait_for_reply", { timeout_ms: 1_000 }), read, "wait_for_reply");
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -204,6 +324,37 @@ describe("kickoff and read", () => {
     expect(again).toEqual({ ok: false, rule: "SINGLE_KICKOFF", message: `Goal ${GOAL_ID} is already active (phase PLAN). Call read instead of kickoff.` });
     const asCodex = await rejected(h.codex, "kickoff", KICKOFF_ARGS);
     expect(asCodex.rule).toBe("SINGLE_KICKOFF");
+  });
+
+  it("read and wait_for_reply carry the goal text and every AC with its criterion and live status, ac_add included", async () => {
+    const h = await harness();
+    await h.kickoff();
+    const read = await accepted<ReadResult>(h.codex, "read");
+    expect(read.goal_text).toBe(GOAL);
+    expect(read.acs).toEqual(Object.fromEntries(ACS.map((criterion, index) => [`AC${index + 1}`, { criterion, status: "open" }])));
+
+    await accepted<PostOk>(h.claude, "post", PROPOSE);
+    await accepted<PostOk>(h.claude, "decide", {
+      claim: "A token-bucket middleware keyed by API key satisfies AC1 and AC2.",
+      re: ["AC1", "AC2", "AC3"],
+      basis: "authority",
+      decision_id: "plan",
+      tasks: ["Token-bucket middleware", "Env-driven limit", "Tests"],
+      ac_add: ["Responses carry X-RateLimit-Remaining."],
+      body: "No challenge arrived and there is nothing to test before code exists.",
+    });
+    await accepted<ReadResult>(h.codex, "read");
+    const waiting = call<ReadResult>(h.codex, "wait_for_reply", { timeout_ms: 5_000 });
+    await realSleep(50);
+    await accepted<PostOk>(h.claude, "status", { re: ["AC1"], evidence: [{ kind: "test", test: "npm test -- rate-limit", result: "pass" }] });
+    const { body } = await waiting;
+    expect(body.goal_text).toBe(GOAL);
+    expect(body.acs).toEqual({
+      AC1: { criterion: ACS[0], status: "passing" },
+      AC2: { criterion: ACS[1], status: "open" },
+      AC3: { criterion: ACS[2], status: "open" },
+      AC4: { criterion: "Responses carry X-RateLimit-Remaining.", status: "open" },
+    });
   });
 
   it("read, wait_for_reply, and post before any kickoff return NO_GOAL instead of throwing", async () => {
@@ -406,6 +557,46 @@ describe("wait_for_reply", () => {
     h.clock.advance(MAX_WAIT_MS - 2 * PROGRESS_MS);
     expect((await waiting).body).toEqual({ timeout: true });
     expect(progress).toHaveLength(2);
+  });
+
+  it("a wait the client cancels (request timeout) leaves the cursor alone, so the next read delivers the reply", async () => {
+    const h = await harness();
+    await h.kickoff();
+    await accepted<ReadResult>(h.codex, "read");
+    await expect(call(h.codex, "wait_for_reply", { timeout_ms: 5_000 }, { timeout: 50 })).rejects.toMatchObject({ code: ErrorCode.RequestTimeout });
+    await realSleep(50);
+    const posted = await accepted<PostOk>(h.claude, "post", PROPOSE);
+    await realSleep(50);
+    const read = await accepted<ReadResult>(h.codex, "read");
+    expect(read.messages.map((message) => message.id)).toEqual([posted.id]);
+    expect(read.cursor).toBe(posted.id);
+  });
+
+  it("a wait whose client gave up without cancelling is ended by the agent's next call and does not consume the reply", async () => {
+    const h = await harness();
+    await h.kickoff();
+    await accepted<ReadResult>(h.codex, "read");
+    // A raw tools/call outside the Client's bookkeeping: no timeout, no notifications/cancelled, nobody awaiting the result.
+    const transport = h.codex.transport;
+    if (transport === undefined) throw new Error("codex client has no transport");
+    const replies: JSONRPCMessage[] = [];
+    const deliver = transport.onmessage;
+    transport.onmessage = (message, extra) => {
+      replies.push(message);
+      deliver?.(message, extra);
+    };
+    await transport.send({ jsonrpc: "2.0", id: "orphan", method: "tools/call", params: { name: "wait_for_reply", arguments: { timeout_ms: 5_000 } } });
+    await realSleep(50);
+    const waiting = call<ReadResult>(h.codex, "wait_for_reply", { timeout_ms: 5_000 });
+    await realSleep(50);
+    const posted = await accepted<PostOk>(h.claude, "post", PROPOSE);
+    const { isError, body } = await waiting;
+    expect(isError).toBe(false);
+    expect(body.messages.map((message) => message.id)).toEqual([posted.id]);
+    expect(body.cursor).toBe(posted.id);
+    const orphan = replies.find((message) => "id" in message && message.id === "orphan");
+    expect(orphan).toMatchObject({ result: { structuredContent: { timeout: true } } });
+    expect((await accepted<ReadResult>(h.codex, "read")).messages).toEqual([]);
   });
 });
 

@@ -10,14 +10,29 @@ import { AGENT_HUMAN } from "../protocol/index.js";
 import { VaultStore, loadConfig } from "../vault/index.js";
 import { blockReason, blockSummary, replyHint } from "./brief.js";
 import { CliError, EXIT_BLOCKED, EXIT_ERROR, EXIT_OK, nowHms, sleep } from "./common.js";
-import { clearSession, defaultFakeScript, detectSessionId, fakePlan, loadSession, realPlan, saveSession, } from "./drivers.js";
+import { clearSession, defaultFakeScript, detectSessionId, fakePlan, loadSession, realPlan, saveSession, sandboxNotice, } from "./drivers.js";
 import { kickoffInput } from "./kickoff.js";
 import { loadLauncherConfig } from "./launcher-config.js";
 import { missingCommands, platformProblem } from "./preflight.js";
 import { claimRunRecord, identify, reapLeftovers, releaseRunRecord, runningSupervisor, saveRunRecord } from "./run-record.js";
-import { ensureWorktrees, hasCommits, isGitRepo } from "./worktrees.js";
+import { ensureWorktrees, hasCommits, isGitRepo, missingFromWorktrees } from "./worktrees.js";
 /** A resumed child that dies this fast is treated as a failed resume, not a crash. */
 const FAST_FAIL_MS = 5_000;
+/** The kickoff inputs given on the command line; they only mean something when no goal is active. */
+function newGoalArgs(goalText, options) {
+    const given = [];
+    if (goalText !== undefined)
+        given.push("the goal text");
+    if (options.ac.length > 0)
+        given.push("--ac");
+    if (options.lead !== undefined)
+        given.push("--lead");
+    if (options.budget.length > 0)
+        given.push("--budget");
+    if (options.slug !== undefined)
+        given.push("--slug");
+    return given;
+}
 function parseDriver(value) {
     if (value === "real" || value === "fake")
         return value;
@@ -55,6 +70,10 @@ export async function runStart(projectDir, goalText, options) {
         console.log(`${nowHms()} kickoff ${result.goal_id} · lead ${result.lead} · challenger ${result.challenger}`);
     }
     else {
+        const kickoffArgs = newGoalArgs(goalText, options);
+        if (kickoffArgs.length > 0) {
+            throw new CliError(`${goal.goalId} is already active (phase ${goal.phase}), so ${kickoffArgs.join(", ")} would be ignored; run diarchy start with no goal text or kickoff options to attach to it`);
+        }
         console.log(`${nowHms()} attached to ${goal.goalId} (phase ${goal.phase}, lead ${goal.lead})`);
         if (goal.phase === "BLOCKED") {
             const state = human.state();
@@ -64,10 +83,14 @@ export async function runStart(projectDir, goalText, options) {
             return EXIT_BLOCKED;
         }
     }
-    if (goalText !== undefined && goal.phase !== "PLAN" && options.ac.length > 0) {
-        console.log(`${nowHms()} note: goal text and --ac ignored; ${goal.goalId} is already active`);
-    }
     const worktrees = prepareWorktrees(projectDir, config, goal.goalId, agents, options.worktrees);
+    if (driver === "real") {
+        for (const agent of agents) {
+            const notice = sandboxNotice(agent, launcher.agents[agent]);
+            if (notice !== null)
+                console.log(`${nowHms()} ${notice}`);
+        }
+    }
     const supervisor = new Supervisor({ projectDir, config, launcher, human, goal, agents, worktrees, driver, options });
     return supervisor.run();
 }
@@ -89,6 +112,10 @@ function prepareWorktrees(projectDir, config, goalId, agents, wanted) {
         const note = result.note === null ? "" : ` (${result.note})`;
         console.log(`${nowHms()} worktree ${result.outcome} ${result.path} on ${result.branch}${note}`);
         map.set(result.agent, result.path);
+    }
+    const missing = missingFromWorktrees(projectDir, [...map.values()]);
+    if (missing.length > 0) {
+        console.log(`${nowHms()} note: ${missing.join(" and ")} not in the worktrees (uncommitted?); Codex reads them only from its worktree. Commit them before the next diarchy start.`);
     }
     return map;
 }

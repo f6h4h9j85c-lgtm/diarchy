@@ -65,6 +65,32 @@ export function isAck(body, claim) {
     const tokens = ackTokens(effective);
     return ACK_PATTERNS.some((pattern) => containsSequence(tokens, pattern.split(" ")));
 }
+/** Longest branch, worktree, or path a message may carry (PROTOCOL.md 3). */
+export const FIELD_MAX_CHARS = 200;
+/** Longest agent-authored text `oneLine` lets into a brief or hook reason by default. */
+export const ONE_LINE_MAX_CHARS = 80;
+/** C0 controls (line breaks and tab included), DEL, C1 controls, and U+2028/U+2029. */
+function isControl(code) {
+    return code < 0x20 || (code >= 0x7f && code <= 0x9f) || code === 0x2028 || code === 0x2029;
+}
+/** True when `text` holds a line break or any other control character. */
+export function hasControlChars(text) {
+    for (let index = 0; index < text.length; index += 1) {
+        if (isControl(text.charCodeAt(index)))
+            return true;
+    }
+    return false;
+}
+/**
+ * Agent-authored text made safe for a one-line terminal or hook context:
+ * control characters become spaces, whitespace collapses, and text longer
+ * than `maxChars` is cut with an ellipsis.
+ */
+export function oneLine(text, maxChars = ONE_LINE_MAX_CHARS) {
+    const chars = Array.from(text, (char) => (isControl(char.codePointAt(0) ?? 0) ? " " : char));
+    const flat = Array.from(chars.join("").replace(/\s+/g, " ").trim());
+    return flat.length <= maxChars ? flat.join("") : `${flat.slice(0, maxChars - 1).join("").trimEnd()}…`;
+}
 /** First `max` whitespace-split tokens, with an ellipsis when cut. */
 export function truncateWords(text, max) {
     const words = text.trim().split(/\s+/).filter((word) => word !== "");

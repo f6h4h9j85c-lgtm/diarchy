@@ -1,6 +1,6 @@
 # Quickstart: a first diarchy run in ten minutes
 
-You need Claude Code and Codex CLI installed and signed in, Node 20 or later on Linux or macOS (native Windows is untested and `diarchy start --driver real` refuses to run there; use WSL), and a git repository with at least one commit.
+You need Claude Code and Codex CLI installed and signed in, Node 20.3 or later on Linux or macOS (native Windows is untested and `diarchy start --driver real` refuses to run there; use WSL), and a git repository with at least one commit.
 
 ## 1. Install the plugin in both CLIs
 
@@ -10,7 +10,7 @@ Claude Code, from a shell:
 claude plugin install diarchy --marketplace f6h4h9j85c-lgtm/diarchy
 ```
 
-Codex CLI: `codex plugin marketplace add f6h4h9j85c-lgtm/diarchy`, then enable `diarchy@diarchy` and register the `diarchy` MCP server in `~/.codex/config.toml` as shown in [INSTALL-CODEX.md](INSTALL-CODEX.md). In each CLI, `/mcp` must list `diarchy`, and asking for the diarchy `read` tool must answer `NO_GOAL`: nothing is kicked off yet.
+Codex CLI: `codex plugin marketplace add f6h4h9j85c-lgtm/diarchy`, then enable `diarchy@diarchy` and register the `diarchy` MCP server in `~/.codex/config.toml` as shown in [INSTALL-CODEX.md](INSTALL-CODEX.md); then approve the plugin's three diarchy hooks in `/hooks`, or they are skipped silently. In each CLI, `/mcp` must list `diarchy`, and asking for the diarchy `read` tool must answer `NO_GOAL`: nothing is kicked off yet.
 
 ## 2. Initialise the project
 
@@ -18,21 +18,22 @@ Codex CLI: `codex plugin marketplace add f6h4h9j85c-lgtm/diarchy`, then enable `
 cd /path/to/api
 npm install -g github:f6h4h9j85c-lgtm/diarchy
 diarchy init
-cp /path/to/diarchy/templates/AGENTS.md AGENTS.md
+git add AGENTS.md .codex && git commit -m "Add the diarchy Codex files"
 ```
 
-`init` writes `diarchy.config.json` (vault path, both agents' launch commands, default budgets), creates `api brain/diarchy/`, and adds `.diarchy/` to `.gitignore`. Open `api brain` as a vault in Obsidian. `AGENTS.md` tells the Codex PM to call `read` and load `diarchy-pm` at session start.
+`init` writes `diarchy.config.json` (vault path, both agents' launch commands, default budgets), creates `api brain/diarchy/`, adds `.diarchy/` to `.gitignore`, and copies Codex's project files: `AGENTS.md`, which tells the Codex PM to call `read` and load `diarchy-pm` at session start, and the five subagents in `.codex/agents/`. An existing `AGENTS.md` is kept; append `templates/AGENTS.md` to it. Commit both: each PM works in a git worktree cut from HEAD, and Codex reads them only from its own worktree. Open `api brain` as a vault in Obsidian. The Codex PM runs sandboxed and cannot commit, push, or open a PR, so you or the Claude PM commit its work; `diarchy init --codex-full-access` lifts the sandbox and gives it your full OS permissions ([INSTALL-CODEX.md](INSTALL-CODEX.md) section 5).
 
 ## 3. Kick off
 
 ```
 diarchy start "Add per-API-key rate limiting to the public API." \
+  --slug rate-limit \
   --ac "Requests over the per-key limit get HTTP 429 with a Retry-After header, and the count is shared across all API replicas." \
   --ac "The limit is configurable through RATE_LIMIT_PER_MIN with a documented default." \
   --ac "Tests cover the 429 path and the config override, and the full suite is green on main."
 ```
 
-Each criterion is one checkable statement of at most 40 words; they become AC1, AC2, AC3 and are never reworded. The launcher prints the goal id (`20261025-rate-limit` for this goal on that date), the lead and the challenger, creates `.diarchy/worktrees/claude` and `.diarchy/worktrees/codex` on branches `diarchy/<goal-id>/<agent>`, and spawns `claude -p` and `codex exec` with a one-line prompt each. The lead alternates from the previous goal; `--lead claude` forces it.
+Each criterion is one checkable statement of at most 40 words; they become AC1, AC2, AC3 and are never reworded. The launcher prints the goal id (`20261025-rate-limit` for this goal on that date; without `--slug` the slug is derived from the goal text), the lead and the challenger, creates `.diarchy/worktrees/claude` and `.diarchy/worktrees/codex` on branches `diarchy/<goal-id>/<agent>`, and spawns `claude -p` and `codex exec` with a one-line prompt each. The lead alternates from the previous goal; `--lead claude` forces it.
 
 Nobody is there to answer a permission prompt, so the Claude PM is launched with `--allowedTools` for the diarchy tools and for `git`, `npm`, `node`, and `gh`, and anything else is denied. If your checks run through another command, add `Bash(make *)` (or the like) to `agents.claude.args` in `diarchy.config.json` before this step.
 
@@ -56,7 +57,7 @@ Then `● DECIDE · plan` with its basis and a `Tasks:` list, and the heading `#
 diarchy reply "Read REDIS_URL from .env.staging; it is gitignored."
 ```
 
-For a deadlock: `diarchy reply "<ruling>" --decision plan` (or `D<n>`). For a spent budget: `diarchy reply "continue" --budget messages_total=160`. The reply is posted as a DECIDE with `basis: human`, recorded in `decisions.md`, and the phase returns to where it was. Then run `diarchy start` with no goal text: it attaches to the active goal and respawns both PMs.
+For a deadlock: `diarchy reply "<ruling>" --decision plan` (or `D<n>`). For a spent budget: `diarchy reply "continue" --budget messages_total=160`. The reply is posted as a DECIDE with `basis: human`, recorded in `decisions.md`, and the phase returns to where it was. A ruling on `plan` is the exception: it closes PLAN, so EXECUTE begins with no tasks and the lead ASSIGNs each one with `new_task`. Then run `diarchy start` with no goal text: it attaches to the active goal and respawns both PMs.
 
 ## 7. Stop
 

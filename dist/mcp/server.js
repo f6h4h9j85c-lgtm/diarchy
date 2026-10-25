@@ -34,7 +34,7 @@ function logError(error) {
     console.error(`diarchy-mcp: ${error instanceof Error ? (error.stack ?? error.message) : String(error)}`);
 }
 /** Run a tool body; NoGoalError becomes NO_GOAL, anything else INTERNAL. The server never crashes on a bad input. */
-async function run(body) {
+async function runTool(body) {
     try {
         return toolResult(await body());
     }
@@ -67,6 +67,19 @@ export function createMcpServer(options) {
     const config = loadConfig(projectDir);
     const store = options.store ?? new VaultStore({ projectDir, config, agent, ...(options.now === undefined ? {} : { now: options.now }) });
     const server = new McpServer({ name: "diarchy", version: VERSION }, { capabilities: { logging: {} }, instructions: INSTRUCTIONS });
+    /** The wait_for_reply this server has in flight, if any: one agent, one wait. */
+    let waiting = null;
+    /**
+     * Every tool call ends an earlier wait before it runs. The agent is
+     * sequential, so a new call means nobody reads that wait's result any more
+     * (its client timed out without sending notifications/cancelled); left
+     * running it would consume the reply and move the cursor past it.
+     */
+    const run = (body) => {
+        waiting?.abort();
+        waiting = null;
+        return runTool(body);
+    };
     server.registerTool("kickoff", {
         title: "Kick off a goal",
         description: "Start the one goal this vault will run; you become lead and the other agent challenger. Use only when read returns NO_GOAL and a human gave you a goal. Goal text 120 words max, each criterion 40 words max; criteria become AC1.. and are never reworded. Rejected with SINGLE_KICKOFF while a goal is PLAN, EXECUTE, or BLOCKED. Then post a PROPOSE with decision_id plan.",
@@ -107,7 +120,7 @@ export function createMcpServer(options) {
             decision_id: z.string().optional().describe("The open thread: plan or D<n>. Omit when supersedes is set."),
             supersedes: z.string().optional().describe("Decided thread to reopen; the store assigns the next D<n>."),
             reply_to: replyTo,
-            tasks: z.array(z.string()).optional().describe("plan only: tasks, numbered T1.. in goal.md."),
+            tasks: z.array(z.string()).optional().describe("plan only: tasks, one line and 40 words max each, numbered T1.. in goal.md."),
             ac_add: z.array(z.string()).optional().describe("plan only: criteria appended as AC<n+1>.., 40 words each."),
             evidence: evidence.optional().describe("basis test: a test item with result pass or fail. supersedes: the new evidence."),
             body,
@@ -119,7 +132,7 @@ export function createMcpServer(options) {
         inputSchema: {
             to: z.string().describe("Assignee agent id."),
             task: z.string().optional().describe("Existing task id T<n>. Exactly one of task or new_task."),
-            new_task: z.string().optional().describe("Text of a task not in goal.md yet; the store numbers it."),
+            new_task: z.string().optional().describe("Text of a task not in goal.md yet, one line and 40 words max; the store numbers it."),
             kind: z.enum(ASSIGN_KINDS).describe("implement or review."),
             worktree: z.string().optional().describe("implement: default <worktrees.root>/<to>."),
             branch: z.string().optional().describe("implement: default <branch_prefix>/<goal-id>/<to>."),
@@ -151,16 +164,27 @@ export function createMcpServer(options) {
     }, (args) => run(() => store.post({ ...args, type: "STATUS", to: "all", re: args.re ?? [] })));
     server.registerTool("read", {
         title: "Read the chat",
-        description: "Return messages from the other agent, the human, and the system since your inbox cursor, plus phase, your role, the types you may post now, budgets, lead, and challenger. Call it first in every turn and after any rejection. Advances the cursor; pass since (a message id) to re-read from a point. Returns NO_GOAL when nothing was kicked off.",
+        description: "Return the goal text (goal_text), every acceptance criterion with its text and status open, passing, or failing (acs), messages from the other agent, the human, and the system since your inbox cursor, plus phase, your role, the types you may post now, budgets, lead, and challenger. Plan against goal_text and acs. Call it first in every turn and after any rejection. Advances the cursor; pass since (a message id) to re-read from a point. Returns NO_GOAL when nothing was kicked off.",
         inputSchema: { since: z.string().optional().describe("Message id to read after; default: your inbox cursor.") },
     }, (args) => run(() => store.read(args) ?? serverError("NO_GOAL", NO_GOAL_TEXT)));
     server.registerTool("wait_for_reply", {
         title: "Wait for a reply",
-        description: `Block until the other agent, the human, or the system posts, then return the same result as read. Use it instead of polling read. timeout_ms defaults to and is capped at ${MAX_WAIT_MS}; on expiry it returns { timeout: true } and you call it again (the goal may also have moved to BLOCKED by deadline, which arrives as a system ASK_HUMAN). Sends a progress notification every 15 s.`,
+        description: `Block until the other agent, the human, or the system posts, then return the same result as read. Use it instead of polling read. timeout_ms defaults to and is capped at ${MAX_WAIT_MS}; on expiry it returns { timeout: true } and you call it again (the goal may also have moved to BLOCKED by deadline, which arrives as a system ASK_HUMAN). Sends a progress notification every 15 s. A wait that is cancelled, or overtaken by your next call, also returns { timeout: true } and leaves your inbox cursor alone, so the reply arrives on that next call.`,
         inputSchema: { timeout_ms: z.number().int().positive().optional().describe(`Milliseconds to wait; default and cap ${MAX_WAIT_MS}.`) },
     }, (args, extra) => run(() => {
         const timeoutMs = Math.min(args.timeout_ms ?? MAX_WAIT_MS, MAX_WAIT_MS);
-        return store.waitForReply({ timeoutMs, onProgress: (progress) => void notifyProgress(server, extra, timeoutMs, progress).catch(logError) });
+        const mine = new AbortController();
+        waiting = mine;
+        return store
+            .waitForReply({
+            timeoutMs,
+            signal: AbortSignal.any([extra.signal, mine.signal]),
+            onProgress: (progress) => void notifyProgress(server, extra, timeoutMs, progress).catch(logError),
+        })
+            .finally(() => {
+            if (waiting === mine)
+                waiting = null;
+        });
     }));
     const view = (title, uri, file, description) => {
         server.registerResource(title, uri, { title, description, mimeType: "text/markdown" }, (url) => {

@@ -189,7 +189,7 @@ export function createMcpServer(options: McpServerOptions): McpServer {
     {
       title: "Assign work",
       description:
-        "Lead only, EXECUTE only: hand a task to an agent (the lead may assign itself). kind implement takes a task id or new_task plus worktree and branch, defaulted from diarchy.config.json when omitted. kind review takes the PR url, which must already appear as pr evidence in a STATUS, and may not target the PR's author (NO_SELF_REVIEW). An agent still owing a review cannot be assigned implementation (BUSY_REVIEWING). reason, if given, is availability, continuity, or load-balance; never route by model or by frontend/backend ownership. The assignee replies with status.",
+        "Lead only, EXECUTE only: hand a task to an agent (the lead may assign itself). kind implement takes a task id or new_task; omit worktree and branch so they come from diarchy.config.json. kind review takes the PR url, which must already appear as pr evidence in a STATUS, plus new_task \"Review <pr url>\" (never the implement task's id), and may not target the PR's author (NO_SELF_REVIEW). An agent still owing a review cannot be assigned implementation (BUSY_REVIEWING). reason, if given, is availability, continuity, or load-balance; never route by model or by frontend/backend ownership. The assignee replies with status.",
       inputSchema: {
         to: z.string().describe("Assignee agent id."),
         task: z.string().optional().describe("Existing task id T<n>. Exactly one of task or new_task."),

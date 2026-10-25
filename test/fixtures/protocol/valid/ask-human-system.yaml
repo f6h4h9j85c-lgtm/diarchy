@@ -13,7 +13,7 @@ message:
   phase: BLOCKED
   ts: 2026-10-25T14:35:01Z
   body: |
-    codex is BLOCKED (external): staging REDIS_URL missing. The human has been paged; goal.md says how to answer.
+    codex is BLOCKED (external): Integration test needs staging REDIS_URL. Not in .env.example or the vault; I will not guess a credential. The human has been paged; goal.md says how to answer.
   type: ASK_HUMAN
 expect:
   ok: true

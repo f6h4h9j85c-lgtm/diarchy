@@ -49,13 +49,13 @@ At the 12-message cap only the lead's DECIDE is accepted.
 
 Lead:
 
-1. ASSIGN each task by availability: `kind: implement`, `worktree: .diarchy/worktrees/<agent>`, `branch: diarchy/<goal-id>/<agent>`. You may assign yourself. Never assign implementation to an agent holding an open review.
-2. When a STATUS arrives with `pr` evidence, ASSIGN `kind: review` with that `pr` to the other agent, never the author.
+1. ASSIGN each task by availability: `kind: implement`, omitting `worktree` and `branch` (config sets them). You may assign yourself. Never assign implementation to an agent holding an open review.
+2. When a STATUS arrives with `pr` evidence, ASSIGN `kind: review`, that `pr`, and `new_task: "Review <pr>"` to the other agent, never the author.
 3. Post DONE only when every task is done, every AC was set passing by a STATUS, every PR has a non-author `approve`, and no thread is open.
 
 Both:
 
-1. Work only in your worktree on your branch; if the launcher did not create it, run `git worktree add .diarchy/worktrees/<agent> -b diarchy/<goal-id>/<agent>`. Commit small; push.
+1. Work only in the worktree and branch your implement ASSIGN names; if missing, run `git worktree add <worktree> -b <branch>`. Commit small; push.
 2. After each task post STATUS with `task`, `task_status`, and evidence: `commit` sha, `test` command plus result, `pr` url once opened. After three messages without a STATUS the server accepts only STATUS, BLOCKED, DONE.
 3. Review the other agent's PR per `diarchy-review`. After `approve`, the author merges and posts STATUS with the merge `commit`.
 4. A CHALLENGE in EXECUTE needs new evidence: a failing test, a human message, or an external URL not cited before on that decision.
@@ -68,7 +68,7 @@ Every brief states: goal id, AC ids, worktree and branch, files in scope, verify
 
 ## Rejections
 
-A rejected call returns `{ ok: false, rule, message }`. Read `rule`, apply `message`, repost once. Never argue with the server, never retry unchanged, never split a message to dodge a rule.
+A rejected call returns `{ ok: false, rule, message }`. Read `rule`, apply `message`, repost once. Never argue, retry unchanged, or split a message to dodge a rule.
 
 ## Blocking
 

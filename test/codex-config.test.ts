@@ -328,7 +328,8 @@ describe("codex-config: hooks", () => {
           }
         }
       }
-      expect(h.hooks.SessionStart[0].matcher).toBe("startup|resume|clear|compact");
+      // Every SessionStart source both CLIs send, `fork` included (--fork-session, /fork, /branch).
+      expect(h.hooks.SessionStart[0].matcher?.split("|").sort()).toEqual(["clear", "compact", "fork", "resume", "startup"]);
       expect(h.hooks.PreToolUse[0].matcher).toBe("Bash");
       expect(commands.SessionStart).toContain("/hooks/session-start.sh");
       expect(commands.PreToolUse).toContain("/hooks/pre-tool-guard.sh");
@@ -392,5 +393,61 @@ describe("codex-config: prose", () => {
     for (const file of files) {
       expect(readFileSync(file, "utf8").includes("\u2014"), relative(root, file)).toBe(false);
     }
+  });
+});
+
+describe("codex-config: marketplace entry and project settings", () => {
+  it(".agents/plugins/marketplace.json gives the entry the policy and category the Codex plugin guide requires", () => {
+    const m = readJson(at(".agents", "plugins", "marketplace.json")) as {
+      plugins: { policy?: { installation?: string; authentication?: string }; category?: string }[];
+    };
+    const [entry] = m.plugins;
+    expect(["AVAILABLE", "INSTALLED_BY_DEFAULT", "NOT_AVAILABLE"]).toContain(entry.policy?.installation);
+    expect(["ON_INSTALL", "ON_USE"]).toContain(entry.policy?.authentication);
+    expect(typeof entry.category).toBe("string");
+    expect(entry.category?.trim()).not.toBe("");
+  });
+
+  it(".claude/settings.json rejects the root .mcp.json as a project server, so only the plugin-scoped server starts in this checkout", () => {
+    // The root .mcp.json is the plugin's server file; read as a project config it has no ${CLAUDE_PLUGIN_ROOT}.
+    const servers = Object.keys((readJson(at(".mcp.json")) as { mcpServers: Record<string, unknown> }).mcpServers);
+    const settings = readJson(at(".claude", "settings.json")) as { disabledMcpjsonServers?: string[]; enableAllProjectMcpServers?: boolean };
+    expect(settings.disabledMcpjsonServers).toEqual(servers);
+    expect(settings.enableAllProjectMcpServers).not.toBe(true);
+  });
+});
+
+describe("codex-config: skill and install prose", () => {
+  const read = (...parts: string[]): string => readFileSync(at(...parts), "utf8");
+
+  it("INSTALL-CODEX.md installs with codex plugin add instead of saying no one-line install exists", () => {
+    const text = read("docs", "INSTALL-CODEX.md");
+    expect(text).toContain("codex plugin add diarchy@diarchy");
+    expect(text).not.toMatch(/no one-line `codex plugin install`/);
+  });
+
+  it("diarchy-kickoff hands an active goal to the role read returns, never assuming challenger", () => {
+    const text = read("skills", "diarchy-kickoff", "SKILL.md");
+    expect(text).not.toContain("You are the challenger for that goal");
+    expect(text).toMatch(/Take the `role` that `read` returns \(lead or challenger\)/);
+  });
+
+  it("diarchy-pm's review ASSIGN carries new_task, which the store requires on every ASSIGN", () => {
+    const line = read("skills", "diarchy-pm", "SKILL.md")
+      .split("\n")
+      .find((text) => text.includes("ASSIGN `kind: review`"));
+    expect(line).toContain('`new_task: "Review <pr>"`');
+  });
+
+  it("the PM prose takes worktree and branch from config or the ASSIGN, never a hard-coded default", () => {
+    const pm = read("skills", "diarchy-pm", "SKILL.md");
+    expect(pm).not.toContain(".diarchy/worktrees/<agent>");
+    expect(pm).not.toContain("`branch: diarchy/");
+    expect(pm).toContain("omitting `worktree` and `branch`");
+    expect(pm).toContain("`git worktree add <worktree> -b <branch>`");
+    expect(read("skills", "diarchy-review", "SKILL.md")).toContain("`<worktrees.root>/<you>` and `<branch_prefix>/<goal-id>/<you>` from `diarchy.config.json`");
+    const agents = read("templates", "AGENTS.md");
+    expect(agents).toContain("`<worktrees.root>/codex` and `<branch_prefix>/<goal-id>/codex`");
+    expect(agents).not.toMatch(/Work only in `\.diarchy\/worktrees\/codex`/);
   });
 });

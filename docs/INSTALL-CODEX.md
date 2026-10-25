@@ -13,18 +13,19 @@ Requirements: Node 20 or later on `PATH`, Codex CLI with plugin and hook support
 
 ```
 codex plugin marketplace add f6h4h9j85c-lgtm/diarchy
+codex plugin add diarchy@diarchy
 ```
 
-Then enable it from the `/plugins` picker inside Codex, or add this to
-`~/.codex/config.toml`:
+`codex plugin add <plugin>@<marketplace>` installs a plugin from a marketplace
+you have added. Instead of it you can enable the plugin from the `/plugins`
+picker inside Codex, or add this to `~/.codex/config.toml`:
 
 ```toml
 [plugins."diarchy@diarchy"]
 enabled = true
 ```
 
-There is no one-line `codex plugin install`; the marketplace add plus the enable
-line is the whole step. The manifest Codex reads is `.codex-plugin/plugin.json`:
+The manifest Codex reads is `.codex-plugin/plugin.json`:
 it names the skills directory (`./.agents/skills`) and the MCP server file
 (`./mcp.json`). The marketplace file is `.agents/plugins/marketplace.json`.
 Codex reads a root `plugin.json` only when it declares the agent-plugins.org

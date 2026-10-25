@@ -291,11 +291,11 @@ describe("codex-config: hooks", () => {
     ["hooks/hooks.json", "claude"],
     [".codex/hooks.json", "codex"],
   ] as const) {
-    it(`${path} wires SessionStart and Stop to the shared wrappers as ${agent}`, () => {
+    it(`${path} wires SessionStart, PreToolUse, and Stop to the shared wrappers as ${agent}`, () => {
       const h = readJson(at(path)) as unknown as HooksFile;
-      expect(Object.keys(h.hooks).sort()).toEqual(["SessionStart", "Stop"]);
+      expect(Object.keys(h.hooks).sort()).toEqual(["PreToolUse", "SessionStart", "Stop"]);
       const commands: Record<string, string> = {};
-      for (const event of ["SessionStart", "Stop"]) {
+      for (const event of ["SessionStart", "PreToolUse", "Stop"]) {
         const entries = h.hooks[event];
         expect(entries.length).toBeGreaterThan(0);
         for (const entry of entries) {
@@ -308,12 +308,14 @@ describe("codex-config: hooks", () => {
         }
       }
       expect(h.hooks.SessionStart[0].matcher).toBe("startup|resume|clear|compact");
+      expect(h.hooks.PreToolUse[0].matcher).toBe("Bash");
       expect(commands.SessionStart).toContain("/hooks/session-start.sh");
+      expect(commands.PreToolUse).toContain("/hooks/pre-tool-guard.sh");
       expect(commands.Stop).toContain("/hooks/stop-gate.sh");
     });
   }
 
-  for (const script of ["session-start.sh", "stop-gate.sh"]) {
+  for (const script of ["session-start.sh", "pre-tool-guard.sh", "stop-gate.sh"]) {
     it(`hooks/${script} is executable and uses strict mode`, () => {
       const path = at("hooks", script);
       expect(statSync(path).mode & 0o111).not.toBe(0);

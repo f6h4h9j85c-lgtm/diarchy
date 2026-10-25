@@ -104,7 +104,7 @@ Dev mode: open `claude` and `codex` interactively in the same project and state 
 agents/          Claude Code subagents
 bin/             diarchy.js, the CLI entry (imports dist/)
 docs/            PROTOCOL, ANTI-SLOP, RENDERING, ARCHITECTURE, INSTALL-*, samples/
-hooks/           hooks.json and the two hook scripts
+hooks/           hooks.json and the three hook scripts
 scripts/         sync-skills.mjs
 skills/          diarchy-pm, diarchy-kickoff, diarchy-review
 src/protocol/    pure engine: schema, rules, state, transitions

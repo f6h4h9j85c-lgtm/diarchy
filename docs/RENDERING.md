@@ -152,7 +152,7 @@ Example, BLOCKED:
 >
 > 9 of 80 messages (PLAN 5 of 12) · 35 of 240 min
 >
-> 2026-10-25 · last 14:35:01 UTC (10:35 local) · system ASK_HUMAN: codex is BLOCKED (external): staging REDIS_URL missing. Answer with…
+> 2026-10-25 · last 14:35:01 UTC (10:35 local) · system ASK_HUMAN: codex is BLOCKED (external): staging REDIS_URL missing. The human has been…
 >
 > Question and how to answer: [goal](goal.md) · [decisions (2)](decisions.md)
 ```
@@ -308,7 +308,7 @@ Budget or clock (`reply_to` absent):
 **Budget reached:** <counter> <used> of <limit>. Both agents are stopped.
 ```
 
-Final paragraph, how to answer. The human never edits a vault file; the launcher posts for them:
+Final paragraph, how to answer. The human never edits a vault file; the launcher posts for them. This callout, `diarchy status`, and the launcher's output are the only places a run shows the reply command; the ASK_HUMAN body never carries it (PROTOCOL.md 10), so a PM reading its inbox is not handed the human's command:
 
 - external: `` **To answer:** run `diarchy reply "<your answer>"`. It is posted as a DECIDE with basis human, recorded in decisions.md, and EXECUTE resumes. `diarchy stop` ends the run and leaves it BLOCKED. ``
 - deadlock: `` **To answer:** run `diarchy reply "<ruling>" --decision <decision_id>`. Your ruling closes <decision_id> as a DECIDE with basis human and <blocked_from> resumes. `diarchy stop` ends the run. ``

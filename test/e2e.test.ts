@@ -13,6 +13,7 @@ import { fileURLToPath } from "node:url";
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
+import { humanCommand } from "../src/cli/hooks.js";
 import { parseGoalState, type GoalState } from "../src/protocol/index.js";
 import { GENERATED, VaultStore, loadConfig, type GoalPaths } from "../src/vault/index.js";
 
@@ -343,6 +344,44 @@ describe("start --driver fake (slop)", () => {
     const result = await cli(["reply", "Carry on.", "--budget", "bogus=3", "--project", dir]);
     expect(result.code).toBe(1);
     expect(result.stderr).toContain("invalid --budget");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Hooks: guard (PreToolUse)
+// ---------------------------------------------------------------------------
+
+describe("guard", () => {
+  const event = (command: string): string => JSON.stringify({ hook_event_name: "PreToolUse", tool_name: "Bash", tool_input: { command } });
+
+  it("recognises the human's commands however a shell spells them, and nothing else", () => {
+    expect(humanCommand('diarchy reply "continue" --budget messages_total=200')).toBe("reply");
+    expect(humanCommand("DIARCHY_AGENT=claude node bin/diarchy.js reply continue")).toBe("reply");
+    expect(humanCommand("cd /p && npx diarchy stop --reason done")).toBe("stop");
+    expect(humanCommand("node --import tsx /abs/bin/diarchy.js --project /p stop")).toBe("stop");
+    expect(humanCommand('diarchy --project=/p reply "x"; echo done')).toBe("reply");
+    expect(humanCommand("./node_modules/.bin/diarchy reply ok")).toBe("reply");
+    expect(humanCommand("diarchy status; diarchy watch --follow")).toBeNull();
+    expect(humanCommand('grep -rn "diarchy reply" docs/')).toBeNull();
+    expect(humanCommand('echo "run diarchy stop later"')).toBeNull();
+    expect(humanCommand("npm test -- vault")).toBeNull();
+    expect(humanCommand("git stop")).toBeNull();
+    expect(humanCommand("")).toBeNull();
+  });
+
+  it("denies a Bash call to diarchy reply with a PreToolUse decision and lets everything else through", async () => {
+    const denied = await cli(["guard", "--agent", "claude"], { input: event('diarchy reply "continue" --budget messages_total=200') });
+    expect(denied.code).toBe(0);
+    expect(denied.stderr).toBe("");
+    const decision = JSON.parse(denied.stdout) as { hookSpecificOutput: Record<string, string> };
+    expect(decision.hookSpecificOutput).toMatchObject({ hookEventName: "PreToolUse", permissionDecision: "deny" });
+    expect(decision.hookSpecificOutput.permissionDecisionReason).toContain("diarchy reply posts as the human");
+    expect(decision.hookSpecificOutput.permissionDecisionReason).toContain("wait_for_reply");
+    const stop = await cli(["guard", "--agent", "codex"], { input: event("node bin/diarchy.js stop --reason enough") });
+    expect(JSON.parse(stop.stdout)).toMatchObject({ hookSpecificOutput: { permissionDecision: "deny" } });
+    expect(await cli(["guard", "--agent", "codex"], { input: event("npm test") })).toEqual({ code: 0, stdout: "", stderr: "" });
+    expect(await cli(["guard", "--agent", "codex"], { input: "not json {{{" })).toEqual({ code: 0, stdout: "", stderr: "" });
+    expect(await cli(["guard", "--agent", "codex"], { input: "" })).toEqual({ code: 0, stdout: "", stderr: "" });
   });
 });
 

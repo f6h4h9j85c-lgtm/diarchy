@@ -56,6 +56,15 @@ export interface EvaluateOptions {
 const DEADLOCK_MINUTES = 10;
 const DEADLOCK_REMAINING = 2;
 const ASK_HUMAN_BODY_WORDS = 100;
+/**
+ * Closing sentence of every budget or external ASK_HUMAN. It never names the
+ * `diarchy reply` command: `read` delivers this body to the PMs, and the human
+ * is an identity any local process can assume (ANTI-SLOP.md, What this does
+ * NOT prevent). The command lives in goal.md's callout, `diarchy status`, and
+ * the launcher's output. The budget bodies keep their leading counter sentence,
+ * which the renderer parses (render/shared.ts budgetTrigger).
+ */
+const HUMAN_PAGED = "The human has been paged; goal.md says how to answer.";
 
 // ---------------------------------------------------------------------------
 // evaluate
@@ -319,7 +328,7 @@ function applyBlocked(state: GoalState, message: Message, effects: Effect[]): vo
   const summary = truncateWords(message.body, ASK_HUMAN_BODY_WORDS).replace(/[.!?]+$/, "");
   block(state, effects, "BLOCKED", {
     re: message.re,
-    body: `${message.from} is BLOCKED (external): ${summary}. Answer with \`diarchy reply "<text>"\`.`,
+    body: `${message.from} is BLOCKED (external): ${summary}. ${HUMAN_PAGED}`,
     reply_to: message.id,
     decision_id: null,
   });
@@ -351,7 +360,7 @@ function blockForTotalBudget(state: GoalState, effects: Effect[]): void {
   const { messages_total: limit } = state.limits;
   block(state, effects, "TOTAL_BUDGET", {
     re: allAcs(state),
-    body: `Goal used ${used} of ${limit} messages and is BLOCKED. Answer with \`diarchy reply "<text>" --budget messages_total=<n>\`.`,
+    body: `Goal used ${used} of ${limit} messages and is BLOCKED. ${HUMAN_PAGED}`,
     reply_to: null,
     decision_id: null,
   });
@@ -360,8 +369,8 @@ function blockForTotalBudget(state: GoalState, effects: Effect[]): void {
 function blockForLimit(state: GoalState, effects: Effect[], hit: LimitHit): void {
   const body =
     hit === "wall_clock"
-      ? `Wall clock ${state.limits.wall_clock_minutes} min exceeded; goal is BLOCKED. Answer with \`diarchy reply "<text>" --budget wall_clock_minutes=<n>\`.`
-      : `Spend ${state.used.spend_usd} of ${state.limits.spend_usd} USD reached; goal is BLOCKED. Answer with \`diarchy reply "<text>" --budget spend_usd=<n>\`.`;
+      ? `Wall clock ${state.limits.wall_clock_minutes} min exceeded; goal is BLOCKED. ${HUMAN_PAGED}`
+      : `Spend ${state.used.spend_usd} of ${state.limits.spend_usd} USD reached; goal is BLOCKED. ${HUMAN_PAGED}`;
   block(state, effects, "WALL_CLOCK", { re: allAcs(state), body, reply_to: null, decision_id: null });
 }
 

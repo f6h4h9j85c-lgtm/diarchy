@@ -109,7 +109,7 @@ Integration test needs staging REDIS_URL. Not in .env.example or the vault; I wi
 
 replying to codex BLOCKED 14:35:00
 
-codex is BLOCKED (external): Integration test needs staging REDIS_URL. Not in .env.example or the vault; I will not guess a credential. Answer with `diarchy reply "<text>"`.
+codex is BLOCKED (external): Integration test needs staging REDIS_URL. Not in .env.example or the vault; I will not guess a credential. The human has been paged; goal.md says how to answer.
 
 ---
 

@@ -361,6 +361,76 @@ describe("sample run", () => {
 });
 
 // ---------------------------------------------------------------------------
+// ASK_HUMAN bodies: PROTOCOL.md 3.2 parity, and never the human's command
+// ---------------------------------------------------------------------------
+
+describe("ASK_HUMAN bodies", () => {
+  const HUMAN_COMMAND = /diarchy (reply|stop)|--budget|--decision/;
+  const PAGED = "The human has been paged; goal.md says how to answer.";
+
+  function askBodies(effects: Effect[]): string[] {
+    return effects.flatMap((effect) => (effect.kind === "system_message" ? [effect.body] : []));
+  }
+
+  it("the nine 3.2 blocks in PROTOCOL.md are the examples fixtures byte for byte", () => {
+    const protocol = readFileSync(join(DOCS, "PROTOCOL.md"), "utf8");
+    const blocks = [...protocol.matchAll(/`chat\/([^`]+)\.md`\n```yaml\n([\s\S]*?)```/g)];
+    expect(blocks.map((match) => `${match[1]}.md`).sort()).toEqual(exampleFiles);
+    for (const [, id, text] of blocks) expect(text, id).toBe(readFileSync(join(exampleDir, `${id}.md`), "utf8"));
+  });
+
+  it("the spec example and the engine's external body say the human is paged, not how to reply", () => {
+    const spec = example("20261025T143501Z-0001-system-ASK_HUMAN");
+    expect(spec.body.trimEnd()).toBe(`codex is BLOCKED (external): staging REDIS_URL missing. ${PAGED}`);
+    const blocked = example("20261025T143500Z-0002-codex-BLOCKED");
+    const result = evaluate(blocked, loadBase("execute-assigned"), { now: new Date(blocked.ts), callerAgent: "codex" });
+    if (!result.ok) throw new Error(result.message);
+    expect(askBodies(result.effects)).toEqual([
+      `codex is BLOCKED (external): Integration test needs staging REDIS_URL. Not in .env.example or the vault; I will not guess a credential. ${PAGED}`,
+    ]);
+  });
+
+  it("budget, wall clock, and spend bodies keep the counter sentence the renderer parses and drop the command", () => {
+    const base = loadBase("execute-assigned");
+    const nearLimit: GoalState = { ...base, used: { ...base.used, messages_total: base.limits.messages_total - 1 } };
+    const status = parseMessageFile(
+      "---\nprotocol_version: 1\nid: 20261025T142100Z-0002-codex-STATUS\ngoal: 20261025-rate-limit\nfrom: codex\nto: all\ntype: STATUS\nre: [AC1]\nphase: EXECUTE\nevidence:\n  - kind: commit\n    sha: 9f3c2ab\nts: 2026-10-25T14:21:00Z\n---\nScaffold pushed.\n",
+    );
+    const total = evaluate(status, nearLimit, { now: new Date(status.ts), callerAgent: "codex" });
+    if (!total.ok) throw new Error(total.message);
+    expect(askBodies(total.effects)).toEqual([`Goal used 80 of 80 messages and is BLOCKED. ${PAGED}`]);
+
+    const clock = tick(base, new Date("2026-10-25T18:00:00Z"));
+    expect(askBodies(clock?.effects ?? [])).toEqual([`Wall clock 240 min exceeded; goal is BLOCKED. ${PAGED}`]);
+
+    const spent: GoalState = { ...base, limits: { ...base.limits, spend_usd: 50 }, used: { ...base.used, spend_usd: 50 } };
+    const spend = tick(spent, new Date("2026-10-25T14:30:00Z"));
+    expect(askBodies(spend?.effects ?? [])).toEqual([`Spend 50 of 50 USD reached; goal is BLOCKED. ${PAGED}`]);
+
+    for (const body of [...askBodies(total.effects), ...askBodies(clock?.effects ?? []), ...askBodies(spend?.effects ?? [])]) {
+      expect(body).not.toMatch(HUMAN_COMMAND);
+    }
+  });
+
+  it("no fixture, sample, or spec ASK_HUMAN carries the reply command", () => {
+    const protocol = readFileSync(join(DOCS, "PROTOCOL.md"), "utf8");
+    const fixture = parseYaml(readFileSync(join(FIXTURES, "valid", "ask-human-system.yaml"), "utf8")) as Fixture;
+    const sampleRun = join(FIXTURES, "..", "vault", "sample-run", "20261025T143501Z-0001-system-ASK_HUMAN.md");
+    const bodies = [
+      ...[...protocol.matchAll(/type: ASK_HUMAN[\s\S]*?---\n([^\n]*)/g)].map((match) => match[1]),
+      example("20261025T143501Z-0001-system-ASK_HUMAN").body,
+      parseMessageFile(readFileSync(sampleRun, "utf8")).body,
+      fixture.message.body,
+    ];
+    expect(bodies).toHaveLength(4);
+    for (const body of bodies) expect(body).not.toMatch(HUMAN_COMMAND);
+    // The rendered transcript shows the command nowhere; goal.md's callout is where the human finds it (RENDERING.md 4.1).
+    expect(readFileSync(join(DOCS, "samples", "chat.md"), "utf8")).not.toMatch(HUMAN_COMMAND);
+    expect(readFileSync(join(DOCS, "samples", "goal-blocked.md"), "utf8")).toMatch(/diarchy reply "<your answer>"/);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // tick: DEADLOCK (10 min) and WALL_CLOCK
 // ---------------------------------------------------------------------------
 

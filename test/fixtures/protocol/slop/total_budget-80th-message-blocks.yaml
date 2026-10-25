@@ -51,3 +51,4 @@ expect:
       type: ASK_HUMAN
       reason: TOTAL_BUDGET
       to: human
+      body: Goal used 80 of 80 messages and is BLOCKED. The human has been paged; goal.md says how to answer.

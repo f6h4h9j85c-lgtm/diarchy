@@ -240,7 +240,7 @@ describe("golden renders", () => {
     expect(chat).toContain("> 9 of 80 messages (PLAN 5 of 12) · 35 of 240 min\n");
     expect(chat).toContain("> 2026-10-25 · last 14:35:01 UTC (10:35 local) · system ASK_HUMAN: codex is BLOCKED (external): Integration test needs staging REDIS_URL. Not in…\n");
     expect(chat).toContain("> Question and how to answer: [goal](goal.md) · [decisions (2)](decisions.md)");
-    expect(chat.trimEnd().endsWith("codex is BLOCKED (external): Integration test needs staging REDIS_URL. Not in .env.example or the vault; I will not guess a credential. Answer with `diarchy reply \"<text>\"`.")).toBe(true);
+    expect(chat.trimEnd().endsWith("codex is BLOCKED (external): Integration test needs staging REDIS_URL. Not in .env.example or the vault; I will not guess a credential. The human has been paged; goal.md says how to answer.")).toBe(true);
     expect(h.claude.state()?.phase).toBe("BLOCKED");
   });
 

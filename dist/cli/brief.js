@@ -4,21 +4,18 @@
  * for reading an inbox cursor file (never writing it).
  */
 import { existsSync, readFileSync } from "node:fs";
-import { FIELD_MAX_CHARS, oneLine, openThreads, } from "../protocol/index.js";
+import { FIELD_MAX_CHARS, oneLine, reviewOwed, threadsBeforePlan, } from "../protocol/index.js";
 import { budgetTrigger, hms, lastOfType, sortMessages } from "../vault/render/shared.js";
-/** Tasks still owed: implement tasks not done, review tasks with no review evidence from the assignee yet. */
+/** Tasks still owed: implement tasks not done, review tasks whose review is still owed (`reviewOwed`, as BUSY_REVIEWING counts them). */
 export function openAssignments(state, agent) {
     const open = [];
     for (const task of Object.values(state.tasks)) {
-        if (task.assignee === null || task.kind === null || task.status === "done" || task.status === "todo")
+        if (task.assignee === null || task.kind === null || task.status === "todo")
             continue;
         if (agent !== undefined && task.assignee !== agent)
             continue;
-        if (task.kind === "review") {
-            const reviewed = task.pr !== null && (state.prs[task.pr]?.reviews.some((review) => review.by === task.assignee) ?? false);
-            if (reviewed)
-                continue;
-        }
+        if (task.kind === "review" ? !reviewOwed(state, task) : task.status === "done")
+            continue;
         open.push({
             task: task.id,
             kind: task.kind,
@@ -31,12 +28,42 @@ export function openAssignments(state, agent) {
     }
     return open;
 }
-/** Open threads whose CHALLENGE still awaits the lead's DECIDE. */
+/** Decisions whose CHALLENGE still awaits the lead's DECIDE, open or decided; the one the deadlock watch is on first. */
 export function challengedThreads(state) {
-    return openThreads(state)
-        .map((id) => ({ id, challenge: state.decisions[id]?.challenge ?? null }))
-        .filter((entry) => entry.challenge !== null)
-        .map(({ id, challenge }) => ({ id, from: challenge.from, challengeId: challenge.id }));
+    const watched = state.deadlock_watch?.decision_id;
+    return Object.entries(state.decisions)
+        .flatMap(([id, decision]) => decision.challenge === null
+        ? []
+        : [{ id, from: decision.challenge.from, challengeId: decision.challenge.id, open: decision.status === "open" }])
+        .sort((a, b) => Number(b.id === watched) - Number(a.id === watched));
+}
+/** PRs no other agent has approved whose latest review by another agent is request_changes (the fix and re-review loop). */
+export function changesRequested(state, messages) {
+    const ordered = sortMessages(messages);
+    const found = [];
+    for (const [url, pr] of Object.entries(state.prs)) {
+        const others = pr.reviews.filter((review) => review.by !== pr.author);
+        const latest = others[others.length - 1];
+        if (latest === undefined || latest.verdict !== "request_changes" || others.some((review) => review.verdict === "approve"))
+            continue;
+        let reviewedAt = ordered.length - 1;
+        while (reviewedAt >= 0 && !isReviewOf(ordered[reviewedAt], latest.by, url))
+            reviewedAt -= 1;
+        const fixed = ordered.slice(reviewedAt + 1).some((message) => isFixOf(message, pr.author, url));
+        found.push({ url, author: pr.author, by: latest.by, fixed });
+    }
+    return found;
+}
+function isReviewOf(message, by, url) {
+    return message.type === "STATUS" && message.from === by && (message.evidence ?? []).some((item) => item.kind === "review" && item.url === url);
+}
+/** A STATUS from the author with a commit, citing this PR or no PR at all. */
+function isFixOf(message, author, url) {
+    if (message.type !== "STATUS" || message.from !== author)
+        return false;
+    const evidence = message.evidence ?? [];
+    const prs = evidence.flatMap((item) => (item.kind === "pr" ? [item.url] : []));
+    return evidence.some((item) => item.kind === "commit") && (prs.length === 0 || prs.includes(url));
 }
 /** Messages after the agent's inbox cursor, excluding its own. Reads the cursor file; never moves it. */
 export function unreadFor(goal, messages, agent) {
@@ -63,8 +90,7 @@ export function replyHint(state, messages) {
     if (replyTo?.type === "CHALLENGE") {
         const decision = ask.decision_id ?? replyTo.decision_id ?? "plan";
         // A human ruling on `plan` is rejected by PHASE_GATE while another thread is open; a plain reply opens a new decided thread and unblocks.
-        const otherOpen = Object.entries(state.decisions).some(([id, thread]) => id !== decision && thread.status === "open");
-        return decision === "plan" && otherOpen ? 'diarchy reply "<ruling>"' : `diarchy reply "<ruling>" --decision ${decision}`;
+        return decision === "plan" && threadsBeforePlan(state).length > 0 ? 'diarchy reply "<ruling>"' : `diarchy reply "<ruling>" --decision ${decision}`;
     }
     if (replyTo !== undefined || ask.reply_to !== undefined)
         return 'diarchy reply "<your answer>"';
@@ -123,22 +149,40 @@ export function nextStep(state, messages, agent, unread) {
             owes: true,
         };
     }
+    const first = threadsBeforePlan(state);
+    // PHASE_GATE decides plan last, so point the lead at the other open threads first.
+    const decideFirst = `decide ${first.join(", ")} first (call decide with decision_id ${first[0]}), then plan`;
     if (lead) {
         const challenged = challengedThreads(state)[0];
         if (challenged !== undefined) {
             const watch = state.deadlock_watch;
-            const due = watch === null ? "" : ` (deadlock in ${watch.remaining} messages or by ${hms(watch.deadline)} UTC)`;
-            return { text: `thread ${challenged.id} has a CHALLENGE from ${challenged.from} awaiting your DECIDE: call decide${due}`, owes: true };
+            const due = watch?.decision_id !== challenged.id ? "" : ` (deadlock in ${watch.remaining} messages or by ${hms(watch.deadline)} UTC)`;
+            const awaiting = `thread ${challenged.id} has a CHALLENGE from ${challenged.from} awaiting your DECIDE`;
+            if (!challenged.open) {
+                return { text: `${awaiting}: call decide with supersedes ${challenged.id}, reply_to ${challenged.challengeId}${due}`, owes: true };
+            }
+            if (challenged.id === "plan" && first.length > 0)
+                return { text: `${awaiting}, but plan is decided last: ${decideFirst}${due}`, owes: true };
+            return { text: `${awaiting}: call decide${due}`, owes: true };
         }
     }
     if (unread.length > 0) {
         return { text: `${unread.length} unread message${unread.length === 1 ? "" : "s"}: call read, then act on them`, owes: true };
+    }
+    const toFix = changesRequested(state, messages).find((pr) => pr.author === agent && !pr.fixed);
+    if (toFix !== undefined) {
+        return {
+            text: `PR ${oneLine(toFix.url, FIELD_MAX_CHARS)} has request_changes from ${toFix.by}: fix it, then call status with commit evidence`,
+            owes: true,
+        };
     }
     if (lead && state.phase === "PLAN") {
         const plan = state.decisions.plan;
         if (plan !== undefined && plan.status === "open") {
             if (plan.messages === 0)
                 return { text: "post PROPOSE with decision_id plan (call post)", owes: true };
+            if (first.length > 0)
+                return { text: decideFirst, owes: true };
             // Silence is legal (PROPOSE -> DECIDE, PROTOCOL.md section 7); diarchy-pm bounds the wait the same way.
             return {
                 text: "wait_for_reply for a CHALLENGE; after two timeouts with none, or once the challenger posts something else, call decide with decision_id plan (basis authority, body: no CHALLENGE came)",
@@ -147,11 +191,19 @@ export function nextStep(state, messages, agent, unread) {
         }
     }
     if (lead && state.phase === "EXECUTE") {
-        const todo = Object.values(state.tasks).find((task) => task.status === "todo");
+        const tasks = Object.values(state.tasks);
+        const todo = tasks.find((task) => task.status === "todo");
         if (todo !== undefined)
             return { text: `assign ${todo.id} (${oneLine(todo.task)}): call assign`, owes: true };
-        const unreviewed = Object.entries(state.prs).find(([url, pr]) => !pr.reviews.some((review) => review.verdict === "approve" && review.by !== pr.author) &&
-            !Object.values(state.tasks).some((task) => task.kind === "review" && task.pr === url));
+        // A human ruling on an open plan (`diarchy reply --decision plan`) opens EXECUTE with no tasks.
+        if (!tasks.some((task) => task.kind === "implement"))
+            return { text: "EXECUTE has no tasks: ASSIGN each with new_task (call assign)", owes: true };
+        const reviewing = new Set(tasks.filter((task) => reviewOwed(state, task)).map((task) => task.pr));
+        const rereview = changesRequested(state, messages).find((pr) => pr.fixed && !reviewing.has(pr.url));
+        if (rereview !== undefined) {
+            return { text: `assign a re-review of PR ${oneLine(rereview.url, FIELD_MAX_CHARS)} to ${rereview.by}: call assign`, owes: true };
+        }
+        const unreviewed = Object.entries(state.prs).find(([url, pr]) => !pr.reviews.some((review) => review.by !== pr.author) && !reviewing.has(url));
         if (unreviewed !== undefined) {
             return { text: `assign review of PR ${oneLine(unreviewed[0], FIELD_MAX_CHARS)} to the other agent: call assign`, owes: true };
         }

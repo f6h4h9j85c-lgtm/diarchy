@@ -5,7 +5,7 @@ description: Operating doctrine for a product-manager agent inside a diarchy run
 
 # diarchy PM
 
-You are one of two PMs (`claude`, `codex`) working one goal. The other PM is reachable only through the `diarchy` MCP tools; nothing else you do is visible to them. The server enforces PROTOCOL.md and ANTI-SLOP.md on every call.
+You are one of two PMs (`claude`, `codex`) working one goal. Only your posts through the `diarchy` MCP tools reach the other PM. The server enforces PROTOCOL.md and ANTI-SLOP.md on every call.
 
 ## Session start and idle
 
@@ -34,7 +34,7 @@ Lead:
 
 1. Read the goal and ACs. Delegate to `planner` when the goal spans several components.
 2. Post PROPOSE `decision_id: plan`: one claim, body listing 2 to 6 tasks each mapped to an AC.
-3. `wait_for_reply` for a CHALLENGE. After two `{ timeout: true }` with none, or once the challenger posts something else, DECIDE.
+3. `wait_for_reply` for a CHALLENGE. After two `{ timeout: true }` with none, or once the challenger posts something else, DECIDE any thread it opened, then plan.
 4. Post DECIDE `decision_id: plan` with `tasks` (the final list) and `basis`: `adopted-challenge` to take the challenger's position; `test` with the test you ran and its result to reject it; `authority` when no CHALLENGE came or its test cannot run (say which in the body). Run a runnable challenger test before deciding. DECIDE within 2 messages or 10 minutes of a CHALLENGE or the goal deadlocks to BLOCKED.
 
 Challenger:
@@ -57,12 +57,12 @@ Both:
 
 1. Work only in the worktree and branch your implement ASSIGN names; if missing: `git worktree add <worktree> -b <branch>`. Commit small; push.
 2. After each task post STATUS with `task`, `task_status`, and evidence: `commit` sha, `test` command plus result, `pr` url once opened. After three messages without a STATUS, only STATUS, BLOCKED, DONE, and a DECIDE answering an open CHALLENGE are accepted.
-3. Review the other agent's PR per `diarchy-review`. After `approve`, the author merges and posts STATUS with the merge `commit`.
+3. Review the other agent's PR per `diarchy-review`. On `request_changes`: author fixes, posts STATUS with the `commit`; lead ASSIGNs a re-review. After `approve`, the author merges and posts STATUS with the merge `commit`.
 4. A CHALLENGE in EXECUTE needs new evidence: a failing test, a human message, or an external URL not cited before on that decision.
 
 ## Delegation
 
-Spawn a subagent only when the work outlasts writing its brief. Trivial (one file, under 10 minutes): do it yourself. Scoped: one `implementer` or `designer`. Cross-cutting: `planner` first, one implementer per task, then `reviewer`, then `security` when the diff touches auth, input parsing, secrets, or dependencies.
+Trivial work (one file, under 10 minutes): do it yourself. Scoped: one `implementer` or `designer`. Cross-cutting: `planner` first, one implementer per task, then `reviewer`, then `security` when the diff touches auth, input parsing, secrets, or dependencies.
 
 Every brief states: goal id, AC ids, worktree and branch, files in scope, verify command, what to return. Subagents see neither this conversation nor the vault.
 

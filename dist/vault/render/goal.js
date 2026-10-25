@@ -1,3 +1,5 @@
+/** goal.md: docs/RENDERING.md section 4. Pure and byte-deterministic. */
+import { threadsBeforePlan } from "../../protocol/index.js";
 import { GENERATED, SEP, blockTrigger, budgetLine, budgetTrigger, byId, cellCode, challengerList, code, decisionCount, hms, humanSlot, italic, localHint, plainBlock, plainInline, sortMessages, tableRow, tableSeparator, utcDate, } from "./shared.js";
 export function renderGoal(messages, state, kickoff, opts = {}) {
     const ordered = sortMessages(messages);
@@ -88,9 +90,9 @@ function externalParagraphs(blocked, from) {
  */
 function answerLine(decision, state, from) {
     const planOpen = decision === "plan" && state.decisions.plan?.status === "open";
-    const otherOpen = Object.entries(state.decisions).some(([id, thread]) => id !== decision && thread.status === "open");
-    if (planOpen && otherOpen) {
-        return `**To answer:** run \`diarchy reply "<ruling>"\`. Your ruling is recorded as a new DECIDE with basis human, ${from} resumes, and ${state.lead} must then DECIDE plan. \`diarchy stop\` ends the run.`;
+    const first = threadsBeforePlan(state);
+    if (planOpen && first.length > 0) {
+        return `**To answer:** run \`diarchy reply "<ruling>"\`. Your ruling is recorded as a new DECIDE with basis human, ${from} resumes, and ${state.lead} must DECIDE ${first.join(", ")}, then plan. \`diarchy stop\` ends the run.`;
     }
     if (planOpen) {
         return `**To answer:** run \`diarchy reply "<ruling>" --decision plan\`. Your ruling closes plan as a DECIDE with basis human, and EXECUTE begins with no tasks: ${state.lead} must ASSIGN each task with new_task. \`diarchy stop\` ends the run.`;

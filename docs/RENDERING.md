@@ -65,7 +65,7 @@ Used in the strip (`chat.md`) and under `## Status` (`goal.md`). Values come fro
 <used.messages_total> of <limits.messages_total> messages (PLAN <used.plan_messages> of <limits.plan_messages>) · <used.wall_clock_minutes> of <limits.wall_clock_minutes> min
 ```
 
-If `limits.spend_usd` is set, append ` · <used.spend_usd> of <limits.spend_usd> USD` with two decimals. If `deadlock_watch` is non-null, append ` · open <decision_id>, DECIDE due by <deadline HH:MM:SS> UTC`.
+If `limits.spend_usd` is set, append ` · <used.spend_usd> of <limits.spend_usd> USD` with two decimals. If `deadlock_watch` is non-null, append ` · open <decision_id>, DECIDE due by <deadline HH:MM:SS> UTC`, with `CHALLENGE on <decision_id>` in place of `open <decision_id>` when that decision is already decided (a CHALLENGE in EXECUTE).
 
 ### 1.5 Evidence items
 
@@ -143,7 +143,7 @@ Example, EXECUTE:
 > [!NOTE]
 > **EXECUTE** · no action needed · lead claude · challenger codex
 >
-> 14 of 80 messages (PLAN 5 of 12) · 109 of 240 min · open D1, DECIDE due by 15:59:12 UTC
+> 14 of 80 messages (PLAN 5 of 12) · 109 of 240 min · CHALLENGE on D1, DECIDE due by 15:59:12 UTC
 >
 > 2026-10-25 · last 15:49:12 UTC (11:49 local) · codex CHALLENGE: A default of 100 requests per minute breaks the dashboard\, which polls twice a…
 >
@@ -319,7 +319,7 @@ Final paragraph, how to answer. The human never edits a vault file; the launcher
 - external: `` **To answer:** run `diarchy reply "<your answer>"`. It is posted as a DECIDE with basis human, recorded in decisions.md, and EXECUTE resumes. `diarchy stop` ends the run and leaves it BLOCKED. ``
 - deadlock: `` **To answer:** run `diarchy reply "<ruling>" --decision <decision_id>`. Your ruling closes <decision_id> as a DECIDE with basis human and <blocked_from> resumes. `diarchy stop` ends the run. ``
 
-When the stalled decision is an open `plan` thread (the run blocked from PLAN) and another thread is still open, the command is `diarchy reply "<ruling>"` without `--decision` (a `plan` ruling would be rejected by PHASE_GATE); the paragraph then says the ruling is recorded as a new DECIDE and that the lead must DECIDE plan next. When it is an open `plan` thread and no other thread is open, the human ruling closes PLAN at once but carries no `tasks`, so the paragraph reads: `` **To answer:** run `diarchy reply "<ruling>" --decision plan`. Your ruling closes plan as a DECIDE with basis human, and EXECUTE begins with no tasks: <lead> must ASSIGN each task with new_task. `diarchy stop` ends the run. ``
+When the stalled decision is an open `plan` thread (the run blocked from PLAN) and another thread is still open, the command is `diarchy reply "<ruling>"` without `--decision` (a `plan` ruling would be rejected by PHASE_GATE); the paragraph then says the ruling is recorded as a new DECIDE and that the lead must DECIDE the other open thread(s), naming them, then plan. When it is an open `plan` thread and no other thread is open, the human ruling closes PLAN at once but carries no `tasks`, so the paragraph reads: `` **To answer:** run `diarchy reply "<ruling>" --decision plan`. Your ruling closes plan as a DECIDE with basis human, and EXECUTE begins with no tasks: <lead> must ASSIGN each task with new_task. `diarchy stop` ends the run. ``
 - budget: `` **To answer:** run `diarchy reply "continue" --budget <counter>=<suggested>` to raise the limit and resume <blocked_from>, or `diarchy stop` to end the run. `` where `<suggested>` is twice the current limit.
 
 The word `EXECUTE` in the external variant is `<blocked_from>` when the block happened in PLAN.

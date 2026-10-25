@@ -71,6 +71,10 @@ export function openThreads(state) {
         .filter(([, decision]) => decision.status === "open")
         .map(([id]) => id);
 }
+/** Open threads other than `plan`: PHASE_GATE refuses DECIDE `plan` until each is decided (PROTOCOL.md section 6). */
+export function threadsBeforePlan(state) {
+    return openThreads(state).filter((id) => id !== "plan");
+}
 export function challengeCount(state, id) {
     return decisionLineage(state, id).reduce((sum, d) => sum + (state.decisions[d]?.challenges ?? 0), 0);
 }
@@ -137,18 +141,22 @@ export function authoredPr(state, agent) {
     return agent !== null && Object.values(state.prs).some((pr) => pr.author === agent);
 }
 /**
- * The PR an agent still owes a review on, if any (BUSY_REVIEWING). Only that
- * agent's `review` evidence settles it: a STATUS marking the task done does not.
+ * Does this review task still owe its review? The engine closes a review task
+ * when its assignee's `review` evidence on the PR lands, so one that is not done
+ * is owed, a re-review ASSIGNed after an earlier review included. A STATUS
+ * marking it done settles it only if the assignee has reviewed that PR at all
+ * (budget.json keeps no record of which review closed which task).
  */
+export function reviewOwed(state, task) {
+    if (task.kind !== "review" || task.assignee === null || task.pr === null)
+        return false;
+    if (task.status !== "done")
+        return true;
+    return !(state.prs[task.pr]?.reviews.some((review) => review.by === task.assignee) ?? false);
+}
+/** The PR an agent still owes a review on, if any (BUSY_REVIEWING). */
 export function pendingReviewUrl(state, agent) {
-    for (const task of Object.values(state.tasks)) {
-        if (task.kind !== "review" || task.assignee !== agent || task.pr === null)
-            continue;
-        const reviewed = state.prs[task.pr]?.reviews.some((review) => review.by === agent) ?? false;
-        if (!reviewed)
-            return task.pr;
-    }
-    return undefined;
+    return Object.values(state.tasks).find((task) => task.assignee === agent && reviewOwed(state, task))?.pr ?? undefined;
 }
 // ---------------------------------------------------------------------------
 // Phase and role gates (PROTOCOL.md sections 4 to 6)

@@ -269,7 +269,11 @@ export function budgetLine(state: GoalState | null): string {
     `${SEP}${Math.floor(used.wall_clock_minutes)} of ${limits.wall_clock_minutes} min`;
   if (limits.spend_usd !== null) line += `${SEP}${used.spend_usd.toFixed(2)} of ${limits.spend_usd.toFixed(2)} USD`;
   const watch = state.deadlock_watch;
-  if (watch !== null) line += `${SEP}open ${watch.decision_id}, DECIDE due by ${hms(watch.deadline)} UTC`;
+  if (watch !== null) {
+    // An EXECUTE CHALLENGE watches a decided thread; only an open one is "open".
+    const thread = state.decisions[watch.decision_id]?.status === "open" ? `open ${watch.decision_id}` : `CHALLENGE on ${watch.decision_id}`;
+    line += `${SEP}${thread}, DECIDE due by ${hms(watch.deadline)} UTC`;
+  }
   return line;
 }
 

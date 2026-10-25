@@ -27,7 +27,7 @@ import {
 } from "./drivers.js";
 import { kickoffInput, type KickoffCliOptions } from "./kickoff.js";
 import { loadLauncherConfig, type LauncherConfig } from "./launcher-config.js";
-import { ensureWorktrees, hasCommits, isGitRepo } from "./worktrees.js";
+import { ensureWorktrees, hasCommits, isGitRepo, missingFromWorktrees } from "./worktrees.js";
 
 export interface StartOptions extends KickoffCliOptions {
   driver: string;
@@ -122,6 +122,10 @@ function prepareWorktrees(projectDir: string, config: DiarchyConfig, goalId: str
     const note = result.note === null ? "" : ` (${result.note})`;
     console.log(`${nowHms()} worktree ${result.outcome} ${result.path} on ${result.branch}${note}`);
     map.set(result.agent, result.path);
+  }
+  const missing = missingFromWorktrees(projectDir, [...map.values()]);
+  if (missing.length > 0) {
+    console.log(`${nowHms()} note: ${missing.join(" and ")} not in the worktrees (uncommitted?); Codex reads them only from its worktree. Commit them before the next diarchy start.`);
   }
   return map;
 }

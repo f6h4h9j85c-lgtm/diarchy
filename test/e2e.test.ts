@@ -14,6 +14,7 @@ import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { humanCommand } from "../src/cli/hooks.js";
+import { missingFromWorktrees } from "../src/cli/worktrees.js";
 import { parseGoalState, type GoalState } from "../src/protocol/index.js";
 import { GENERATED, VaultStore, loadConfig, type GoalPaths } from "../src/vault/index.js";
 
@@ -145,6 +146,16 @@ describe("diarchy init", () => {
     expect(config.budgets).toMatchObject({ plan_messages: 12, messages_total: 80, wall_clock_minutes: 240, spend_usd: null });
     expect(readFileSync(join(dir, ".gitignore"), "utf8")).toContain(".diarchy/\n");
     expect(loadConfig(dir).vault).toBe(config.vault);
+    // Codex loads no subagents from a plugin and reads AGENTS.md from the project: init installs both.
+    const shippedAgents = readdirSync(join(ROOT, ".codex", "agents")).sort();
+    expect(shippedAgents).toHaveLength(5);
+    expect(readdirSync(join(dir, ".codex", "agents")).sort()).toEqual(shippedAgents);
+    for (const file of shippedAgents) {
+      expect(readFileSync(join(dir, ".codex", "agents", file), "utf8")).toBe(readFileSync(join(ROOT, ".codex", "agents", file), "utf8"));
+    }
+    expect(readFileSync(join(dir, "AGENTS.md"), "utf8")).toBe(readFileSync(join(ROOT, "templates", "AGENTS.md"), "utf8"));
+    expect(first.stdout).toContain("AGENTS.md and .codex/agents/: 6 written, 0 kept");
+    expect(first.stdout).toContain("Commit AGENTS.md and .codex/agents/");
 
     const before = readFileSync(configPath, "utf8");
     const second = await cli(["init", "--project", dir]);
@@ -176,6 +187,26 @@ describe("diarchy init", () => {
     expect(readFileSync(join(dir, "diarchy.config.json"), "utf8")).toBe(before);
   });
 
+  it("keeps existing Codex files and writes none without a codex agent", async () => {
+    const dir = makeProject("legacy");
+    writeFileSync(join(dir, "AGENTS.md"), "# Our agents\n");
+    mkdirSync(join(dir, ".codex", "agents"), { recursive: true });
+    writeFileSync(join(dir, ".codex", "agents", "planner.toml"), 'name = "planner"\n');
+    const run = await cli(["init", "--project", dir]);
+    expect(run.code, run.stderr).toBe(0);
+    expect(readFileSync(join(dir, "AGENTS.md"), "utf8")).toBe("# Our agents\n");
+    expect(readFileSync(join(dir, ".codex", "agents", "planner.toml"), "utf8")).toBe('name = "planner"\n');
+    expect(existsSync(join(dir, ".codex", "agents", "reviewer.toml"))).toBe(true);
+    expect(run.stdout).toContain("AGENTS.md and .codex/agents/: 4 written, 2 kept");
+    expect(run.stdout).toContain(`append ${join(ROOT, "templates", "AGENTS.md")}`);
+
+    const pair = makeProject("pair");
+    const other = await cli(["init", "--project", pair, "--agents", "claude,cursor"]);
+    expect(other.code, other.stderr).toBe(0);
+    expect(existsSync(join(pair, "AGENTS.md"))).toBe(false);
+    expect(existsSync(join(pair, ".codex"))).toBe(false);
+  });
+
   it("rejects fewer or more than two agents", async () => {
     const dir = makeProject("solo", false);
     const result = await cli(["init", "--project", dir, "--agents", "claude"]);
@@ -185,6 +216,24 @@ describe("diarchy init", () => {
     expect(three.code).toBe(1);
     expect(three.stderr).toContain("exactly 2");
     expect(existsSync(join(dir, "diarchy.config.json"))).toBe(false);
+  });
+});
+
+describe("worktree Codex files", () => {
+  it("reports AGENTS.md and .codex/agents only for a worktree cut before they were committed", () => {
+    const dir = makeProject("ctx");
+    writeFileSync(join(dir, "AGENTS.md"), "# agents\n");
+    mkdirSync(join(dir, ".codex", "agents"), { recursive: true });
+    writeFileSync(join(dir, ".codex", "agents", "planner.toml"), 'name = "planner"\n');
+    const before = join(dir, "..", "wt-before");
+    git(dir, "worktree", "add", "-q", "-b", "before", before, "HEAD");
+    expect(missingFromWorktrees(dir, [before])).toEqual(["AGENTS.md", ".codex/agents"]);
+    git(dir, "add", "AGENTS.md", ".codex");
+    git(dir, "commit", "-q", "-m", "codex files");
+    const after = join(dir, "..", "wt-after");
+    git(dir, "worktree", "add", "-q", "-b", "after", after, "HEAD");
+    expect(missingFromWorktrees(dir, [after])).toEqual([]);
+    expect(missingFromWorktrees(dir, [after, before])).toEqual(["AGENTS.md", ".codex/agents"]);
   });
 });
 
@@ -282,6 +331,11 @@ describe("start --driver fake (good)", () => {
       expect(lines(git(worktree, "log", "--oneline"))).toHaveLength(2);
     }
     expect(git(dir, "rev-parse", "--abbrev-ref", "HEAD")).not.toMatch(/^diarchy\//);
+  });
+
+  it("noted that the uncommitted AGENTS.md and .codex/agents from init are missing from the worktrees", () => {
+    expect(existsSync(join(dir, ".diarchy", "worktrees", "codex", "AGENTS.md"))).toBe(false);
+    expect(run.stdout).toContain("note: AGENTS.md and .codex/agents not in the worktrees");
   });
 
   it("rendered chat.md, decisions.md, and goal.md with the right first lines", () => {

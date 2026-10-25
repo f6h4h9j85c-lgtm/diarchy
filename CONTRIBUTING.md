@@ -7,7 +7,7 @@ npm ci
 npm run lint && npm run typecheck && npm test
 ```
 
-CI runs these on Node 20 and 22, plus the `dist/` check below. `npm test -- protocol` (or `vault`, `mcp`, `codex-config`, `install`) runs one suite. After editing anything under `skills/`, run `npm run sync-skills` so `.agents/skills/` matches; `test/codex-config.test.ts` fails otherwise. A change to `agents/*.md` needs the same change in `.codex/agents/*.toml`.
+CI runs these on Node 20 and 22, plus the `dist/` check below. `npm test -- protocol` (or `vault`, `mcp`, `codex-config`, `install`) runs one suite. After editing anything under `skills/`, run `npm run sync-skills` so `.agents/skills/` matches; `test/codex-config.test.ts` fails otherwise. A change to `agents/*.md` needs the same change in `.codex/agents/*.toml`, and a change to `hooks/hooks.json` the same in `hooks/codex-hooks.json`.
 
 ## Built output
 

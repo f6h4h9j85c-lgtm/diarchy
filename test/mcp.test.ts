@@ -32,6 +32,7 @@ import {
   type PostOk,
   type ReadResult,
 } from "../src/vault/index.js";
+import { ASSIGN_KINDS, BLOCKED_KINDS, DECISION_BASES, MESSAGE_TYPES, STATUS_TASK_STATUSES } from "../src/protocol/index.js";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const STDIO_SERVER = fileURLToPath(new URL("./fixtures/mcp/stdio-server.ts", import.meta.url));
@@ -565,6 +566,17 @@ describe("happy path", () => {
     expect(final).toMatchObject({ phase: "DONE", allowed_types: [] });
     expect(final.messages.map((message) => message.type)).toEqual(["ASSIGN", "STATUS", "DONE"]);
     expect(final.budgets.used).toMatchObject({ messages_total: 9, plan_messages: 3, talk_since_work: 0 });
+
+    // After DONE, read answers phase DONE, never NO_GOAL again; kickoff starts the next goal and its description must say so.
+    const kickoffTool = (await h.codex.listTools()).tools.find((tool) => tool.name === "kickoff");
+    expect(kickoffTool?.description).toContain("Use when read returns NO_GOAL or a goal in phase DONE, and a human gave you a goal.");
+    expect(kickoffTool?.description).not.toContain("only when read returns NO_GOAL");
+    const next = await accepted<KickoffOk>(h.codex, "kickoff", {
+      goal: "Document the rate limit in the README.",
+      acceptance_criteria: ["The README names the limit and its env variable."],
+      slug: "rate-limit-docs",
+    });
+    expect(next).toMatchObject({ ok: true, goal_id: "20261025-rate-limit-docs", lead: "codex", challenger: "claude", phase: "PLAN" });
   });
 });
 
@@ -596,6 +608,80 @@ describe("rejections", () => {
 
     const read = await accepted<ReadResult>(h.codex, "read");
     expect(read.messages.map((message) => message.type)).toEqual(["KICKOFF"]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Malformed arguments: the server checks the input schema, not the SDK
+// ---------------------------------------------------------------------------
+
+const schemaText = (field: string, problem: string): string => `Field "${field}": ${problem}. Fix it per PROTOCOL.md section 3 and post again.`;
+
+describe("malformed arguments", () => {
+  it("answer { ok: false, rule: SCHEMA, message } naming the field for every tool, instead of a plain-text -32602 error, and write nothing", async () => {
+    const h = await harness();
+    expect(await rejected(h.claude, "kickoff", { goal: GOAL })).toEqual({ ok: false, rule: "SCHEMA", message: schemaText("acceptance_criteria", "required") });
+    await h.kickoff();
+
+    const cases: [Client, string, Record<string, unknown>, string][] = [
+      [h.codex, "read", { since: 5 }, "since"],
+      [h.codex, "wait_for_reply", { timeout_ms: 0 }, "timeout_ms"],
+      [h.codex, "wait_for_reply", { timeout_ms: 1.5 }, "timeout_ms"],
+      [h.claude, "post", { ...PROPOSE, re: "AC1" }, "re"],
+      [h.claude, "post", { type: "BLOCKED", re: ["AC1"], kind: "urgent", body: "Need the Redis password." }, "kind"],
+      [h.codex, "status", { re: ["AC1"], evidence: [{ kind: "test", test: "npm test", result: "maybe" }] }, "evidence.0.result"],
+      [h.claude, "decide", { claim: "Use Redis.", re: ["AC1"], basis: "vibes", decision_id: "plan" }, "basis"],
+      [h.claude, "assign", { to: "codex", kind: "fix", task: "T1", re: ["AC1"] }, "kind"],
+    ];
+    for (const [client, name, args, field] of cases) {
+      const result = await rejected(client, name, args);
+      expect(result.rule, `${name} ${field}`).toBe("SCHEMA");
+      expect(result.message.startsWith(`Field "${field}": `), result.message).toBe(true);
+      expect(result.message.endsWith(". Fix it per PROTOCOL.md section 3 and post again."), result.message).toBe(true);
+    }
+    expect(await rejected(h.codex, "status", { re: ["AC1"], evidence: [{ kind: "commit" }] })).toEqual({ ok: false, rule: "SCHEMA", message: schemaText("evidence.0.sha", "required") });
+    expect(await rejected(h.claude, "post", { type: "QUESTION", re: ["AC1"], body: "Which Redis?" })).toEqual({
+      ok: false,
+      rule: "TYPED_ONLY",
+      message: `Unknown type "QUESTION". Use one of ${MESSAGE_TYPES.join(", ")}.`,
+    });
+
+    const read = await accepted<ReadResult>(h.codex, "read");
+    expect(read.messages.map((message) => message.type)).toEqual(["KICKOFF"]);
+  });
+
+  it("leave tools/list advertising the declared schemas: required fields, enums, the evidence union, integer timeout_ms", async () => {
+    const h = await harness();
+    const { tools } = await h.claude.listTools();
+    const property = (tool: string, key: string): Record<string, unknown> => {
+      const properties = tools.find((entry) => entry.name === tool)?.inputSchema.properties ?? {};
+      return (properties[key] ?? {}) as Record<string, unknown>;
+    };
+    expect(Object.fromEntries(tools.map((tool) => [tool.name, tool.inputSchema.required ?? []]))).toEqual({
+      kickoff: ["goal", "acceptance_criteria"],
+      post: ["type"],
+      decide: ["claim", "basis"],
+      assign: ["to", "kind"],
+      status: ["evidence"],
+      read: [],
+      wait_for_reply: [],
+    });
+    expect(property("post", "type").enum).toEqual([...MESSAGE_TYPES]);
+    expect(property("post", "kind").enum).toEqual([...BLOCKED_KINDS]);
+    expect(property("post", "to")).toMatchObject({ type: "string", default: "all" });
+    expect(property("decide", "basis").enum).toEqual([...DECISION_BASES]);
+    expect(property("assign", "kind").enum).toEqual([...ASSIGN_KINDS]);
+    expect(property("status", "task_status").enum).toEqual([...STATUS_TASK_STATUSES]);
+    const items = (property("status", "evidence").items ?? {}) as { oneOf?: { properties: { kind: { const: string } } }[] };
+    expect(items.oneOf?.map((item) => item.properties.kind.const)).toEqual(["commit", "pr", "test", "file", "review", "human", "external"]);
+    expect(property("wait_for_reply", "timeout_ms")).toMatchObject({ type: "integer", exclusiveMinimum: 0 });
+  });
+
+  it("are documented in PROTOCOL.md section 10 as a SCHEMA rejection, not a plain-text error", () => {
+    const protocol = readFileSync(join(ROOT, "docs", "PROTOCOL.md"), "utf8");
+    const section = protocol.slice(protocol.indexOf("## 10. MCP tools"), protocol.indexOf("## 11."));
+    expect(section).toContain('is rejected the same way as a rule: `{ ok: false, rule: "SCHEMA", message }` naming the field');
+    expect(section).not.toMatch(/plain-text/);
   });
 });
 

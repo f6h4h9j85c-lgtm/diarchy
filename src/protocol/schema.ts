@@ -261,7 +261,8 @@ function valueAt(input: unknown, path: PropertyKey[]): unknown {
   return current;
 }
 
-function describeIssue(issue: z.core.$ZodIssue, input: unknown): FieldProblem {
+/** The field a zod issue points at and what is wrong with it, for a SCHEMA message. */
+export function describeIssue(issue: z.core.$ZodIssue, input: unknown): FieldProblem {
   if (issue.code === "unrecognized_keys") {
     return { field: issue.keys[0] ?? "frontmatter", problem: "unknown field" };
   }

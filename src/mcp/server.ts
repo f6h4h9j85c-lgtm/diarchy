@@ -4,7 +4,9 @@
  * agent acts on a goal: the others answer AGENT_BUSY. Every tool answers with the
  * store's result as JSON text plus structuredContent; a protocol rejection
  * (docs/ANTI-SLOP.md `{ ok: false, rule, message }`) sets isError so the
- * calling agent reads the rule and does what the message says.
+ * calling agent reads the rule and does what the message says. Arguments that
+ * do not fit a tool's input schema are such a rejection too (SCHEMA): the
+ * server checks them itself instead of leaving it to the SDK.
  */
 import { readFileSync } from "node:fs";
 import { posix } from "node:path";
@@ -22,8 +24,12 @@ import {
   MESSAGE_TYPES,
   STATUS_TASK_STATUSES,
   SchemaError,
+  describeIssue,
   evidenceItemSchema,
+  isMessageType,
   partialBudgetsSchema,
+  schemaMessage,
+  typedOnlyMessage,
   type AgentId,
   type MessageType,
   type Rejection,
@@ -111,6 +117,32 @@ async function runTool(body: () => Promise<object> | object): Promise<CallToolRe
   }
 }
 
+type InputShape = Record<string, z.ZodType>;
+
+/**
+ * The input schema a tool registers with the SDK: every declared field as an
+ * optional z.unknown(), carrying the declared object's JSON Schema as metadata.
+ * tools/list advertises exactly the declared schema, but the SDK's own input
+ * check, which answers a mismatch with a plain-text -32602 error and no rule,
+ * always passes, and the handler parses the declared shape itself.
+ */
+function advertisedSchema(shape: InputShape) {
+  const json = z.toJSONSchema(z.object(shape), { target: "draft-7", io: "input" });
+  delete json.$schema;
+  return z.object(Object.fromEntries(Object.keys(shape).map((key) => [key, z.unknown().optional()]))).meta(json);
+}
+
+/**
+ * Arguments that do not fit the declared shape: ANTI-SLOP.md SCHEMA naming the
+ * first bad field, or TYPED_ONLY for a post whose type is not a message type,
+ * as the engine answers the same message.
+ */
+function inputRejection(error: z.ZodError, args: Record<string, unknown>): Rejection {
+  const { field, problem } = describeIssue(error.issues[0], args);
+  if (field === "type" && args.type !== undefined && !isMessageType(args.type)) return { ok: false, rule: "TYPED_ONLY", message: typedOnlyMessage(args.type) };
+  return { ok: false, rule: "SCHEMA", message: schemaMessage(field, problem) };
+}
+
 /** The active goal, else the newest, as the store's own read path does. */
 function currentGoal(store: VaultStore): GoalRef | null {
   return store.activeGoal() ?? store.listGoals().at(-1) ?? null;
@@ -167,12 +199,25 @@ export function createMcpServer(options: McpServerOptions): McpServer {
   /** Run a tool body as this agent: refused with AGENT_BUSY unless this server holds the goal. */
   const asAgent = (body: () => Promise<object> | object): Promise<CallToolResult> => run(() => busy() ?? body());
 
-  server.registerTool(
+  /** Register a tool whose arguments this server parses, so a malformed one is a rejection with a rule like any other. */
+  const register = <S extends InputShape>(
+    name: (typeof TOOL_NAMES)[number],
+    config: { title: string; description: string; inputSchema: S },
+    handler: (args: z.output<z.ZodObject<S>>, extra: Extra) => Promise<CallToolResult>,
+  ): void => {
+    const declared = z.object(config.inputSchema);
+    server.registerTool(name, { ...config, inputSchema: advertisedSchema(config.inputSchema) }, (args, extra) => {
+      const parsed = declared.safeParse(args);
+      return parsed.success ? handler(parsed.data, extra) : run(() => inputRejection(parsed.error, args));
+    });
+  };
+
+  register(
     "kickoff",
     {
       title: "Kick off a goal",
       description:
-        "Start the one goal this vault will run; you become lead and the other agent challenger. Use only when read returns NO_GOAL and a human gave you a goal. Goal text 120 words max on one line, each criterion 40 words max on one line (no line terminators: CR, LF, VT, FF, U+0085, U+2028, U+2029); criteria become AC1.. and are never reworded. Rejected with SINGLE_KICKOFF while a goal is PLAN, EXECUTE, or BLOCKED. Then post a PROPOSE with decision_id plan.",
+        "Start a goal; you become lead and the other agent challenger. Use when read returns NO_GOAL or a goal in phase DONE, and a human gave you a goal. Goal text 120 words max on one line, each criterion 40 words max on one line (no line terminators: CR, LF, VT, FF, U+0085, U+2028, U+2029); criteria become AC1.. and are never reworded. Rejected with SINGLE_KICKOFF while a goal is PLAN, EXECUTE, or BLOCKED. Then post a PROPOSE with decision_id plan.",
       inputSchema: {
         goal: z.string().describe("Goal text as one paragraph on one line; becomes the KICKOFF body. Must not contain CR, LF, VT, FF, U+0085, U+2028, or U+2029, or start with `- AC<n>: ` (SCHEMA)."),
         acceptance_criteria: z.array(z.string()).describe("Testable criteria in order, each on one line: no CR, LF, VT, FF, U+0085, U+2028, or U+2029 (SCHEMA)."),
@@ -189,7 +234,7 @@ export function createMcpServer(options: McpServerOptions): McpServer {
       }),
   );
 
-  server.registerTool(
+  register(
     "post",
     {
       title: "Post a message",
@@ -215,7 +260,7 @@ export function createMcpServer(options: McpServerOptions): McpServer {
       }),
   );
 
-  server.registerTool(
+  register(
     "decide",
     {
       title: "Decide a thread",
@@ -237,7 +282,7 @@ export function createMcpServer(options: McpServerOptions): McpServer {
     (args) => asAgent(() => store.post({ ...args, type: "DECIDE", to: "all", re: args.re ?? [] })),
   );
 
-  server.registerTool(
+  register(
     "assign",
     {
       title: "Assign work",
@@ -268,7 +313,7 @@ export function createMcpServer(options: McpServerOptions): McpServer {
       }),
   );
 
-  server.registerTool(
+  register(
     "status",
     {
       title: "Report work",
@@ -285,7 +330,7 @@ export function createMcpServer(options: McpServerOptions): McpServer {
     (args) => asAgent(() => store.post({ ...args, type: "STATUS", to: "all", re: args.re ?? [] })),
   );
 
-  server.registerTool(
+  register(
     "read",
     {
       title: "Read the chat",
@@ -296,7 +341,7 @@ export function createMcpServer(options: McpServerOptions): McpServer {
     (args) => asAgent(() => store.read(args) ?? serverError("NO_GOAL", NO_GOAL_TEXT)),
   );
 
-  server.registerTool(
+  register(
     "wait_for_reply",
     {
       title: "Wait for a reply",

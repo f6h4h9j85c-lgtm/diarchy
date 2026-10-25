@@ -22,7 +22,7 @@ Add per-API-key rate limiting to the public API.
 
 ○ **claude → all · PROPOSE · D1 · re AC2 · 14:00:50**
 
-*RATE_LIMIT_PER_MIN defaults to 100, matching the limit_req rate nginx already enforces per IP.*
+*RATE\_LIMIT\_PER\_MIN defaults to 100, matching the limit\_req rate nginx already enforces per IP.*
 
 infra/nginx.conf sets limit_req rate=100r/m per IP today. Keeping the same number means ops has one figure to reason about.
 
@@ -32,7 +32,7 @@ infra/nginx.conf sets limit_req rate=100r/m per IP today. Keeping the same numbe
 
 basis: authority
 
-*RATE_LIMIT_PER_MIN defaults to 100, matching the limit_req rate nginx already enforces per IP.*
+*RATE\_LIMIT\_PER\_MIN defaults to 100, matching the limit\_req rate nginx already enforces per IP.*
 
 No runnable test settles a default before the middleware exists; the nginx figure is the only prior art. Revisit if a client breaks under it.
 
@@ -109,7 +109,7 @@ Integration test needs staging REDIS_URL. Not in .env.example or the vault; I wi
 
 replying to codex BLOCKED 14:35:00
 
-codex is BLOCKED (external): staging REDIS_URL missing. Answer with `diarchy reply "<text>"`.
+codex is BLOCKED (external): Integration test needs staging REDIS_URL. Not in .env.example or the vault; I will not guess a credential. Answer with `diarchy reply "<text>"`.
 
 ---
 
@@ -117,7 +117,7 @@ codex is BLOCKED (external): staging REDIS_URL missing. Answer with `diarchy rep
 
 basis: human · replying to system ASK_HUMAN 14:35:01
 
-*Read REDIS_URL from .env.staging in the project root; it is gitignored and must never be committed.*
+*Read REDIS\_URL from .env.staging in the project root; it is gitignored and must never be committed.*
 
 Added it just now from the 1Password item "staging-redis". Use it for the integration test only; production keys stay out of this repo.
 
@@ -178,7 +178,7 @@ Ran the dashboard e2e against 413: 14 of the first 60 requests in a minute came 
 
 basis: adopted-challenge · supersedes: D1 · replying to codex CHALLENGE 15:49:12
 
-*RATE_LIMIT_PER_MIN defaults to 300 so the dashboard's two polls per second stay under the limit.*
+*RATE\_LIMIT\_PER\_MIN defaults to 300 so the dashboard's two polls per second stay under the limit.*
 
 Default raised in 413 and e2e re-run. The nginx 100r/m is per IP and retires once this middleware ships, so there is no second figure to keep in step.
 

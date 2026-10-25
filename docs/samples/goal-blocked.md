@@ -26,9 +26,9 @@ Add per-API-key rate limiting to the public API.
 
 | id | criterion | status |
 |---|---|---|
-| AC1 | Requests over the per-key limit get HTTP 429 with a Retry-After header, and the count is shared across all API replicas. | **failing** |
-| AC2 | The limit is configurable through RATE_LIMIT_PER_MIN with a documented default. | **failing** |
-| AC3 | Tests cover the 429 path and the config override, and the full suite is green on main. | **failing** |
+| AC1 | Requests over the per-key limit get HTTP 429 with a Retry-After header, and the count is shared across all API replicas. | open |
+| AC2 | The limit is configurable through RATE_LIMIT_PER_MIN with a documented default. | open |
+| AC3 | Tests cover the 429 path and the config override, and the full suite is green on main. | open |
 
 ## Tasks
 

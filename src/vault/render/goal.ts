@@ -3,6 +3,7 @@ import type { GoalState, Kickoff, Message, Phase, TaskState } from "../../protoc
 import {
   GENERATED,
   SEP,
+  blockText,
   blockTrigger,
   budgetLine,
   budgetTrigger,
@@ -11,7 +12,6 @@ import {
   challengerList,
   code,
   decisionCount,
-  escapeBlockStarts,
   hms,
   humanSlot,
   italic,
@@ -33,7 +33,7 @@ export function renderGoal(
   const chunks = [`${GENERATED}\n# ${kickoff.goal}`];
   if (state?.phase === "BLOCKED") chunks.push(questionCallout(ordered, state, opts));
   chunks.push(
-    escapeBlockStarts(kickoff.goal_text),
+    blockText(kickoff.goal_text),
     `[chat](chat.md)${SEP}[decisions (${decisionCount(ordered)})](decisions.md)`,
     "## Status",
     statusTable(ordered, state, kickoff),
@@ -104,7 +104,7 @@ function quote(paragraphs: string[]): string {
 
 /** The BLOCKED body as a nested quote inside the callout. */
 function nested(body: string): string {
-  return escapeBlockStarts(body.trim())
+  return blockText(body.trim())
     .split("\n")
     .map((line) => (line === "" ? ">" : `> ${line}`))
     .join("\n");

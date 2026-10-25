@@ -17,7 +17,7 @@ export function renderDecisions(messages, _state, kickoff) {
             message.from,
             cell(message.claim ?? ""),
             message.basis ?? "",
-            (message.evidence ?? []).map((item) => evidenceSummary(item, ids)).join("; "),
+            cell((message.evidence ?? []).map((item) => evidenceSummary(item, ids)).join("; ")),
             message.supersedes ?? "",
         ]);
     });

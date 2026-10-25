@@ -65,10 +65,15 @@ export function localHint(ts: string, localTz: string | undefined): string {
 // ---------------------------------------------------------------------------
 
 /**
- * After any indentation: a block marker, a type glyph that would pass for a
- * message header (1.3), an underscore rule, or a setext `=` underline.
+ * After any spaces, tabs, or invisible format characters (Unicode Zs and Cf:
+ * zero-width space and joiners, bidi controls): a block marker, a type glyph
+ * that would pass for a message header (1.3), an underscore rule, or a setext
+ * `=` underline.
  */
-const BLOCK_START = new RegExp(`^([ \\t]*)(?=[#>*+|\\-${Object.values(GLYPHS).join("")}]|\\d+\\.|(?:_[ \\t]*){3,}$|=+[ \\t]*$)`);
+const BLOCK_START = new RegExp(
+  `^([\\t\\p{Zs}\\p{Cf}]*)(?=[#>*+|\\-${Object.values(GLYPHS).join("")}]|\\d+\\.|(?:_[ \\t]*){3,}$|=+[ \\t]*$)`,
+  "u",
+);
 
 /** Backslash-prefix any line that would start a block construct or pass for a message header. */
 export function escapeBlockStarts(text: string): string {
@@ -83,20 +88,107 @@ export function inline(text: string): string {
   return text.replace(/[\r\n\u2028\u2029]+/g, " ");
 }
 
-/** Claim inside single `*`: one line, emphasis delimiters escaped. */
-export function italic(text: string): string {
-  return `*${inline(text).replace(/[*_]/g, (char) => `\\${char}`)}*`;
+/** A line that opens a fenced code block: up to 3 spaces, then 3+ backticks (no backtick after) or 3+ tildes. */
+const FENCE_OPEN = /^ {0,3}(`{3,}(?=[^`]*$)|~{3,})/;
+const FENCE_CLOSE = /^ {0,3}(`{3,}|~{3,})[ \t]*$/;
+
+/** Start of the first backtick run of exactly `length` at or after `from`, else -1. */
+function closingRun(line: string, from: number, length: number): number {
+  const runs = /`+/g;
+  runs.lastIndex = from;
+  for (let run = runs.exec(line); run !== null; run = runs.exec(line)) {
+    if (run[0].length === length) return run.index;
+  }
+  return -1;
 }
 
-/** One-line code span; a string holding a backtick is wrapped in double backticks with inner spaces. */
+/** A backslash and the ASCII punctuation it escapes; `<` and `&` are left to the entity escape. */
+const ESCAPE_PAIR = /^\\[!-%'-/:;=>?@[-`{-~]/;
+
+/**
+ * One line outside fenced code: `<` and `&` become `&lt;` and `&amp;` except
+ * inside a code span closed on the same line, and each character of `extra`
+ * gets a backslash there. A backtick run that closes no span on the line is
+ * backslash-escaped, and so is a backslash ending the text, so the text
+ * cannot pair a backtick or escape a character around it.
+ */
+function escapeHtmlLine(line: string, last: boolean, extra: string): string {
+  let out = "";
+  let index = 0;
+  while (index < line.length) {
+    const char = line[index];
+    const pair = ESCAPE_PAIR.exec(line.slice(index, index + 2))?.[0];
+    if (pair !== undefined) {
+      out += pair;
+      index += 2;
+    } else if (char === "`") {
+      const run = /^`+/.exec(line.slice(index))?.[0] ?? "`";
+      const close = closingRun(line, index + run.length, run.length);
+      const end = close < 0 ? index + run.length : close + run.length;
+      out += close < 0 ? run.replace(/`/g, "\\`") : line.slice(index, end);
+      index = end;
+    } else {
+      if (char === "<") out += "&lt;";
+      else if (char === "&") out += "&amp;";
+      else if (extra.includes(char) || (char === "\\" && last && index === line.length - 1)) out += `\\${char}`;
+      else out += char;
+      index += 1;
+    }
+  }
+  return out;
+}
+
+/**
+ * Agent text with no raw HTML and no character reference (1.1): `<` and `&`
+ * are entity-escaped, and the characters of `extra` backslash-escaped,
+ * everywhere but in code spans and closed fenced code blocks, which keep
+ * them literal.
+ */
+export function escapeHtml(text: string, extra = ""): string {
+  const lines = text.split(/\r\n?|\n/);
+  const out: string[] = [];
+  for (let index = 0; index < lines.length; index += 1) {
+    const fence = FENCE_OPEN.exec(lines[index])?.[1];
+    const close =
+      fence === undefined
+        ? -1
+        : lines.findIndex((line, at) => {
+            const closer = at > index ? FENCE_CLOSE.exec(line)?.[1] : undefined;
+            return closer !== undefined && closer[0] === fence[0] && closer.length >= fence.length;
+          });
+    if (close > index) {
+      out.push(...lines.slice(index, close + 1));
+      index = close;
+    } else {
+      out.push(escapeHtmlLine(lines[index], index === lines.length - 1, extra));
+    }
+  }
+  return out.join("\n");
+}
+
+/** Agent text placed on one line: line breaks collapsed, HTML and character references escaped. */
+export function inlineText(text: string, extra = ""): string {
+  return escapeHtml(inline(text), extra);
+}
+
+/** Claim inside single `*`: one-line agent text with emphasis delimiters escaped. */
+export function italic(text: string): string {
+  return `*${inlineText(text, "*_")}*`;
+}
+
+/** One-line code span, fenced by one backtick more than the longest backtick run inside, with inner spaces then. */
 export function code(text: string): string {
   const flat = inline(text);
-  return flat.includes("`") ? `\`\` ${flat} \`\`` : `\`${flat}\``;
+  if (flat === "") return "` `";
+  const longest = Math.max(0, ...(flat.match(/`+/g) ?? []).map((run) => run.length));
+  if (longest === 0) return `\`${flat}\``;
+  const fence = "`".repeat(longest + 1);
+  return `${fence} ${flat} ${fence}`;
 }
 
-/** Table cell: pipes escaped, newlines collapsed to one space. */
+/** Table cell: one line, HTML escaped, pipes escaped. */
 export function cell(text: string): string {
-  return inline(text).replace(/\|/g, "\\|");
+  return inlineText(text).replace(/\|/g, "\\|");
 }
 
 /** `| a | b |` with an empty cell rendered as a single space, as in the samples. */
@@ -108,9 +200,14 @@ export function tableSeparator(columns: number): string {
   return `|${Array.from({ length: columns }, () => "---").join("|")}|`;
 }
 
-/** Body text as its own paragraph(s): trimmed, block starts escaped. */
+/** Body text as its own paragraph(s): trimmed, then as `blockText`. */
 export function bodyParagraph(body: string): string {
-  return escapeBlockStarts(body.trim());
+  return blockText(body.trim());
+}
+
+/** Agent text kept on its own lines: HTML and character references escaped, then block starts. */
+export function blockText(text: string): string {
+  return escapeBlockStarts(escapeHtml(text));
 }
 
 // ---------------------------------------------------------------------------
@@ -130,8 +227,15 @@ export function linkText(url: string): string {
   return bare.length > LINK_TEXT_MAX ? `${bare.slice(0, LINK_TEXT_MAX)}\u2026` : bare;
 }
 
+/** A character a link destination cannot hold as is (space, line break, control, `<`, `>`, parentheses, backslash), percent-encoded. */
+function percentEncode(char: string): string {
+  return Array.from(new TextEncoder().encode(char), (byte) => `%${byte.toString(16).toUpperCase().padStart(2, "0")}`).join("");
+}
+
+/** `[text](url)`: the text escaped as one-line agent text with brackets escaped; the destination cannot end early or span lines. */
 export function link(url: string): string {
-  return `[${linkText(url)}](${url})`;
+  const text = inlineText(linkText(url), "[]");
+  return `[${text}](${url.replace(/[\s\p{Cc}<>()\\]/gu, percentEncode)})`;
 }
 
 /** `#412` for a GitHub PR, else the link text (decisions.md evidence column). */
@@ -176,7 +280,7 @@ export function evidenceBullet(item: EvidenceItem, byId: Map<string, Message>): 
     case "human":
       return `- human: ${messageRef(item.id, byId)}`;
     case "external":
-      return `- external: ${link(item.url)}${item.note === undefined ? "" : `${SEP}${inline(item.note)}`}`;
+      return `- external: ${link(item.url)}${item.note === undefined ? "" : `${SEP}${inlineText(item.note)}`}`;
   }
 }
 

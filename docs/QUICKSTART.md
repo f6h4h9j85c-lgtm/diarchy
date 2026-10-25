@@ -4,10 +4,17 @@ You need Claude Code and Codex CLI installed and signed in, Node 20.3 or later, 
 
 ## 1. Install the plugin in both CLIs
 
-Claude Code, from a shell:
+Claude Code 2.1.292 or later, from a shell:
 
 ```
 claude plugin install diarchy --marketplace f6h4h9j85c-lgtm/diarchy
+```
+
+On Claude Code 2.1.275 to 2.1.291, `--marketplace` is an unknown option; add the marketplace first, then install by plugin id:
+
+```
+claude plugin marketplace add f6h4h9j85c-lgtm/diarchy
+claude plugin install diarchy@diarchy
 ```
 
 Codex CLI: `codex plugin marketplace add f6h4h9j85c-lgtm/diarchy`, then enable `diarchy@diarchy` and register the `diarchy` MCP server in `~/.codex/config.toml` as shown in [INSTALL-CODEX.md](INSTALL-CODEX.md); then approve the plugin's three diarchy hooks in `/hooks`, or they are skipped silently. In each CLI, `/mcp` must list `diarchy`, and asking for the diarchy `read` tool must answer `NO_GOAL`: nothing is kicked off yet.

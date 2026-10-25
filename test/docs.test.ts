@@ -37,6 +37,10 @@ describe("docs: diarchy-pm skill and ANTI-SLOP.md", () => {
   it("the talk cap accepts the types TALK_WORK_RATIO accepts", () => {
     expect(acceptedTypes(section(skill, "## EXECUTE phase"))).toEqual(acceptedTypes(rule("TALK_WORK_RATIO")));
   });
+
+  it("STATUS evidence asks for a PR url only once a PR is opened", () => {
+    expect(section(skill, "## EXECUTE phase")).toContain("`commit` sha, `test` command plus result, `pr` url once opened.");
+  });
 });
 
 describe("docs: install paths", () => {
@@ -48,6 +52,16 @@ describe("docs: install paths", () => {
     expect(pathB).toContain("claude plugin marketplace add f6h4h9j85c-lgtm/diarchy\nclaude plugin install diarchy@diarchy");
     const requirements = doc.split("\n").find((line) => line.startsWith("Requirements:")) ?? "";
     expect(requirements).toContain("2.1.292");
+  });
+
+  it("QUICKSTART.md gives the shell form's minimum version and the same form for older versions as INSTALL-CLAUDE.md", () => {
+    const pathB = section(read("docs", "INSTALL-CLAUDE.md"), "## Path B: from a shell");
+    const blocks = [...pathB.matchAll(/```\n([\s\S]*?)\n```/g)].map((match) => match[1]);
+    expect(blocks).toHaveLength(2);
+    const quick = section(read("docs", "QUICKSTART.md"), "## 1. Install the plugin in both CLIs");
+    expect(quick).toContain(`Claude Code 2.1.292 or later, from a shell:\n\n\`\`\`\n${blocks[0]}\n\`\`\``);
+    expect(quick).toContain("On Claude Code 2.1.275 to 2.1.291");
+    expect(quick).toContain(`\`\`\`\n${blocks[1]}\n\`\`\``);
   });
 
   it("templates/AGENTS.md names skills, not repository paths that exist only in the diarchy checkout", () => {

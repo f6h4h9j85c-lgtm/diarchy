@@ -22,18 +22,30 @@ export declare function localHint(ts: string, localTz: string | undefined): stri
 export declare function escapeBlockStarts(text: string): string;
 /** Text placed on one line (a list item, the fields line, a span): each run of line breaks becomes one space. */
 export declare function inline(text: string): string;
-/** Claim inside single `*`: one line, emphasis delimiters escaped. */
+/**
+ * Agent text with no raw HTML and no character reference (1.1): `<` and `&`
+ * are entity-escaped, and the characters of `extra` backslash-escaped,
+ * everywhere but in code spans and closed fenced code blocks, which keep
+ * them literal.
+ */
+export declare function escapeHtml(text: string, extra?: string): string;
+/** Agent text placed on one line: line breaks collapsed, HTML and character references escaped. */
+export declare function inlineText(text: string, extra?: string): string;
+/** Claim inside single `*`: one-line agent text with emphasis delimiters escaped. */
 export declare function italic(text: string): string;
-/** One-line code span; a string holding a backtick is wrapped in double backticks with inner spaces. */
+/** One-line code span, fenced by one backtick more than the longest backtick run inside, with inner spaces then. */
 export declare function code(text: string): string;
-/** Table cell: pipes escaped, newlines collapsed to one space. */
+/** Table cell: one line, HTML escaped, pipes escaped. */
 export declare function cell(text: string): string;
 /** `| a | b |` with an empty cell rendered as a single space, as in the samples. */
 export declare function tableRow(cells: string[]): string;
 export declare function tableSeparator(columns: number): string;
-/** Body text as its own paragraph(s): trimmed, block starts escaped. */
+/** Body text as its own paragraph(s): trimmed, then as `blockText`. */
 export declare function bodyParagraph(body: string): string;
+/** Agent text kept on its own lines: HTML and character references escaped, then block starts. */
+export declare function blockText(text: string): string;
 export declare function linkText(url: string): string;
+/** `[text](url)`: the text escaped as one-line agent text with brackets escaped; the destination cannot end early or span lines. */
 export declare function link(url: string): string;
 /** `#412` for a GitHub PR, else the link text (decisions.md evidence column). */
 export declare function prNumber(url: string): string;

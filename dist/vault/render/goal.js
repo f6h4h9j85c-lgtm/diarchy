@@ -1,10 +1,10 @@
-import { GENERATED, SEP, blockTrigger, budgetLine, budgetTrigger, byId, cell, challengerList, code, decisionCount, escapeBlockStarts, hms, humanSlot, italic, localHint, sortMessages, tableRow, tableSeparator, utcDate, } from "./shared.js";
+import { GENERATED, SEP, blockText, blockTrigger, budgetLine, budgetTrigger, byId, cell, challengerList, code, decisionCount, hms, humanSlot, italic, localHint, sortMessages, tableRow, tableSeparator, utcDate, } from "./shared.js";
 export function renderGoal(messages, state, kickoff, opts = {}) {
     const ordered = sortMessages(messages);
     const chunks = [`${GENERATED}\n# ${kickoff.goal}`];
     if (state?.phase === "BLOCKED")
         chunks.push(questionCallout(ordered, state, opts));
-    chunks.push(escapeBlockStarts(kickoff.goal_text), `[chat](chat.md)${SEP}[decisions (${decisionCount(ordered)})](decisions.md)`, "## Status", statusTable(ordered, state, kickoff), `${budgetLine(state)}${SEP}${humanSlot(state, ordered)}`, "## Acceptance Criteria", acTable(state, kickoff), "## Tasks", tasksTable(state));
+    chunks.push(blockText(kickoff.goal_text), `[chat](chat.md)${SEP}[decisions (${decisionCount(ordered)})](decisions.md)`, "## Status", statusTable(ordered, state, kickoff), `${budgetLine(state)}${SEP}${humanSlot(state, ordered)}`, "## Acceptance Criteria", acTable(state, kickoff), "## Tasks", tasksTable(state));
     return `${chunks.join("\n\n")}\n`;
 }
 // ---------------------------------------------------------------------------
@@ -56,7 +56,7 @@ function quote(paragraphs) {
 }
 /** The BLOCKED body as a nested quote inside the callout. */
 function nested(body) {
-    return escapeBlockStarts(body.trim())
+    return blockText(body.trim())
         .split("\n")
         .map((line) => (line === "" ? ">" : `> ${line}`))
         .join("\n");

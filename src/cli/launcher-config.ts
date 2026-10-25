@@ -12,7 +12,7 @@ import { z } from "zod";
 import { CONFIG_FILENAME } from "../vault/index.js";
 
 export interface AgentLaunch {
-  /** Executable; resolved on PATH by the OS. */
+  /** Executable: a bare name is looked up on PATH. A relative path, like a relative PATH entry, resolves against the directory the agent is spawned in: its worktree, else the project directory. */
   command: string;
   /** Base flags; the launcher appends resume flags and the prompt. */
   args: string[];
@@ -26,7 +26,7 @@ export interface LauncherKnobs {
   restart_backoff_ms: number;
   /** After DONE or a non-clock block: wait this long for the PMs to exit on their own, then SIGTERM, then SIGKILL after as long again. */
   stop_grace_ms: number;
-  /** After a WALL_CLOCK block the CLIs may finish on their own for this long, then SIGKILL. */
+  /** After a WALL_CLOCK block the CLIs may finish on their own for this long, then SIGKILL. A stop request (diarchy stop, a signal) ends the wait: SIGTERM, then SIGKILL after stop_grace_ms. */
   wall_clock_grace_ms: number;
 }
 

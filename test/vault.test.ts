@@ -785,7 +785,8 @@ describe("store-owned files", () => {
     type Reader = "listGoals" | "activeGoal" | "state" | "listMessages" | "readKickoff";
     type Writer = "render" | "kickoff" | "post" | "read" | "waitForReply" | "reply" | "stop";
     expectTypeOf<keyof VaultStore>().toEqualTypeOf<"agent" | Reader | Writer>();
-    expectTypeOf<{ [K in Reader | "render"]: Parameters<VaultStore[K]> }>().toEqualTypeOf<{ [K in Reader | "render"]: [] }>();
+    expectTypeOf<{ [K in Exclude<Reader, "listMessages"> | "render"]: Parameters<VaultStore[K]> }>().toEqualTypeOf<{ [K in Exclude<Reader, "listMessages"> | "render"]: [] }>();
+    expectTypeOf<Parameters<VaultStore["listMessages"]>>().toEqualTypeOf<[onCorrupt?: (error: CorruptVaultFileError) => void]>();
     expectTypeOf<Parameters<VaultStore["kickoff"]>>().toEqualTypeOf<[KickoffInput]>();
     expectTypeOf<Parameters<VaultStore["post"]>>().toEqualTypeOf<[MessageDraft]>();
     expectTypeOf<Parameters<VaultStore["read"]>>().toEqualTypeOf<[options?: { since?: string }]>();
@@ -1885,6 +1886,11 @@ describe("reply and stop as human", () => {
     ok(await h.claude.post({ type: "BLOCKED", to: "all", re: ["AC1"], kind: "external", body: `A chat file is corrupt: ${corrupt}` }));
     expect(h.human.state()).toMatchObject({ phase: "BLOCKED", blocked_from: "PLAN" });
     expect(h.file("goal.md", "20261025-bad")).toContain("**claude is blocked (external), re AC1:**");
+    // listMessages stays strict for callers that act on the messages; a human-facing reader passes onCorrupt to skip the file and name it.
+    expect(() => h.human.listMessages()).toThrow(CorruptVaultFileError);
+    const skipped: string[] = [];
+    expect(h.human.listMessages((caught) => skipped.push(caught.file)).map((message) => message.type)).toEqual(["BLOCKED", "ASK_HUMAN"]);
+    expect(skipped).toEqual([corrupt]);
     h.clock.advance(60_000);
     ok(await h.human.reply("Carry on with the plan."));
     expect(h.human.state()).toMatchObject({ phase: "PLAN", blocked_from: null });

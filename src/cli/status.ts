@@ -24,7 +24,8 @@ export function runStatus(projectDir: string, options: StatusOptions): number {
     } else console.log(noGoalText(projectDir));
     return EXIT_OK;
   }
-  const messages = sortMessages(store.listMessages());
+  // A chat file that will not parse is left out and named on stderr, so status still shows the human how to recover.
+  const messages = sortMessages(store.listMessages((error) => console.error(`diarchy: ${error.message} It is left out here.`)));
   const last = messages[messages.length - 1];
   const assignments = openAssignments(state);
   const hint = replyHint(state, messages);

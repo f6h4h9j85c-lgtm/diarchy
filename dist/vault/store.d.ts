@@ -1,4 +1,5 @@
 import { type AgentId, type GoalState, type Kickoff, type Message } from "../protocol/index.js";
+import { CorruptVaultFileError } from "./types.js";
 import type { GoalRef, KickoffInput, KickoffResult, MessageDraft, PostResult, ReadResult, ReplyOptions, VaultStoreOptions, WaitOptions, WaitResult } from "./types.js";
 export { LOCK_STALE_MS } from "./lock.js";
 export declare const MAX_WAIT_MS = 110000;
@@ -31,7 +32,13 @@ export declare class VaultStore {
     private currentGoal;
     private requireGoal;
     state(): GoalState | null;
-    listMessages(): Message[];
+    /**
+     * The active goal's committed messages. A committed file that will not parse
+     * throws CorruptVaultFileError, unless `onCorrupt` is given: then the file is
+     * left out and its error handed to `onCorrupt`, so a human-facing reader
+     * (status, watch, the launcher) keeps working and can name the file.
+     */
+    listMessages(onCorrupt?: (error: CorruptVaultFileError) => void): Message[];
     readKickoff(): Kickoff | null;
     /** Re-render goal.md, chat.md, decisions.md from the files on disk. */
     render(): void;
@@ -135,7 +142,7 @@ export declare class VaultStore {
      * order; nothing else is read or rendered. A committed file that will not
      * parse throws CorruptVaultFileError, unless `skipCorrupt`: the rendered
      * views and the human's recovery paths leave it out so a corrupt file cannot
-     * block them.
+     * block them (a function `skipCorrupt` also receives each error).
      */
     private readMessages;
     /** budget.json of one goal; a file that does not parse throws an error naming it. */

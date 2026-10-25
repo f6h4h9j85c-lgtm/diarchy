@@ -391,7 +391,7 @@ The store checks recorded state only, so a DONE cannot certify itself: (b) needs
 
 All tools act on the vault's current goal (the active one, else the newest); no tool takes a goal id. One server posts as the one agent it was started for, so no tool takes `from` or `lead`: the caller of `kickoff` is the lead. The MCP layer drops input fields a tool does not declare, and refuses a declared field of the wrong shape with `isError` and a plain-text message before the store sees it.
 
-A posting tool (`kickoff`, `post`, `decide`, `assign`, `status`) answers `{ ok: true, id, ts, seq, phase, allowed_types, budgets: { used, limits }, decision_id? }`; `kickoff` adds `goal_id, lead, challenger, kickoff_id`. `read` answers `{ goal, phase, role, allowed_types, budgets: { used, limits }, lead, challenger, messages, cursor }`, with no `ok`. Every store or server rejection answers `{ ok: false, rule: "<RULE_ID>", message: "<what to do instead>" }` with `isError` set; `rule` is a rule id from ANTI-SLOP.md or one of these server codes, which are not protocol rules:
+A posting tool (`kickoff`, `post`, `decide`, `assign`, `status`) answers `{ ok: true, id, ts, seq, phase, allowed_types, budgets: { used, limits }, decision_id? }`; `kickoff` adds `goal_id, lead, challenger, kickoff_id`. `read` answers `{ goal, goal_text, acs, phase, role, allowed_types, budgets: { used, limits }, lead, challenger, messages, cursor }`, with no `ok`. Every store or server rejection answers `{ ok: false, rule: "<RULE_ID>", message: "<what to do instead>" }` with `isError` set; `rule` is a rule id from ANTI-SLOP.md or one of these server codes, which are not protocol rules:
 
 | Code | When | Message |
 |---|---|---|
@@ -403,7 +403,7 @@ A posting tool (`kickoff`, `post`, `decide`, `assign`, `status`) answers `{ ok: 
 |---|---|---|---|
 | kickoff | goal: string (120 words max); acceptance_criteria: string[] (1+, 40 words each); budgets?: object; slug?: `[a-z0-9-]{1,40}`, default derived from the goal text | posting result plus goal_id, lead, challenger, kickoff_id | SINGLE_KICKOFF, SCHEMA, WORD_CAP |
 | post | type: message type; to?: agent id or all (default all); re?: string[]; body?; claim?; evidence?: item[]; reply_to?; decision_id?; kind? | posting result | WRONG_TOOL, any rule |
-| read | since?: id (default: inbox cursor) | read result: messages [{frontmatter..., body}] excluding the caller's own; cursor | NO_GOAL |
+| read | since?: id (default: inbox cursor) | read result: goal_text (the KICKOFF body); acs: { AC<n>: { criterion, status } } for every AC; messages [{frontmatter..., body}] excluding the caller's own; cursor | NO_GOAL |
 | wait_for_reply | timeout_ms?: int (default and hard cap 110000) | read result, or `{ timeout: true }` (also when cancelled or overtaken by a later call); MCP progress notification every 15 s; runs the store tick | NO_GOAL |
 | decide | claim; basis; re?; decision_id?; supersedes?; evidence?; reply_to?; tasks?; ac_add?; body? | posting result (type DECIDE) | ROLE_GATE, DECISION_IMMUTABLE, PHASE_GATE |
 | assign | to; kind; task? (exactly one of task and new_task); new_task?; worktree?; branch?; pr?; re?; reason?; body? | posting result (type ASSIGN); worktree/branch default from config | ROLE_GATE, NO_DOMAIN_ROUTING, BUSY_REVIEWING, NO_SELF_REVIEW |

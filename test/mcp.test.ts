@@ -187,6 +187,19 @@ describe("tools/list", () => {
       expect(tool.description, tool.name).not.toContain("—");
     }
   });
+
+  it("the read description and the PROTOCOL.md section 10 read row name goal_text and acs", async () => {
+    const h = await harness();
+    const { tools } = await h.claude.listTools();
+    const read = tools.find((tool) => tool.name === "read");
+    const row = readFileSync(join(ROOT, "docs", "PROTOCOL.md"), "utf8")
+      .split("\n")
+      .find((line) => line.startsWith("| read |"));
+    for (const field of ["goal_text", "acs"]) {
+      expect(read?.description, field).toContain(field);
+      expect(row, field).toContain(field);
+    }
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -311,6 +324,37 @@ describe("kickoff and read", () => {
     expect(again).toEqual({ ok: false, rule: "SINGLE_KICKOFF", message: `Goal ${GOAL_ID} is already active (phase PLAN). Call read instead of kickoff.` });
     const asCodex = await rejected(h.codex, "kickoff", KICKOFF_ARGS);
     expect(asCodex.rule).toBe("SINGLE_KICKOFF");
+  });
+
+  it("read and wait_for_reply carry the goal text and every AC with its criterion and live status, ac_add included", async () => {
+    const h = await harness();
+    await h.kickoff();
+    const read = await accepted<ReadResult>(h.codex, "read");
+    expect(read.goal_text).toBe(GOAL);
+    expect(read.acs).toEqual(Object.fromEntries(ACS.map((criterion, index) => [`AC${index + 1}`, { criterion, status: "open" }])));
+
+    await accepted<PostOk>(h.claude, "post", PROPOSE);
+    await accepted<PostOk>(h.claude, "decide", {
+      claim: "A token-bucket middleware keyed by API key satisfies AC1 and AC2.",
+      re: ["AC1", "AC2", "AC3"],
+      basis: "authority",
+      decision_id: "plan",
+      tasks: ["Token-bucket middleware", "Env-driven limit", "Tests"],
+      ac_add: ["Responses carry X-RateLimit-Remaining."],
+      body: "No challenge arrived and there is nothing to test before code exists.",
+    });
+    await accepted<ReadResult>(h.codex, "read");
+    const waiting = call<ReadResult>(h.codex, "wait_for_reply", { timeout_ms: 5_000 });
+    await realSleep(50);
+    await accepted<PostOk>(h.claude, "status", { re: ["AC1"], evidence: [{ kind: "test", test: "npm test -- rate-limit", result: "pass" }] });
+    const { body } = await waiting;
+    expect(body.goal_text).toBe(GOAL);
+    expect(body.acs).toEqual({
+      AC1: { criterion: ACS[0], status: "passing" },
+      AC2: { criterion: ACS[1], status: "open" },
+      AC3: { criterion: ACS[2], status: "open" },
+      AC4: { criterion: "Responses carry X-RateLimit-Remaining.", status: "open" },
+    });
   });
 
   it("read, wait_for_reply, and post before any kickoff return NO_GOAL instead of throwing", async () => {

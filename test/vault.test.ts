@@ -742,6 +742,8 @@ describe("read and waitForReply", () => {
     expect(first).toMatchObject({ goal: "20261025-rate-limit", phase: "PLAN", role: "challenger", lead: "claude", challenger: "codex", cursor: RUN[1].id });
     expect(first?.allowed_types).toEqual(["PROPOSE", "CHALLENGE", "STATUS", "BLOCKED"]);
     expect(first?.budgets.used.messages_total).toBe(1);
+    expect(first?.goal_text).toBe(RUN_KICKOFF.goal_text);
+    expect(first?.acs).toEqual(Object.fromEntries(RUN_KICKOFF.acceptance_criteria.map((criterion, index) => [`AC${index + 1}`, { criterion, status: "open" }])));
     expect(h.codex.read()?.messages).toEqual([]);
     expect(JSON.parse(h.file("inbox/codex.json"))).toMatchObject({ protocol_version: 1, agent: "codex", cursor: RUN[1].id });
     const own = h.claude.read();

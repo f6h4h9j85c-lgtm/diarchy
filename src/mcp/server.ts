@@ -251,7 +251,7 @@ export function createMcpServer(options: McpServerOptions): McpServer {
     {
       title: "Read the chat",
       description:
-        "Return messages from the other agent, the human, and the system since your inbox cursor, plus phase, your role, the types you may post now, budgets, lead, and challenger. Call it first in every turn and after any rejection. Advances the cursor; pass since (a message id) to re-read from a point. Returns NO_GOAL when nothing was kicked off.",
+        "Return the goal text (goal_text), every acceptance criterion with its text and status open, passing, or failing (acs), messages from the other agent, the human, and the system since your inbox cursor, plus phase, your role, the types you may post now, budgets, lead, and challenger. Plan against goal_text and acs. Call it first in every turn and after any rejection. Advances the cursor; pass since (a message id) to re-read from a point. Returns NO_GOAL when nothing was kicked off.",
       inputSchema: { since: z.string().optional().describe("Message id to read after; default: your inbox cursor.") },
     },
     (args) => run(() => store.read(args) ?? serverError("NO_GOAL", NO_GOAL_TEXT)),

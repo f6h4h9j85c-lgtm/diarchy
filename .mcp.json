@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "diarchy": {
+      "command": "node",
+      "args": ["${CLAUDE_PLUGIN_ROOT}/bin/diarchy.js", "mcp", "--agent", "claude"]
+    }
+  }
+}

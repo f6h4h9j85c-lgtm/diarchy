@@ -1,0 +1,16 @@
+{
+  "name": "diarchy",
+  "owner": {
+    "name": "f6h4h9j85c-lgtm"
+  },
+  "metadata": {
+    "description": "Marketplace for the diarchy plugin: two PM agents coordinating through a protocol-enforced MCP server."
+  },
+  "plugins": [
+    {
+      "name": "diarchy",
+      "source": "./",
+      "description": "Two PM agents, Claude Code and Codex CLI, coordinating on one goal through a protocol-enforced MCP server."
+    }
+  ]
+}

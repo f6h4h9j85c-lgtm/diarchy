@@ -31,7 +31,11 @@
     ".codex",
     ".mcp.json",
     "README.md",
-    "LICENSE"
+    "LICENSE",
+    "plugin.json",
+    "mcp.json",
+    "templates",
+    "scripts"
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
@@ -39,7 +43,8 @@
     "lint": "eslint .",
     "test": "vitest run",
     "test:watch": "vitest",
-    "dev": "tsx src/cli/index.ts"
+    "dev": "tsx src/cli/index.ts",
+    "sync-skills": "node scripts/sync-skills.mjs"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.32.2",

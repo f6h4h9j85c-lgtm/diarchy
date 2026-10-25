@@ -637,6 +637,30 @@ describe("kickoff", () => {
     expect(parseKickoffFile(h.file("kickoff.md", result.goal_id)).by).toBe("codex");
     expect(listFiles(h.goalDir(result.goal_id)).filter((name) => name.includes(".tmp-"))).toEqual([]);
   });
+
+  it("rejects with SCHEMA a goal or criterion that would not round-trip through kickoff.md: line breaks, or a goal shaped like an AC line", async () => {
+    const h = harness();
+    const injected = { goal: "Real goal text\n- AC1: injected criterion", acceptance_criteria: ["the only real criterion"], slug: "inj" };
+    expect(await h.human.kickoff(injected)).toMatchObject({ ok: false, rule: "SCHEMA", message: expect.stringMatching(/^Field "goal": must be a single line/) });
+    expect(await h.human.kickoff({ ...INPUT, goal: "Line one.\r\nLine two." })).toMatchObject({ ok: false, rule: "SCHEMA" });
+    expect(await h.human.kickoff({ ...INPUT, goal: "- AC1: a goal shaped like a criterion" })).toMatchObject({
+      ok: false,
+      rule: "SCHEMA",
+      message: expect.stringContaining("must not start with `- AC<n>: `"),
+    });
+    expect(await h.human.kickoff({ ...INPUT, acceptance_criteria: ["First line\nsecond line."] })).toMatchObject({
+      ok: false,
+      rule: "SCHEMA",
+      message: expect.stringMatching(/^Field "acceptance_criteria.0": must be a single line/),
+    });
+    expect(await h.claude.kickoff({ ...INPUT, acceptance_criteria: ["Fine.", "Has a\r\nbreak."] })).toMatchObject({ ok: false, rule: "SCHEMA", message: expect.stringContaining('"acceptance_criteria.1"') });
+    expect(h.human.listGoals()).toEqual([]);
+    expect(existsSync(h.goalDir("20261025-inj"))).toBe(false);
+    // Edge whitespace is trimmed before the check, as it is before writing.
+    const result = await h.human.kickoff({ ...INPUT, goal: `${INPUT.goal}\n`, acceptance_criteria: ["Requests over the limit get 429.\n", " Limit is configurable."] });
+    ok(result);
+    expect(h.human.readKickoff()).toMatchObject({ goal_text: INPUT.goal, acceptance_criteria: INPUT.acceptance_criteria });
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -822,6 +846,36 @@ describe("reply and stop as human", () => {
     await expect(h.claude.reply("No.")).rejects.toThrow(/human/);
     await expect(h.codex.stop("No.")).rejects.toThrow(/human/);
     expect(await h.human.reply("Still not allowed.")).toMatchObject({ ok: false, rule: "PHASE_GATE" });
+  });
+
+  it("stop and reply survive a kickoff.md that will not parse or is missing, so the human can retire a wedged goal", async () => {
+    const h = harness();
+    ok(await h.human.kickoff({ goal: "Real goal text.", acceptance_criteria: ["The only real criterion."], slug: "inj" }));
+    // A hand-edited file: a second AC1 line in the criteria block.
+    const path = join(h.goalDir("20261025-inj"), "kickoff.md");
+    writeFileSync(path, readFileSync(path, "utf8").replace("- AC1:", "- AC1: injected criterion\n- AC1:"));
+    expect(() => parseKickoffFile(h.file("kickoff.md", "20261025-inj"))).toThrowError(/AC1 is out of order/);
+    h.clock.advance(60_000);
+    const propose: MessageDraft = { type: "PROPOSE", to: "all", re: ["AC1"], decision_id: "plan", claim: "One step does it.", body: "Nothing to split." };
+    await expect(h.claude.post(propose)).rejects.toThrowError(/AC1 is out of order/);
+    h.clock.advance(60_000);
+    const stopped = await h.human.stop("Retiring the wedged goal.");
+    ok(stopped);
+    expect(h.human.state()).toMatchObject({ phase: "BLOCKED", blocked_from: "PLAN" });
+    const goal = h.file("goal.md", "20261025-inj");
+    expect(goal).toContain("# 20261025-inj\n\n> [!WARNING]");
+    expect(goal).toContain("\nReal goal text.\n");
+    expect(goal).toContain("| AC1 | The only real criterion. | open |");
+    h.clock.advance(60_000);
+    const replied = await h.human.reply("Carry on with the plan.");
+    ok(replied);
+    expect(h.human.state()).toMatchObject({ phase: "PLAN", blocked_from: null });
+    expect(h.file("chat.md", "20261025-inj")).toContain("# Chat: 20261025-inj");
+    rmSync(path);
+    h.clock.advance(60_000);
+    ok(await h.human.stop("Even without kickoff.md."));
+    expect(h.human.state()).toMatchObject({ phase: "BLOCKED", blocked_from: "PLAN" });
+    expect(h.file("goal.md", "20261025-inj")).toContain("\nReal goal text.\n");
   });
 
   it("budget exhaustion blocks with the budget question and reply --budget resumes", async () => {

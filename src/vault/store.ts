@@ -7,6 +7,7 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, watch, type FSWatcher } from "node:fs";
 import { join, resolve } from "node:path";
 import {
+  AC_LINE_PATTERN,
   AGENT_HUMAN,
   AGENT_SYSTEM,
   BODY_MAX_WORDS,
@@ -63,6 +64,7 @@ export const PROGRESS_MS = 15_000;
 export const DEFAULT_POLL_MS = 500;
 const LOCK_RETRY_MS = 20;
 const AC_MAX_WORDS = 40;
+const LINE_BREAK = /[\r\n]/;
 /** A directory touched this recently is re-scanned even if its mtime looks unchanged (coarse mtime clocks). */
 const RECENT_MS = 2_000;
 
@@ -227,17 +229,27 @@ export class VaultStore {
     });
   }
 
+  /**
+   * Shape checks before anything is written. kickoff.md is line based (goal
+   * text, blank line, `- AC<n>: <criterion>` lines), so a goal or criterion
+   * with a line break, or a goal shaped like an AC line, would not parse back
+   * to what was posted; those are SCHEMA here rather than a wedged goal later.
+   */
   private kickoffProblem(input: KickoffInput, agents: string[]): Rejection | null {
-    const words = wordCount(input.goal);
+    const goal = input.goal.trim();
+    const words = wordCount(goal);
     if (words === 0) return reject("SCHEMA", schemaText("goal", "required"));
     if (words > BODY_MAX_WORDS) {
       return reject("WORD_CAP", `Body is ${words} words; cut to ${BODY_MAX_WORDS} or fewer. Put detail in a file and cite it as \`file\` evidence.`);
     }
+    if (LINE_BREAK.test(goal)) return reject("SCHEMA", schemaText("goal", "must be a single line (one paragraph); kickoff.md keeps the goal text on one line above the criteria"));
+    if (AC_LINE_PATTERN.test(goal)) return reject("SCHEMA", schemaText("goal", "must not start with `- AC<n>: `; kickoff.md reserves that shape for criteria"));
     if (input.acceptance_criteria.length === 0) return reject("SCHEMA", schemaText("acceptance_criteria", "at least one criterion"));
     for (const [index, criterion] of input.acceptance_criteria.entries()) {
       const count = wordCount(criterion);
       if (count === 0) return reject("SCHEMA", schemaText(`acceptance_criteria.${index}`, "required"));
       if (count > AC_MAX_WORDS) return reject("WORD_CAP", `AC${index + 1} is ${count} words; cut to ${AC_MAX_WORDS} or fewer.`);
+      if (LINE_BREAK.test(criterion.trim())) return reject("SCHEMA", schemaText(`acceptance_criteria.${index}`, "must be a single line; split it into two criteria"));
     }
     if (input.lead !== undefined && !agents.includes(input.lead)) {
       return reject("SCHEMA", schemaText("lead", `must be one of ${agents.join(", ")}`));
@@ -260,10 +272,16 @@ export class VaultStore {
 
   /** One transaction (PROTOCOL.md 2.2): lock, tick, evaluate, write, persist, effects, render. */
   async post(draft: MessageDraft): Promise<PostResult> {
+    return this.postWith(draft, (paths) => this.loadKickoff(paths));
+  }
+
+  /** `post` with the kickoff loader chosen by the caller: strict for PMs, recovering for the human. */
+  private async postWith(draft: MessageDraft, loadKickoff: (paths: GoalPaths, state: GoalState) => Kickoff): Promise<PostResult> {
     const goal = this.requireGoal();
     return this.withLock(goal.paths, async () => {
-      const kickoff = this.loadKickoff(goal.paths);
-      const state = await this.tickLocked(goal.paths, kickoff, this.loadState(goal.paths));
+      const loaded = this.loadState(goal.paths);
+      const kickoff = loadKickoff(goal.paths, loaded);
+      const state = await this.tickLocked(goal.paths, kickoff, loaded);
       const outcome = await this.accept(goal.paths, state, draft);
       if (!outcome.ok) return outcome;
       const final = await this.applyEffects(goal.paths, outcome.transition);
@@ -479,7 +497,7 @@ export class VaultStore {
       if (state.decisions[options.decision]?.status === "open") draft.decision_id = options.decision;
       else draft.supersedes = options.decision;
     }
-    return this.post(draft);
+    return this.postWith(draft, (paths, current) => this.kickoffForHuman(paths, current));
   }
 
   /** Leave the goal BLOCKED with a human BLOCKED (external) message saying why. */
@@ -488,8 +506,8 @@ export class VaultStore {
     const goal = this.requireGoal();
     if (wordCount(reason) === 0) return reject("SCHEMA", schemaText("body", "required"));
     return this.withLock(goal.paths, async () => {
-      const kickoff = this.loadKickoff(goal.paths);
       const state = this.loadState(goal.paths);
+      const kickoff = this.kickoffForHuman(goal.paths, state);
       if (state.phase === "DONE") return reject("PHASE_GATE", "BLOCKED is not allowed in phase DONE. Allowed now: none.");
       const assigned = assignId(state, AGENT_HUMAN, "BLOCKED", this.now());
       const shape = checkMessageShape({
@@ -525,6 +543,35 @@ export class VaultStore {
 
   private requireHuman(action: string): void {
     if (this.agent !== AGENT_HUMAN) throw new Error(`${action} is for the human; this store posts as "${this.agent}"`);
+  }
+
+  /**
+   * stop and reply must work even when kickoff.md is missing or will not parse
+   * (a hand edit, or a file written before the kickoff shape checks), so the
+   * human can always retire a wedged goal. The renderers only need what
+   * budget.json and the KICKOFF message already hold.
+   */
+  private kickoffForHuman(paths: GoalPaths, state: GoalState): Kickoff {
+    try {
+      return this.loadKickoff(paths);
+    } catch {
+      const first = this.readMessages(paths).find((message) => message.type === "KICKOFF");
+      const acIds = first?.re ?? Object.keys(state.acs);
+      return {
+        protocol_version: 1,
+        goal: state.goal,
+        lead: state.lead,
+        challenger: state.challenger,
+        agents: [...state.agents],
+        budgets: {},
+        project: this.projectDir,
+        vault: paths.vault,
+        created: state.created,
+        by: first?.from ?? AGENT_HUMAN,
+        goal_text: (first?.body ?? "").trim(),
+        acceptance_criteria: acIds.map((id) => state.acs[id]?.criterion ?? ""),
+      };
+    }
   }
 
   // -------------------------------------------------------------------------

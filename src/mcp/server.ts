@@ -20,6 +20,7 @@ import {
   DECISION_BASES,
   MESSAGE_TYPES,
   STATUS_TASK_STATUSES,
+  SchemaError,
   evidenceItemSchema,
   partialBudgetsSchema,
   type AgentId,
@@ -83,13 +84,18 @@ function logError(error: unknown): void {
   console.error(`diarchy-mcp: ${error instanceof Error ? (error.stack ?? error.message) : String(error)}`);
 }
 
-/** Run a tool body; NoGoalError becomes NO_GOAL, anything else INTERNAL. The server never crashes on a bad input. */
+/**
+ * Run a tool body; NoGoalError becomes NO_GOAL, a SchemaError (a vault file
+ * that will not parse) keeps its own rule so the agent reads SCHEMA and the
+ * field, anything else INTERNAL. The server never crashes on a bad input.
+ */
 async function run(body: () => Promise<object> | object): Promise<CallToolResult> {
   try {
     return toolResult(await body());
   } catch (error) {
     if (error instanceof NoGoalError) return toolResult(serverError("NO_GOAL", NO_GOAL_TEXT));
     logError(error);
+    if (error instanceof SchemaError) return toolResult({ ok: false, rule: error.rule, message: error.message } satisfies Rejection);
     return toolResult(serverError("INTERNAL", error instanceof Error ? error.message : String(error)));
   }
 }
@@ -125,10 +131,10 @@ export function createMcpServer(options: McpServerOptions): McpServer {
     {
       title: "Kick off a goal",
       description:
-        "Start the one goal this vault will run; you become lead and the other agent challenger. Use only when read returns NO_GOAL and a human gave you a goal. Goal text 120 words max, each criterion 40 words max; criteria become AC1.. and are never reworded. Rejected with SINGLE_KICKOFF while a goal is PLAN, EXECUTE, or BLOCKED. Then post a PROPOSE with decision_id plan.",
+        "Start the one goal this vault will run; you become lead and the other agent challenger. Use only when read returns NO_GOAL and a human gave you a goal. Goal text 120 words max on one line, each criterion 40 words max on one line; criteria become AC1.. and are never reworded. Rejected with SINGLE_KICKOFF while a goal is PLAN, EXECUTE, or BLOCKED. Then post a PROPOSE with decision_id plan.",
       inputSchema: {
-        goal: z.string().describe("Goal text; becomes the KICKOFF body."),
-        acceptance_criteria: z.array(z.string()).describe("Testable criteria, one line each, in order."),
+        goal: z.string().describe("Goal text as one paragraph without line breaks; becomes the KICKOFF body. Must not start with `- AC<n>: ` (SCHEMA)."),
+        acceptance_criteria: z.array(z.string()).describe("Testable criteria, one single line each (no line breaks: SCHEMA), in order."),
         budgets: partialBudgetsSchema.optional().describe("Per-goal overrides of the diarchy.config.json budgets."),
         slug: z.string().optional().describe("[a-z0-9-]{1,40} for the goal id; default derived from the goal text."),
       },

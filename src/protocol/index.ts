@@ -3,6 +3,7 @@ export * from "./types.js";
 export * from "./text.js";
 export {
   AC_ID_PATTERN,
+  AC_LINE_PATTERN,
   DECISION_ID_PATTERN,
   FRONTMATTER_KEY_ORDER,
   GOAL_ID_PATTERN,

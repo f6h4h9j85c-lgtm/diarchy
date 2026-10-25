@@ -456,9 +456,15 @@ export const kickoffFrontmatterSchema = z.strictObject({
   by: agentId,
 });
 
-const AC_LINE_PATTERN = /^- AC([1-9][0-9]*): (.+)$/;
+/** A `- AC<n>: <criterion>` line of kickoff.md; the store refuses a goal text shaped like one. */
+export const AC_LINE_PATTERN = /^- AC([1-9][0-9]*): (.+)$/;
 
-/** Parse kickoff.md: frontmatter, goal text, and the `- AC<n>: <criterion>` lines. */
+/**
+ * Parse kickoff.md: frontmatter, goal text, and the `- AC<n>: <criterion>` lines.
+ * The criteria are the unbroken run of AC lines that ends the body; everything
+ * above it is goal text, so an AC-shaped line inside the goal (a hand-edited
+ * file) stays goal text instead of shifting the numbering.
+ */
 export function parseKickoffFile(text: string): Kickoff {
   const { frontmatter, body } = splitFrontmatter(text);
   const parsed = kickoffFrontmatterSchema.safeParse(frontmatter);
@@ -466,23 +472,25 @@ export function parseKickoffFile(text: string): Kickoff {
     const { field, problem } = describeIssue(parsed.error.issues[0], frontmatter);
     throw new SchemaError("SCHEMA", schemaMessage(field, problem), field);
   }
-  const goalLines: string[] = [];
-  const acceptance_criteria: string[] = [];
-  for (const line of body.split(/\r?\n/)) {
-    const match = AC_LINE_PATTERN.exec(line);
-    if (match) {
-      if (Number(match[1]) !== acceptance_criteria.length + 1) {
-        throw new SchemaError("SCHEMA", schemaMessage("body", `AC${match[1]} is out of order`), "body");
-      }
-      acceptance_criteria.push(match[2].trim());
-    } else if (acceptance_criteria.length === 0) {
-      goalLines.push(line);
-    }
+  const lines = body.split(/\r?\n/);
+  while (lines.length > 0 && lines[lines.length - 1].trim() === "") lines.pop();
+  const acLines: RegExpExecArray[] = [];
+  for (let index = lines.length - 1; index >= 0; index -= 1) {
+    const match = AC_LINE_PATTERN.exec(lines[index]);
+    if (match === null) break;
+    acLines.unshift(match);
   }
-  if (acceptance_criteria.length === 0) {
+  if (acLines.length === 0) {
     throw new SchemaError("SCHEMA", schemaMessage("body", "needs at least one `- AC<n>: <criterion>` line"), "body");
   }
-  return { ...parsed.data, goal_text: goalLines.join("\n").trim(), acceptance_criteria };
+  const acceptance_criteria = acLines.map((match, index) => {
+    if (Number(match[1]) !== index + 1) {
+      throw new SchemaError("SCHEMA", schemaMessage("body", `AC${match[1]} is out of order`), "body");
+    }
+    return match[2].trim();
+  });
+  const goal_text = lines.slice(0, lines.length - acLines.length).join("\n").trim();
+  return { ...parsed.data, goal_text, acceptance_criteria };
 }
 
 // ---------------------------------------------------------------------------

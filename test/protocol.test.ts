@@ -6,6 +6,7 @@ import { describe, expect, it } from "vitest";
 import { parse as parseYaml } from "yaml";
 
 import {
+  AC_LINE_PATTERN,
   RULE_IDS,
   RULES_IN_ORDER,
   SchemaError,
@@ -316,6 +317,21 @@ describe("PROTOCOL.md examples", () => {
     const blocked = accept(example("20261025T143500Z-0002-codex-BLOCKED"), state);
     expect(blocked).toEqual(loadBase("blocked"));
     expect(accept(example("20261025T143501Z-0001-system-ASK_HUMAN"), blocked).phase).toBe("BLOCKED");
+  });
+
+  it("parseKickoffFile takes the trailing run of AC lines as the criteria and keeps an AC-shaped goal line as goal text", () => {
+    const goal = "Add per-API-key rate limiting to the public API.";
+    const criteria = ["Requests over the per-key limit get HTTP 429", "Limit is configurable via RATE_LIMIT_PER_MIN", "Full test suite stays green"];
+    const injected = parseKickoffFile(KICKOFF_MD.replace(`${goal}\n`, `${goal}\n- AC1: injected criterion\n`));
+    expect(injected.goal_text).toBe(`${goal}\n- AC1: injected criterion`);
+    expect(injected.acceptance_criteria).toEqual(criteria);
+    expect(parseKickoffFile(KICKOFF_MD.replace("\n\n- AC1", "\n- AC1"))).toMatchObject({ goal_text: goal, acceptance_criteria: criteria });
+    expect(parseKickoffFile(`${KICKOFF_MD}\n\n`).acceptance_criteria).toEqual(criteria);
+    expect(() => parseKickoffFile(KICKOFF_MD.replace("- AC2:", "- AC3:"))).toThrowError(/^Field "body": AC3 is out of order/);
+    expect(() => parseKickoffFile(KICKOFF_MD.replace("- AC1:", "- AC1: again\n- AC1:"))).toThrowError(/^Field "body": AC1 is out of order/);
+    expect(() => parseKickoffFile(KICKOFF_MD.replace(/- AC\d: .*\n/g, ""))).toThrowError(/^Field "body": needs at least one/);
+    expect(AC_LINE_PATTERN.test("- AC1: x")).toBe(true);
+    expect(AC_LINE_PATTERN.test("- AC0: x")).toBe(false);
   });
 
   it("parseMessageFile throws SchemaError with TYPED_ONLY for unknown types and SCHEMA otherwise", () => {

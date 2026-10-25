@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -19,6 +19,7 @@ import {
   PROGRESS_MS,
   VaultStore,
   loadConfig,
+  resolveVaultPaths,
   type KickoffOk,
   type PostOk,
   type ReadResult,
@@ -211,6 +212,27 @@ describe("kickoff and read", () => {
     expect(await rejected(h.codex, "read")).toEqual(NO_GOAL);
     expect(await rejected(h.codex, "wait_for_reply", { timeout_ms: 100 })).toEqual(NO_GOAL);
     expect(await rejected(h.claude, "post", PROPOSE)).toEqual(NO_GOAL);
+  });
+
+  it("a kickoff that would not round-trip through kickoff.md is SCHEMA, and a vault file that will not parse surfaces as SCHEMA, not INTERNAL", async () => {
+    const h = await harness();
+    const multiLine = await rejected(h.claude, "kickoff", { ...KICKOFF_ARGS, goal: "Real goal text\n- AC1: injected criterion" });
+    expect(multiLine).toMatchObject({ rule: "SCHEMA", message: expect.stringMatching(/^Field "goal": must be a single line/) });
+    const multiLineAc = await rejected(h.claude, "kickoff", { ...KICKOFF_ARGS, acceptance_criteria: ["First line\nsecond line."] });
+    expect(multiLineAc).toMatchObject({ rule: "SCHEMA", message: expect.stringContaining('Field "acceptance_criteria.0": must be a single line') });
+    expect(await rejected(h.codex, "read")).toEqual(NO_GOAL);
+    const kick = await h.kickoff();
+    const path = resolveVaultPaths(h.projectDir, loadConfig(h.projectDir), kick.goal_id).kickoff;
+    writeFileSync(path, readFileSync(path, "utf8").replace("- AC1:", "- AC1: injected criterion\n- AC1:"));
+    const log = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      const result = await rejected(h.claude, "post", PROPOSE);
+      expect(result).toEqual({ ok: false, rule: "SCHEMA", message: 'Field "body": AC1 is out of order. Fix it per PROTOCOL.md section 3 and post again.' });
+      expect(log).toHaveBeenCalledOnce();
+      expect(log.mock.calls[0][0]).toContain("diarchy-mcp: SchemaError: Field \"body\": AC1 is out of order");
+    } finally {
+      log.mockRestore();
+    }
   });
 
   it("an unexpected exception becomes INTERNAL and is logged to stderr", async () => {

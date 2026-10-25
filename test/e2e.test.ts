@@ -136,7 +136,7 @@ describe("diarchy init", () => {
     expect(existsSync(join(dir, "api brain", "diarchy"))).toBe(true);
     expect(config.agents).toMatchObject({
       claude: { command: "claude", args: ["-p", "--permission-mode", "acceptEdits"] },
-      codex: { command: "codex", args: ["exec", "--sandbox", "workspace-write"] },
+      codex: { command: "codex", args: ["exec", "--sandbox", "workspace-write", "--dangerously-bypass-hook-trust"] },
     });
     expect(config.budgets).toMatchObject({ plan_messages: 12, messages_total: 80, wall_clock_minutes: 240, spend_usd: null });
     expect(readFileSync(join(dir, ".gitignore"), "utf8")).toContain(".diarchy/\n");

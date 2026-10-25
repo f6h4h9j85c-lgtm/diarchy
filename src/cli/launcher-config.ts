@@ -35,9 +35,19 @@ export interface LauncherConfig {
   launcher: LauncherKnobs;
 }
 
+/** Codex flag that runs enabled hooks without persisted /hooks trust for one invocation. */
+export const HOOK_TRUST_BYPASS = "--dangerously-bypass-hook-trust";
+
 export const DEFAULT_AGENT_LAUNCH: Record<string, AgentLaunch> = {
   claude: { command: "claude", args: ["-p", "--permission-mode", "acceptEdits"] },
-  codex: { command: "codex", args: ["exec", "--sandbox", "workspace-write"] },
+  // --dangerously-bypass-hook-trust: Codex runs a non-managed hook only once its
+  // definition is trusted in /hooks, and `codex exec` never shows that prompt, so
+  // without the flag the SessionStart brief and the Stop gate are skipped
+  // silently. The flag runs every enabled hook unreviewed for that invocation;
+  // the launcher is automation for a project whose hook sources the operator has
+  // read. Set agents.codex.args in diarchy.config.json without it to require
+  // persisted trust instead.
+  codex: { command: "codex", args: ["exec", "--sandbox", "workspace-write", HOOK_TRUST_BYPASS] },
 };
 
 export const DEFAULT_LAUNCHER: LauncherKnobs = {

@@ -32,7 +32,7 @@
     ".mcp.json",
     "README.md",
     "LICENSE",
-    "plugin.json",
+    ".codex-plugin",
     "mcp.json",
     "templates",
     "scripts"

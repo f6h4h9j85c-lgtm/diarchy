@@ -239,15 +239,27 @@ describe("codex-config: JSON manifests", () => {
     expect(typeof (m.author as { name?: string }).name).toBe("string");
   });
 
-  it("root plugin.json (Codex) has name, version, description, skills, mcp", () => {
-    const m = readJson(at("plugin.json"));
+  it(".codex-plugin/plugin.json (Codex) has name, version, description, skills, mcpServers", () => {
+    const m = readJson(at(".codex-plugin", "plugin.json"));
     expect(m.name).toBe("diarchy");
     expect(m.version).toBe(pkg.version);
     expect(typeof m.description).toBe("string");
+    // Codex's manifest key is mcpServers (not mcp), and every path must start with ./
     expect(m.skills).toBe("./.agents/skills");
-    expect(m.mcp).toBe("./mcp.json");
+    expect(m.mcpServers).toBe("./mcp.json");
     expect(existsSync(at(m.skills as string))).toBe(true);
-    expect(existsSync(at(m.mcp as string))).toBe(true);
+    expect(existsSync(at(m.mcpServers as string))).toBe(true);
+  });
+
+  it("ships no root plugin.json: Codex ignores one without the agent-plugins $schema and Claude never reads it", () => {
+    expect(existsSync(at("plugin.json"))).toBe(false);
+  });
+
+  it("package.json files ships both plugin manifests, both MCP files, the hooks and the Codex copies", () => {
+    const files = (readJson(at("package.json")) as { files: string[] }).files;
+    for (const entry of [".claude-plugin", ".codex-plugin", ".mcp.json", "mcp.json", ".agents", ".codex", "hooks", "bin"]) {
+      expect(files, entry).toContain(entry);
+    }
   });
 
   for (const path of [".claude-plugin/marketplace.json", ".agents/plugins/marketplace.json"]) {
@@ -270,14 +282,23 @@ describe("codex-config: JSON manifests", () => {
     expect(s.args.slice(1)).toEqual(["mcp", "--agent", "claude"]);
   });
 
-  it("mcp.json (Codex) starts the stdio server as agent codex with tool_timeout_sec >= 600", () => {
+  it("mcp.json (Codex) starts the stdio server as agent codex from the plugin root with tool_timeout_sec >= 600", () => {
     const m = readJson(at("mcp.json")) as {
-      mcpServers: Record<string, { command: string; args: string[]; tool_timeout_sec: number; startup_timeout_sec: number }>;
+      mcpServers: Record<
+        string,
+        { command: string; args: string[]; cwd: string; env_vars: string[]; tool_timeout_sec: number; startup_timeout_sec: number }
+      >;
     };
     const s = m.mcpServers.diarchy;
     expect(s.command).toBe("node");
-    expect(s.args[0]).toMatch(/bin\/diarchy\.js$/);
+    // Codex rewrites a relative cwd to the plugin root but never rewrites args,
+    // so the script path stays relative and resolves through cwd.
+    expect(s.cwd).toBe(".");
+    expect(s.args[0]).toBe("bin/diarchy.js");
+    expect(existsSync(at(s.args[0]))).toBe(true);
     expect(s.args.slice(1)).toEqual(["mcp", "--agent", "codex"]);
+    // With cwd at the plugin root the server finds the project only through DIARCHY_PROJECT.
+    expect(s.env_vars).toContain("DIARCHY_PROJECT");
     expect(s.tool_timeout_sec).toBeGreaterThanOrEqual(600);
     expect(s.startup_timeout_sec).toBeGreaterThan(0);
   });
@@ -360,6 +381,8 @@ describe("codex-config: prose", () => {
       ...walk(at("skills")).map((f) => at("skills", f)),
       ...walk(at("agents")).map((f) => at("agents", f)),
       ...walk(at(".codex")).map((f) => at(".codex", f)),
+      at(".codex-plugin", "plugin.json"),
+      at("mcp.json"),
       at("templates", "AGENTS.md"),
       at("docs", "INSTALL-CLAUDE.md"),
       at("docs", "INSTALL-CODEX.md"),

@@ -79,7 +79,7 @@ startup_timeout_sec = 20
 tool_timeout_sec = 1800
 ```
 
-Skills load from `.agents/skills/`. Trust the project (start `codex` in it once and accept the prompt, or add `[projects."/abs/path/to/project"]` with `trust_level = "trusted"`) so `.codex/hooks.json` and `.codex/agents/*.toml` run, and copy `templates/AGENTS.md` to the project root. Verify: `/mcp` lists `diarchy`, and the `read` tool answers `NO_GOAL`. Details: `docs/INSTALL-CODEX.md`.
+Skills load from `.agents/skills/`. Trust the project (start `codex` in it once and accept the prompt, or add `[projects."/abs/path/to/project"]` with `trust_level = "trusted"`) so `.codex/hooks.json` and `.codex/agents/*.toml` load, then run `/hooks` in that session and approve the two diarchy hooks: Codex records trust per hook hash, so approve them again after editing them. Headless `codex exec` skips untrusted hooks silently; the launcher passes `--dangerously-bypass-hook-trust` by default. Copy `templates/AGENTS.md` to the project root. Verify: `/mcp` lists `diarchy`, `/hooks` shows both hooks trusted, and the `read` tool answers `NO_GOAL`. Details: `docs/INSTALL-CODEX.md`.
 
 ## Quickstart
 
@@ -99,6 +99,7 @@ Dev mode: open `claude` and `codex` interactively in the same project and state 
 
 ```
 .claude-plugin/  Claude Code plugin and marketplace manifests
+.codex-plugin/   Codex plugin manifest (points at .agents/skills and mcp.json)
 .agents/         Codex marketplace manifest and skill copies
 .codex/          Codex hooks.json and subagent .toml files
 agents/          Claude Code subagents

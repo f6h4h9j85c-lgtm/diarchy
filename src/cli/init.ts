@@ -66,7 +66,7 @@ function nextSteps(projectDir: string, vaultPath: string, ignored: boolean | nul
     "  1. Claude Code:  claude plugin install diarchy --marketplace f6h4h9j85c-lgtm/diarchy",
     "                   (inside Claude Code: /plugin marketplace add f6h4h9j85c-lgtm/diarchy, then /plugin install diarchy@diarchy)",
     "  2. Codex CLI:    codex plugin marketplace add f6h4h9j85c-lgtm/diarchy",
-    "                   then add [mcp_servers.diarchy] to ~/.codex/config.toml and trust the project (docs/INSTALL-CODEX.md)",
+    "                   then add [mcp_servers.diarchy] to ~/.codex/config.toml, trust the project, and approve the diarchy hooks in /hooks (docs/INSTALL-CODEX.md)",
     "  3. Copy templates/AGENTS.md to this project root as AGENTS.md so the Codex PM reads it at session start.",
     '  4. Run a goal:   diarchy start "<goal>" --ac "<criterion>" [--ac ...]',
     '     No model calls, protocol only:  diarchy start "<goal>" --ac "<criterion>" --driver fake',

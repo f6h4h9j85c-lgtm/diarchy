@@ -2,8 +2,10 @@
  * How `diarchy start` spawns one PM per agent.
  *
  * Real driver: `claude -p --permission-mode acceptEdits "<prompt>"` and
- * `codex exec --sandbox workspace-write "<prompt>"` (command and base flags
- * from diarchy.config.json `agents.<id>`), cwd the agent's worktree, env
+ * `codex exec --sandbox workspace-write --dangerously-bypass-hook-trust "<prompt>"`
+ * (command and base flags from diarchy.config.json `agents.<id>`; the codex
+ * flag runs the diarchy hooks, which a headless run cannot trust in /hooks),
+ * cwd the agent's worktree, env
  * DIARCHY_AGENT and DIARCHY_PROJECT so the MCP server and hooks find the vault.
  *
  * Session resume is best effort and keyed by goal in `.diarchy/sessions/<agent>.json`:

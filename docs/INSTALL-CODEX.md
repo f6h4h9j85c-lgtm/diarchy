@@ -2,8 +2,8 @@
 
 Codex loads four things from this repository: the skills in `.agents/skills/`
 (byte-for-byte copies of `skills/`, refreshed with `npm run sync-skills`), the
-`diarchy` MCP server, the hooks in `.codex/hooks.json`, and the custom subagents
-in `.codex/agents/*.toml`.
+`diarchy` MCP server, the hooks in `hooks/codex-hooks.json`, and the custom
+subagents in `.codex/agents/*.toml`.
 
 Requirements: Node 20 or later on `PATH`, Codex CLI with plugin and hook support
 (October 2026 or later), and `npm ci && npm run build` run in the diarchy
@@ -52,8 +52,7 @@ paths, and `--agent codex` is what makes this server post as `codex`.
 
 ## 3. Trust the project
 
-Project-level hooks (`.codex/hooks.json`) and subagents (`.codex/agents/`) run
-only in a trusted project. Start `codex` once in the project root and accept the
+Project-level subagents (`.codex/agents/`) load only in a trusted project. Start `codex` once in the project root and accept the
 trust prompt, or add to `~/.codex/config.toml`:
 
 ```toml
@@ -70,18 +69,18 @@ trust_level = "trusted"
   content to an existing one). Codex reads `AGENTS.md` at session start; the
   template tells the PM to call `read` and load `diarchy-pm`, without
   duplicating the skill.
-- Hook path resolution: `.codex/hooks.json` runs
-  `bash "${DIARCHY_ROOT:-.}/hooks/stop-gate.sh" codex`. Codex executes hook
-  commands through a shell from the project root and offers no plugin-root
-  variable (Claude Code's `${CLAUDE_PLUGIN_ROOT}` has no Codex equivalent), and
-  `$(dirname "$0")` inside such a command resolves to the shell, not to
-  `hooks.json`. So the default `.` works when diarchy is the project itself or
-  is checked out at the project root; otherwise export `DIARCHY_ROOT` to the
-  absolute diarchy directory, or edit the two commands in `.codex/hooks.json`
-  to absolute paths. The wrapper scripts then locate `bin/diarchy.js` relative
-  to their own file, or honour `DIARCHY_BIN`. They always exit 0 and print
-  nothing when diarchy is missing, so a wrong path degrades to no hooks, never
-  to a broken session.
+- Hooks come with the plugin; nothing is copied for them. The manifest's
+  `hooks` entry names `hooks/codex-hooks.json`, whose two commands run
+  `bash "${PLUGIN_ROOT}/hooks/session-start.sh" codex` and
+  `bash "${PLUGIN_ROOT}/hooks/stop-gate.sh" codex`. Codex runs hook commands in
+  the session's working directory and sets `PLUGIN_ROOT` (and
+  `CLAUDE_PLUGIN_ROOT`) to the installed plugin for plugin hooks, so the
+  scripts resolve the same from any directory. Without that entry Codex would
+  load the plugin's `hooks/hooks.json`, the Claude Code file, and run both
+  hooks as `claude`. Codex runs a plugin hook only once you approve it: run
+  `/hooks` in Codex and trust both diarchy hooks. The wrapper scripts locate
+  `bin/diarchy.js` relative to their own file, or honour `DIARCHY_BIN`, and
+  exit 0 printing nothing when `node` or the binary is missing.
 
 ## 5. Headless runs
 

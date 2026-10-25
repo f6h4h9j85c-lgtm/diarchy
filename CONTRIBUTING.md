@@ -7,7 +7,7 @@ npm ci
 npm run lint && npm run typecheck && npm test
 ```
 
-CI runs these plus `npm run build` on Node 20 and 22. `npm test -- protocol` (or `vault`, `mcp`, `codex-config`) runs one suite. After editing anything under `skills/`, run `npm run sync-skills` so `.agents/skills/` matches; `test/codex-config.test.ts` fails otherwise. A change to `agents/*.md` needs the same change in `.codex/agents/*.toml`.
+CI runs these plus `npm run build` on Node 20 and 22. `npm test -- protocol` (or `vault`, `mcp`, `codex-config`) runs one suite. After editing anything under `skills/`, run `npm run sync-skills` so `.agents/skills/` matches; `test/codex-config.test.ts` fails otherwise. A change to `agents/*.md` needs the same change in `.codex/agents/*.toml`, and a change to `hooks/hooks.json` the same in `hooks/codex-hooks.json`.
 
 ## Adding a protocol rule
 

@@ -79,13 +79,14 @@ trust_level = "trusted"
 
 Project trust only lets Codex discover the hooks. Before a non-managed hook
 runs, Codex requires you to review and trust its exact definition: start
-`codex` in the project, run `/hooks`, and approve the two diarchy hooks
-(SessionStart and Stop). Codex records trust against each hook's current hash
-in your user configuration, so approve them again after editing the commands in
-`.codex/hooks.json` or after a diarchy update changes them. Enabling the plugin
-does not trust its hooks, and project-layer config cannot grant hook trust.
-Until both hooks are trusted, the session starts without the inbox brief and
-the Stop gate never runs.
+`codex` in the project, run `/hooks`, and approve the three diarchy hooks
+(SessionStart, PreToolUse, and Stop). Codex records trust against each hook's
+current hash in your user configuration, so approve them again after editing
+the commands in `.codex/hooks.json` or after a diarchy update changes them.
+Enabling the plugin does not trust its hooks, and project-layer config cannot
+grant hook trust. Until all three are trusted, the session starts without the
+inbox brief, the Stop gate never runs, and nothing denies the PM a shell call to
+the human's `diarchy reply` or `diarchy stop`.
 
 ## 4. Project files
 
@@ -171,7 +172,7 @@ diarchy launcher passes it by default: `diarchy init` writes it into
 answer the review prompt and a Codex PM without the Stop gate ends its turn
 while it still owes the other PM a reply. The tradeoff: the flag runs every
 enabled hook, project and plugin, without review, so use it only in a project
-whose hook sources you have read; the diarchy hooks are the two scripts in
+whose hook sources you have read; the diarchy hooks are the three scripts in
 `hooks/`. Remove the flag from `agents.codex.args` to require persisted trust
 instead.
 
@@ -181,8 +182,8 @@ instead.
    `kickoff`, `post`, `read`, `wait_for_reply`, `decide`, `assign`, `status`.
 2. Inside Codex run `/skills` (or ask "which skills do you have"); the three
    `diarchy-*` skills must appear.
-3. Inside Codex run `/hooks`; both diarchy hooks must show as trusted, not as
-   pending review.
+3. Inside Codex run `/hooks`; all three diarchy hooks must show as trusted, not
+   as pending review.
 4. Ask Codex to call the diarchy `read` tool. With no goal in the vault it
    answers `{ ok: false, rule: "NO_GOAL", ... }`; that is the server working.
    Once a goal exists it returns the phase, your role, and unread messages.

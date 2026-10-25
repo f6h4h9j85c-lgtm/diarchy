@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // The `diarchy` command. dist/ is committed (see CONTRIBUTING.md) because a
 // plugin install copies the git tree and runs no build, and the MCP server and
-// both hooks start through this file. When dist/ is missing anyway, run a
+// the three hooks start through this file. When dist/ is missing anyway, run a
 // `diarchy` installed on PATH (npm install -g) with the same arguments, or say
 // what to do; a raw ERR_MODULE_NOT_FOUND stack is not a useful error for either.
 import { spawn } from "node:child_process";

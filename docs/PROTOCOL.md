@@ -293,7 +293,7 @@ PRs 412 and 413 merged to main.
 |---|---|---|---|---|---|
 | KICKOFF | `human` via launcher, or a PM via `kickoff` | body (goal text); `re` = all ACs | none → PLAN | creates goal dir, goal.md, budget.json, inboxes; opens decision `plan` | lead: PROPOSE `plan` |
 | PROPOSE | any PM; `decision_id: plan` lead only | `claim`, `decision_id` | PLAN | opens thread (round 1) | challenger: CHALLENGE, or lead: DECIDE |
-| CHALLENGE | challenger only | `claim`, `decision_id`, `reply_to`, `evidence` with a `test` item | PLAN; EXECUTE and decided threads only with new evidence | round 2; starts deadlock watch | lead: DECIDE (mandatory) |
+| CHALLENGE | challenger only | `claim`, `decision_id` (not superseded), `reply_to`, `evidence` with a `test` item | PLAN; EXECUTE and decided threads only with new evidence; not while another decision's deadlock watch is set | round 2; starts deadlock watch | lead: DECIDE (mandatory) |
 | DECIDE | lead; `human` (`basis: human`) in BLOCKED | `claim`, `basis`, `decision_id` or `supersedes`; `evidence` when `basis: test` | PLAN; EXECUTE only replying to an open CHALLENGE or with `supersedes` plus new evidence; BLOCKED human only | closes thread, appends decisions.md, clears deadlock watch; `plan` → EXECUTE and writes `tasks`/`ac_add`; human DECIDE restores `blocked_from`, applies `budgets` | none |
 | ASSIGN | lead | `to` = agent id; `task` or `new_task`; `kind`; `worktree` + `branch` (implement) or `pr` (review) | EXECUTE | task assignee, branch, status `assigned`; review assignee busy until review evidence for that PR lands | assignee: STATUS |
 | STATUS | any PM | `evidence` non-empty | PLAN, EXECUTE | resets `talk_since_work`; updates PR registry, task status, and (in EXECUTE) AC status | none |
@@ -315,23 +315,23 @@ Roles are per goal and swap on the next goal unless the human says otherwise. No
 | From | Event | To |
 |---|---|---|
 | (none) | KICKOFF accepted | PLAN |
-| PLAN | lead DECIDE `decision_id: plan` accepted (rejected while another thread is open) | EXECUTE |
+| PLAN | lead DECIDE `decision_id: plan` accepted (rejected while another thread is open, and before PROPOSE `plan` unless PLAN_BUDGET is spent) | EXECUTE |
 | EXECUTE | DONE accepted | DONE (terminal) |
 | PLAN, EXECUTE | BLOCKED `kind: external`; deadlock; `messages_total` reached; `wall_clock_minutes` reached | BLOCKED (`blocked_from` recorded; system ASK_HUMAN) |
 | BLOCKED | human DECIDE accepted | `blocked_from` |
 
-Allowed PM types per phase. PLAN: PROPOSE, CHALLENGE, DECIDE, STATUS, BLOCKED. EXECUTE: STATUS, ASSIGN, BLOCKED, DONE; CHALLENGE with new evidence; DECIDE replying to an open CHALLENGE or carrying `supersedes` with new evidence. BLOCKED and DONE: none (`read` and `wait_for_reply` keep working).
+Allowed PM types per phase. PLAN: PROPOSE, CHALLENGE, DECIDE, STATUS, BLOCKED. EXECUTE: STATUS, ASSIGN, BLOCKED, DONE; CHALLENGE with new evidence; DECIDE replying to an open CHALLENGE or carrying `supersedes` with new evidence. BLOCKED and DONE: none (`read` and `wait_for_reply` keep working). In PLAN and EXECUTE, while `deadlock_watch` is set, a CHALLENGE on any other decision is rejected (PHASE_GATE): the watch tracks one CHALLENGE, so the lead DECIDEs that one first.
 
 Deadlock: when a CHALLENGE is accepted, `deadlock_watch` is set with `remaining: 2`, `deadline: ts + 10 min`. Each accepted message that is not the lead's DECIDE on that `decision_id` decrements `remaining`. When `remaining` reaches 0 or `deadline` passes (checked on every accepted message and every `wait_for_reply` tick) the store sets BLOCKED and posts a system ASK_HUMAN with `reply_to` the CHALLENGE and its `decision_id`.
 
 ## 7. Disagreement resolution
 
-A thread (`decision_id`) is `open` from PROPOSE until DECIDE, then `decided`, then `superseded` if a later DECIDE names it in `supersedes`. The only legal sequences on an open thread:
+A thread (`decision_id`) is `open` from PROPOSE until DECIDE, then `decided`, then `superseded` if a later DECIDE names it in `supersedes`. A superseded thread is closed for good: a CHALLENGE on it is rejected (SCHEMA) and names the decision that superseded it, which is the one to challenge. The only legal sequences on an open thread:
 
 1. PROPOSE → DECIDE
 2. PROPOSE → CHALLENGE → DECIDE
 
-Anything else on an open thread is rejected (TWO_ROUNDS). One CHALLENGE per `decision_id`, ever (ONE_CHALLENGE). A CHALLENGE MUST carry a `test` item naming the cheapest check that settles it; `result: pending` is allowed only in PLAN on open threads.
+Anything else on an open thread is rejected (TWO_ROUNDS), a DECIDE before any PROPOSE included; only the human's DECIDE, and the lead's once PLAN_BUDGET is spent (section 8), may skip the PROPOSE. One CHALLENGE per `decision_id`, ever (ONE_CHALLENGE). A CHALLENGE MUST carry a `test` item naming the cheapest check that settles it. A `pending` test is not new evidence (3.1), so on its own it satisfies a CHALLENGE only in PLAN on an open thread; anywhere else the CHALLENGE also carries a new evidence item (NEW_EVIDENCE).
 
 The lead's DECIDE does exactly one of: adopt (`basis: adopted-challenge`; claim restates the challenger's position); reject on evidence (`basis: test`; `evidence` includes a `test` item with `result` pass or fail); rule by authority (`basis: authority`; only when the test cannot be run, body says why).
 
@@ -380,7 +380,7 @@ Each PM works only in `<worktrees.root>/<agent>` on `<branch_prefix>/<goal-id>/<
 
 ### 9.2 DONE preconditions (DONE_PRECONDITION)
 
-(a) phase EXECUTE, sender lead; (b) every AC's status in goal.md is `passing`, which only a STATUS accepted in EXECUTE sets (2.3): the DONE's own `test` items do not count; (c) every url in `budget.json.prs` has a `review` with `verdict: approve` from an agent other than its author (waived by `review.required: false`); (d) no thread is open and `deadlock_watch` is null; (e) every task in goal.md has status `done`; (f) at least one PR is registered, and every task other than a review was done by an assignee who introduced a PR with `pr` evidence (waived by `review.required: false`).
+(a) phase EXECUTE, sender lead; (b) every AC's status in goal.md is `passing`, which only a STATUS accepted in EXECUTE sets (2.3): the DONE's own `test` items do not count; (c) every url in `budget.json.prs` has a `review` with `verdict: approve` from an agent other than its author (waived by `review.required: false`); (d) no thread is open, no decision has an unanswered CHALLENGE (a human DECIDE that names no decision clears the watch but answers none), and `deadlock_watch` is null; (e) every task in goal.md has status `done`; (f) at least one PR is registered, and every task other than a review was done by an assignee who introduced a PR with `pr` evidence (waived by `review.required: false`).
 
 The store checks recorded state only, so a DONE cannot certify itself: (b) needs a STATUS per AC, (e) a STATUS per task, and (c) with (f) a PR plus the other agent's review.
 

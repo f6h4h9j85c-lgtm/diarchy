@@ -190,7 +190,7 @@ describe("kickoff and read", () => {
     const h = await harness();
     const kick = await h.kickoff();
     expect(kick).toMatchObject({ ok: true, goal_id: GOAL_ID, lead: "claude", challenger: "codex", phase: "PLAN" });
-    expect(kick.allowed_types).toEqual(["PROPOSE", "DECIDE", "STATUS", "BLOCKED"]);
+    expect(kick.allowed_types).toEqual(["PROPOSE", "STATUS", "BLOCKED"]);
     expect(kick.kickoff_id).toBe(kick.id);
 
     const read = await accepted<ReadResult>(h.codex, "read");

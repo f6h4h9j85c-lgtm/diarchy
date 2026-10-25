@@ -1,0 +1,36 @@
+description: "TWO_ROUNDS near miss: once PLAN_BUDGET is spent the lead's DECIDE is its only move, so a DECIDE on a plan that never got a PROPOSE is accepted."
+state:
+  base: plan-fresh
+  used:
+    plan_messages: 12
+    messages_total: 12
+    talk_since_work: 0
+    wall_clock_minutes: 30
+    spend_usd: 0
+message:
+  protocol_version: 1
+  id: 20261025T143000Z-0007-claude-DECIDE
+  goal: 20261025-rate-limit
+  from: claude
+  to: all
+  type: DECIDE
+  re:
+    - AC1
+    - AC2
+    - AC3
+  decision_id: plan
+  basis: authority
+  claim: A Redis-backed token bucket keyed by API key satisfies AC1 and AC2.
+  tasks:
+    - Token-bucket middleware in src/middleware/rateLimit.ts
+  phase: PLAN
+  ts: 2026-10-25T14:30:00Z
+  body: The PLAN budget went to side threads; ruling now so work can start.
+expect:
+  ok: true
+  phase_after: EXECUTE
+  state:
+    decisions:
+      plan:
+        status: decided
+        messages: 0

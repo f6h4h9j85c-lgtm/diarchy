@@ -1,0 +1,96 @@
+description: "DONE_PRECONDITION: a CHALLENGE on D2 deadlocked, the human's plain reply cleared the watch without answering it, and the lead posts DONE while D2's CHALLENGE still has no DECIDE."
+state:
+  base: execute-ready
+prior:
+  - message:
+      protocol_version: 1
+      id: 20261025T162100Z-0007-codex-CHALLENGE
+      goal: 20261025-rate-limit
+      from: codex
+      to: claude
+      type: CHALLENGE
+      re:
+        - AC2
+      reply_to: 20261025T145210Z-0002-human-DECIDE
+      decision_id: D2
+      claim: The staging REDIS_URL the human supplied points at a read-only replica.
+      evidence:
+        - kind: test
+          test: redis-cli -u $REDIS_URL set probe 1 succeeds
+          result: fail
+          log: .diarchy/logs/redis-write.txt
+      phase: EXECUTE
+      ts: 2026-10-25T16:21:00Z
+      body: ""
+  - message:
+      protocol_version: 1
+      id: 20261025T162200Z-0012-claude-STATUS
+      goal: 20261025-rate-limit
+      from: claude
+      to: all
+      type: STATUS
+      re:
+        - AC3
+      evidence:
+        - kind: commit
+          sha: 7d1e2f3
+      phase: EXECUTE
+      ts: 2026-10-25T16:22:00Z
+      body: Docs for the limiter landed on main.
+  - message:
+      protocol_version: 1
+      id: 20261025T162300Z-0008-codex-STATUS
+      goal: 20261025-rate-limit
+      from: codex
+      to: all
+      type: STATUS
+      re:
+        - AC3
+      evidence:
+        - kind: commit
+          sha: 8e2f3a4
+      phase: EXECUTE
+      ts: 2026-10-25T16:23:00Z
+      body: Lint fixes pushed.
+  - message:
+      protocol_version: 1
+      id: 20261025T162500Z-0003-human-DECIDE
+      goal: 20261025-rate-limit
+      from: human
+      to: all
+      type: DECIDE
+      re:
+        - AC2
+      basis: human
+      claim: Carry on and finish the goal.
+      phase: BLOCKED
+      ts: 2026-10-25T16:25:00Z
+      body: ""
+message:
+  protocol_version: 1
+  id: 20261025T163000Z-0013-claude-DONE
+  goal: 20261025-rate-limit
+  from: claude
+  to: all
+  type: DONE
+  re:
+    - AC1
+    - AC2
+    - AC3
+  evidence:
+    - kind: commit
+      sha: 1c0ffee42
+  phase: EXECUTE
+  ts: 2026-10-25T16:30:00Z
+  body: PRs 412 and 413 merged to main.
+expect:
+  ok: false
+  rule: DONE_PRECONDITION
+  message: "Not done: decision D2 has an unanswered CHALLENGE. Finish every task, post STATUS with passing tests for each AC, and get the other agent's approve review on each PR."
+  phase_after: EXECUTE
+  state:
+    deadlock_watch: null
+    decisions:
+      D2:
+        challenge:
+          id: 20261025T162100Z-0007-codex-CHALLENGE

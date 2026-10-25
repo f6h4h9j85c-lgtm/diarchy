@@ -1,0 +1,47 @@
+description: "NEW_EVIDENCE near miss (PROTOCOL.md 7): in EXECUTE a pending test is not new evidence, but it may still name the settling check when an external URL supplies the new evidence."
+state:
+  base: execute
+  decisions:
+    plan:
+      status: decided
+      proposer: claude
+      messages: 1
+      challenges: 0
+      supersedes: null
+      superseded_by: null
+      evidence: []
+      challenge: null
+message:
+  protocol_version: 1
+  id: 20261025T140900Z-0002-codex-CHALLENGE
+  goal: 20261025-rate-limit
+  from: codex
+  to: claude
+  type: CHALLENGE
+  re:
+    - AC1
+  reply_to: 20261025T140730Z-0002-claude-DECIDE
+  decision_id: plan
+  claim: The API now runs one replica, so an in-process bucket meets AC1.
+  evidence:
+    - kind: test
+      test: kubectl -n prod get deploy api -o jsonpath='{.spec.replicas}' prints 1
+      result: pending
+    - kind: external
+      url: https://wiki.example/ops/api-replicas
+      note: ops scaled the API down to one replica
+  phase: EXECUTE
+  ts: 2026-10-25T14:09:00Z
+  body: ""
+expect:
+  ok: true
+  phase_after: EXECUTE
+  state:
+    deadlock_watch:
+      decision_id: plan
+    decisions:
+      plan:
+        challenges: 1
+        challenge:
+          new_evidence:
+            - external:https://wiki.example/ops/api-replicas

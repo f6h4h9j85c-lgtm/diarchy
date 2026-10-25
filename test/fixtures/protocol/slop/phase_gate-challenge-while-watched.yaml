@@ -1,0 +1,44 @@
+description: "PHASE_GATE: a CHALLENGE on another thread while the deadlock watch on plan still waits for the lead's DECIDE; accepting it would replace the watch and leave the plan CHALLENGE unenforced."
+state:
+  base: plan-challenged
+prior:
+  - message:
+      protocol_version: 1
+      id: 20261025T140530Z-0002-claude-PROPOSE
+      goal: 20261025-rate-limit
+      from: claude
+      to: all
+      type: PROPOSE
+      re:
+        - AC2
+      claim: The default limit is 100 requests per minute per key.
+      phase: PLAN
+      ts: 2026-10-25T14:05:30Z
+      body: Matches the current dashboard poll rate.
+message:
+  protocol_version: 1
+  id: 20261025T140600Z-0002-codex-CHALLENGE
+  goal: 20261025-rate-limit
+  from: codex
+  to: claude
+  type: CHALLENGE
+  re:
+    - AC2
+  reply_to: 20261025T140530Z-0002-claude-PROPOSE
+  decision_id: D1
+  claim: A default of 100 per minute throttles the dashboard, which polls twice a second.
+  evidence:
+    - kind: test
+      test: grep -n pollInterval web/dashboard/config.ts shows 500 ms
+      result: pending
+  phase: PLAN
+  ts: 2026-10-25T14:06:00Z
+  body: ""
+expect:
+  ok: false
+  rule: PHASE_GATE
+  message: "CHALLENGE is not allowed in phase PLAN. Allowed now: PROPOSE, STATUS, BLOCKED."
+  state:
+    deadlock_watch:
+      decision_id: plan
+      challenge_id: 20261025T140455Z-0001-codex-CHALLENGE

@@ -39,5 +39,5 @@ export declare function pendingReviewUrl(state: GoalState, agent: AgentId): stri
 export declare function phaseAllows(state: GoalState, type: MessageType): boolean;
 /** May this role post `type` now? DECIDE is the lead's, except in BLOCKED where it is the human's. */
 export declare function roleAllows(state: GoalState, role: Role, type: MessageType): boolean;
-/** Types the agent may post now, after phase, role, and budget gates. */
+/** Types the agent may post now, after phase, role, thread, and budget gates. */
 export declare function allowedTypes(state: GoalState, agent: AgentId): MessageType[];

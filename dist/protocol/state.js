@@ -178,7 +178,11 @@ export function roleAllows(state, role, type) {
     return ROLE_TYPES[role].includes(type);
 }
 const TALK_GATED_EXEMPT = ["STATUS", "BLOCKED", "DONE", "DECIDE"];
-/** Types the agent may post now, after phase, role, and budget gates. */
+/** A PM DECIDE needs a thread with a PROPOSE or a decided one to supersede, unless PLAN_BUDGET is spent (TWO_ROUNDS). */
+function decideHasTarget(state) {
+    return planBudgetSpent(state) || Object.values(state.decisions).some((d) => d.status !== "open" || d.messages > 0);
+}
+/** Types the agent may post now, after phase, role, thread, and budget gates. */
 export function allowedTypes(state, agent) {
     const role = roleOf(state, agent);
     if (state.kickoff_id === null)
@@ -188,6 +192,11 @@ export function allowedTypes(state, agent) {
         return types;
     if (totalBudgetReached(state))
         return [];
+    if (!decideHasTarget(state))
+        types = types.filter((type) => type !== "DECIDE");
+    // PHASE_GATE: the lead owes a DECIDE on the watched thread before the next CHALLENGE.
+    if (state.deadlock_watch !== null)
+        types = types.filter((type) => type !== "CHALLENGE");
     if (state.phase === "PLAN" && planBudgetSpent(state)) {
         types = types.filter((type) => type === "BLOCKED" || (type === "DECIDE" && role === "lead"));
     }

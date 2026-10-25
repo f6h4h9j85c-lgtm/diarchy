@@ -42,10 +42,17 @@ export declare class VaultStore {
     read(options?: {
         since?: string;
     }): ReadResult | null;
+    /** `read` without its side effect: what a read would deliver now, and the cursor that delivery commits. */
+    private peek;
+    private commitCursor;
     /**
-     * Resolve as soon as `read()` has something, or `{ timeout: true }`. Polls the
-     * chat directory every `pollIntervalMs` (fs.watch only wakes the poll early),
-     * runs the engine tick on every poll, and reports progress every 15 s.
+     * Resolve as soon as a `read` would deliver something, or `{ timeout: true }`.
+     * Polls the chat directory every `pollIntervalMs` (fs.watch only wakes the
+     * poll early), runs the engine tick on every poll, and reports progress every
+     * 15 s. The inbox cursor moves only when a result is delivered: once
+     * `options.signal` aborts, the wait returns `{ timeout: true }` at the next
+     * wake without touching the cursor, so the reply reaches the caller's next
+     * read or wait instead of being consumed by a call nobody is reading.
      */
     waitForReply(options?: WaitOptions): Promise<WaitResult>;
     /** Apply a due tick under the lock; returns whether the phase moved. */

@@ -297,14 +297,17 @@ export class VaultStore {
         const goal = this.currentGoal();
         if (goal === null)
             return null;
+        const result = this.peek(goal, options.since);
+        this.commitCursor(goal.paths, result.cursor);
+        return result;
+    }
+    /** `read` without its side effect: what a read would deliver now, and the cursor that delivery commits. */
+    peek(goal, since) {
         const state = this.loadState(goal.paths);
         const all = this.readMessages(goal.paths);
-        const cursor = options.since ?? this.loadCursor(goal.paths);
+        const cursor = since ?? this.loadCursor(goal.paths);
         const messages = all.filter((message) => (cursor === null || message.id > cursor) && message.from !== this.agent);
         const last = all[all.length - 1];
-        const next = last === undefined ? cursor : last.id;
-        if (next !== this.loadCursor(goal.paths))
-            this.saveCursor(goal.paths, next);
         return {
             goal: goal.goalId,
             phase: state.phase,
@@ -314,32 +317,49 @@ export class VaultStore {
             lead: state.lead,
             challenger: state.challenger,
             messages,
-            cursor: next,
+            cursor: last === undefined ? cursor : last.id,
         };
     }
+    commitCursor(paths, cursor) {
+        if (cursor !== this.loadCursor(paths))
+            this.saveCursor(paths, cursor);
+    }
     /**
-     * Resolve as soon as `read()` has something, or `{ timeout: true }`. Polls the
-     * chat directory every `pollIntervalMs` (fs.watch only wakes the poll early),
-     * runs the engine tick on every poll, and reports progress every 15 s.
+     * Resolve as soon as a `read` would deliver something, or `{ timeout: true }`.
+     * Polls the chat directory every `pollIntervalMs` (fs.watch only wakes the
+     * poll early), runs the engine tick on every poll, and reports progress every
+     * 15 s. The inbox cursor moves only when a result is delivered: once
+     * `options.signal` aborts, the wait returns `{ timeout: true }` at the next
+     * wake without touching the cursor, so the reply reaches the caller's next
+     * read or wait instead of being consumed by a call nobody is reading.
      */
     async waitForReply(options = {}) {
         const goal = this.requireGoal();
+        const { signal } = options;
         const timeout = Math.min(options.timeoutMs ?? MAX_WAIT_MS, MAX_WAIT_MS);
         const start = this.now().getTime();
         let nextProgress = start + PROGRESS_MS;
         let seenMtime = -1;
         let wake = null;
-        const watcher = this.watchChat(goal.paths, () => wake?.());
+        const wakeUp = () => wake?.();
+        signal?.addEventListener("abort", wakeUp);
+        const watcher = this.watchChat(goal.paths, wakeUp);
         try {
             for (;;) {
+                if (signal?.aborted)
+                    return { timeout: true };
                 const ticked = await this.tickIfDue(goal);
                 const mtime = this.chatMtime(goal.paths);
                 const quiet = mtime === seenMtime && Date.now() - mtime > RECENT_MS;
                 seenMtime = mtime;
                 if (ticked || !quiet) {
-                    const result = this.read();
-                    if (result !== null && result.messages.length > 0)
+                    const result = this.peek(goal);
+                    if (result.messages.length > 0) {
+                        if (signal?.aborted)
+                            return { timeout: true };
+                        this.commitCursor(goal.paths, result.cursor);
                         return result;
+                    }
                 }
                 const elapsed = this.now().getTime() - start;
                 if (elapsed >= timeout)
@@ -359,6 +379,7 @@ export class VaultStore {
             }
         }
         finally {
+            signal?.removeEventListener("abort", wakeUp);
             watcher?.close();
         }
     }

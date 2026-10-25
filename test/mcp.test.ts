@@ -695,11 +695,12 @@ describe("runMcpServer over stdio", () => {
     let stderr = "";
     child.stderr.on("data", (chunk: Buffer) => (stderr += chunk.toString()));
     const exited = new Promise<number | null>((resolve) => child.on("exit", resolve));
-    const answered = new Promise<void>((resolve) => {
+    const answered = new Promise<void>((resolve, reject) => {
       child.stdout.on("data", (chunk: Buffer) => {
         stdout += chunk.toString();
         if (stdout.includes('"id":3')) resolve();
       });
+      child.on("exit", (code) => reject(new Error(`bin/diarchy.js mcp exited ${code} before answering: ${stderr}`)));
     });
     const frames = [
       { jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "raw", version: "0" } } },

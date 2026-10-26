@@ -270,6 +270,30 @@ describe("worktree Codex files", () => {
     expect(missingFromWorktrees(dir, [after])).toEqual([]);
     expect(missingFromWorktrees(dir, [after, before])).toEqual(["AGENTS.md", ".codex/agents"]);
   });
+
+  it(
+    "diarchy start notes them only when an agent is launched as Codex, whatever its id (F156)",
+    async () => {
+      const quit = join(makeProject("bin", false), "quit.mjs");
+      writeFileSync(quit, "process.exit(0);\n");
+      const NOTE = "Codex reads them only from its worktree";
+      for (const [name, id, command, noted] of [
+        ["no-codex", "gemini", "gemini", false],
+        ["renamed-codex", "pm2", "/opt/bin/codex", true],
+      ] as const) {
+        // init installs AGENTS.md and .codex/agents, left uncommitted.
+        const dir = await initProject(name);
+        const config = readConfig(dir);
+        config.agents = { claude: { command: "claude" }, [id]: { command } };
+        config.launcher = { ...config.launcher, max_restarts: 0 };
+        writeFileSync(join(dir, "diarchy.config.json"), `${JSON.stringify(config, null, 2)}\n`);
+        const run = await cli(["start", "Add a hello file", "--ac", "hello.txt exists", "--driver", "fake", "--fake-script", quit, "--project", dir]);
+        expect(run.stdout, run.stderr).toContain(`worktree created ${join(dir, ".diarchy", "worktrees", id)}`);
+        expect(run.stdout.includes(NOTE), run.stdout).toBe(noted);
+      }
+    },
+    RUN_TIMEOUT * 2,
+  );
 });
 
 // ---------------------------------------------------------------------------
@@ -864,7 +888,98 @@ describe("inbox-skim and gate", () => {
     const thirteenth = await cli(["gate", "--agent", "claude", "--project", dir], { input: "{}" });
     expect(thirteenth).toEqual({ code: 0, stdout: "", stderr: "" });
     expect(JSON.parse(readFileSync(record, "utf8"))).toMatchObject({ blocks: 12 });
+
+    // The cap is counted per session: one that used none of it is still held (F154).
+    const other = await cli(["gate", "--agent", "claude", "--project", dir], { input: '{"session_id":"other-session"}' });
+    expect(other.stdout).toContain('"decision":"block"');
+    expect(JSON.parse(readFileSync(join(dir, ".diarchy", "gate-claude", "other-session.json"), "utf8"))).toMatchObject({ blocks: 1, last_message_id: challenge.id });
   });
+});
+
+/**
+ * A Claude Code or Codex session as a process: it runs its own `diarchy mcp`
+ * server and calls `read`, which takes the agent's lease, then runs the Stop
+ * hook (`diarchy gate`) as its own child for each Stop event on stdin, as a
+ * CLI runs its hooks. Prints one JSON line per step.
+ */
+function sessionScript(): string {
+  const root = mkdtempSync(join(tmpdir(), "diarchy-e2e-"));
+  temps.push(root);
+  const path = join(root, "session.mjs");
+  const sdk = (file: string): string => JSON.stringify(pathToFileURL(join(ROOT, "node_modules", "@modelcontextprotocol", "sdk", "dist", "esm", "client", file)).href);
+  writeFileSync(
+    path,
+    [
+      'import { spawnSync } from "node:child_process";',
+      'import { createInterface } from "node:readline";',
+      `import { Client } from ${sdk("index.js")};`,
+      `import { StdioClientTransport } from ${sdk("stdio.js")};`,
+      "const [cli, tsx, project, agent] = process.argv.slice(2);",
+      'const transport = new StdioClientTransport({ command: process.execPath, args: ["--import", tsx, cli, "mcp", "--agent", agent, "--project", project], env: { ...process.env }, stderr: "inherit" });',
+      'const client = new Client({ name: "session", version: "0.0.0" });',
+      "await client.connect(transport);",
+      'const read = await client.callTool({ name: "read", arguments: {} });',
+      "console.log(JSON.stringify({ read: read.isError ? read.content[0].text : \"ok\" }));",
+      "for await (const event of createInterface({ input: process.stdin })) {",
+      '  const gate = spawnSync(process.execPath, ["--import", tsx, cli, "gate", "--agent", agent, "--project", project], { input: event, encoding: "utf8" });',
+      "  console.log(JSON.stringify({ gate: gate.stdout }));",
+      "}",
+      "await client.close();",
+      "",
+    ].join("\n"),
+  );
+  return path;
+}
+
+describe("gate and the agent lease (F154)", () => {
+  it("lets another session end its turn while the holder's own session stays held, and holds it again once the holder exits", async () => {
+    const dir = await initProject("lease-gate", false);
+    const kick = await human(dir).kickoff({ goal: "Gate by the lease.", acceptance_criteria: ["Only the holder is held."], lead: "claude", slug: "lg" });
+    expect(kick.ok).toBe(true);
+    const env: NodeJS.ProcessEnv = { ...process.env };
+    delete env.DIARCHY_PROJECT;
+    const session = spawn(process.execPath, [sessionScript(), CLI, TSX, dir, "claude"], { cwd: ROOT, env, stdio: ["pipe", "pipe", "pipe"] });
+    let out = "";
+    let err = "";
+    session.stdout.on("data", (chunk: Buffer) => (out += chunk.toString()));
+    session.stderr.on("data", (chunk: Buffer) => (err += chunk.toString()));
+    const step = async (n: number): Promise<Record<string, string>> => {
+      const deadline = Date.now() + 30_000;
+      while (lines(out).length < n) {
+        if (Date.now() > deadline || session.exitCode !== null) throw new Error(`session step ${n}: ${out}${err}`);
+        await new Promise((done) => setTimeout(done, 50));
+      }
+      return JSON.parse(lines(out)[n - 1]) as Record<string, string>;
+    };
+    const otherGate = (): Promise<Run> => cli(["gate", "--agent", "claude", "--project", dir], { input: '{"session_id":"second"}' });
+    try {
+      expect(await step(1)).toEqual({ read: "ok" });
+
+      // This test process is another session: every diarchy tool would answer it AGENT_BUSY, so its turn may end.
+      expect(await otherGate()).toEqual({ code: 0, stdout: "", stderr: "" });
+      expect(await otherGate()).toEqual({ code: 0, stdout: "", stderr: "" });
+      expect(existsSync(join(dir, ".diarchy", "gate-claude", "second.json"))).toBe(false);
+
+      // The holder's own session owes the plan and is held.
+      session.stdin.write('{"session_id":"first"}\n');
+      const own = JSON.parse((await step(2)).gate) as { decision: string; reason: string };
+      expect(own.decision).toBe("block");
+      expect(own.reason).toContain("post PROPOSE with decision_id plan");
+    } finally {
+      session.stdin.end();
+      session.kill("SIGTERM");
+    }
+    await new Promise<void>((done) => (session.exitCode !== null || session.signalCode !== null ? done() : session.once("exit", () => done())));
+
+    // With the holder gone the lease is free, and the other session owes the plan again.
+    const deadline = Date.now() + 15_000;
+    let again = await otherGate();
+    while (again.stdout === "" && Date.now() < deadline) {
+      await new Promise((done) => setTimeout(done, 200));
+      again = await otherGate();
+    }
+    expect(again.stdout).toContain('"decision":"block"');
+  }, RUN_TIMEOUT);
 });
 
 describe("agent-authored text in briefs, gate reasons, and status", () => {

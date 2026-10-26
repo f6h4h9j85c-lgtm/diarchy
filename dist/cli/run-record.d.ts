@@ -25,10 +25,13 @@ export declare function readRunRecord(projectDir: string): RunRecord | null;
 export declare function runningSupervisor(projectDir: string): number | null;
 /**
  * Claim the record for this process. The link fails when the file exists, so
- * of two starts racing past the pre-flight check only one gets it. On a
- * filesystem without hard links (exFAT, some network or 9p mounts) an
- * exclusive create keeps the claim, at the cost of a reader briefly seeing
- * an empty file.
+ * of two starts racing past the pre-flight check only one gets it, and a
+ * reader sees either no record or a whole one. On a filesystem without hard
+ * links (exFAT, some network or 9p mounts) the claim is the mkdir lock
+ * `.diarchy/start.pid.claim/` instead: its holder renames the complete
+ * record into place only while none exists. An exclusive create would show
+ * a concurrent `diarchy start` or `diarchy stop` an empty file, which they
+ * delete as stale.
  */
 export declare function claimRunRecord(projectDir: string): RunRecord;
 /** Rewrite the record this process claimed (after a child spawns). */

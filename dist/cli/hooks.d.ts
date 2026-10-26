@@ -1,12 +1,16 @@
 export declare const GATE_CAP = 12;
 export declare function runInboxSkim(projectDir: string, agent: string): string[];
-export declare function gateRecordPath(projectDir: string, agent: string): string;
+/** One record per session, so blocks of one session never use up another's GATE_CAP. */
+export declare function gateRecordPath(projectDir: string, agent: string, session?: string | null): string;
 export interface GateDecision {
     decision: "block";
     reason: string;
 }
-/** The block decision, or null to let the turn end. The hook JSON on stdin is drained by the caller and not needed. */
-export declare function runGate(projectDir: string, agent: string): GateDecision | null;
+/**
+ * The block decision, or null to let the turn end. `hookJson` is the Stop
+ * event on stdin; its `session_id` keys the GATE_CAP record.
+ */
+export declare function runGate(projectDir: string, agent: string, hookJson?: string): GateDecision | null;
 /**
  * The human subcommand a shell command would run (`reply` or `stop`), else
  * null. Each simple command is read as `[VAR=x ...] [sudo|env|node|npx ...]

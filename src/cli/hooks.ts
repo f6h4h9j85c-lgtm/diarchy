@@ -7,16 +7,22 @@
  *
  * `gate --agent <id>` (Stop): `{"decision":"block","reason":"..."}` while the
  * agent owes the goal something in PLAN/EXECUTE, else nothing. After
- * GATE_CAP consecutive blocks with no new message (tracked in
- * `.diarchy/gate-<agent>.json`) it stops blocking so a stuck agent can end its turn.
+ * GATE_CAP consecutive blocks with no new message (counted per session, in
+ * `.diarchy/gate-<agent>/<session_id>.json`, or `.diarchy/gate-<agent>.json`
+ * when the Stop event names no session) it stops blocking so a stuck agent can
+ * end its turn. It never blocks a session while another session's MCP server
+ * holds the agent's lease: every diarchy tool would answer it AGENT_BUSY.
  *
  * `guard --agent <id>` (PreToolUse): a deny decision when the shell command
  * on stdin runs `diarchy reply` or `diarchy stop`, the human's commands.
  */
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
 import { FIELD_MAX_CHARS, oneLine, roleOf } from "../protocol/index.js";
+import { LOCK_HOST, leaseHolder, type GoalPaths } from "../vault/index.js";
 import { budgetLine } from "../vault/render/shared.js";
 import { nextStep, openAssignments, unreadFor } from "./brief.js";
 import { headerLine, humanStore } from "./common.js";
@@ -56,8 +62,22 @@ interface GateRecord {
   updated: string;
 }
 
-export function gateRecordPath(projectDir: string, agent: string): string {
-  return join(projectDir, ".diarchy", `gate-${agent}.json`);
+/** The Stop event's `session_id`, made safe for a file name; null when the event names none. */
+function gateSessionKey(hookJson: string): string | null {
+  let id: unknown;
+  try {
+    id = (JSON.parse(hookJson) as { session_id?: unknown } | null)?.session_id;
+  } catch {
+    return null;
+  }
+  if (typeof id !== "string" || id === "") return null;
+  return /^[A-Za-z0-9_-]{1,64}$/.test(id) ? id : createHash("sha256").update(id).digest("hex").slice(0, 32);
+}
+
+/** One record per session, so blocks of one session never use up another's GATE_CAP. */
+export function gateRecordPath(projectDir: string, agent: string, session: string | null = null): string {
+  const dir = join(projectDir, ".diarchy");
+  return session === null ? join(dir, `gate-${agent}.json`) : join(dir, `gate-${agent}`, `${session}.json`);
 }
 
 function loadGateRecord(path: string): GateRecord {
@@ -85,22 +105,72 @@ export interface GateDecision {
   reason: string;
 }
 
-/** The block decision, or null to let the turn end. The hook JSON on stdin is drained by the caller and not needed. */
-export function runGate(projectDir: string, agent: string): GateDecision | null {
+/** The parent of `pid`: /proc on Linux, `ps` elsewhere; null when it cannot be read. */
+function parentPid(pid: number): number | null {
+  if (existsSync("/proc/self/stat")) {
+    try {
+      const stat = readFileSync(`/proc/${pid}/stat`, "utf8");
+      // Fields after "(comm)": state, then ppid.
+      const ppid = Number(stat.slice(stat.lastIndexOf(")") + 2).split(" ")[1]);
+      return Number.isInteger(ppid) ? ppid : null;
+    } catch {
+      return null;
+    }
+  }
+  if (process.platform === "win32") return null;
+  const ps = spawnSync("ps", ["-o", "ppid=", "-p", String(pid)], { encoding: "utf8" });
+  const ppid = ps.status === 0 ? Number((ps.stdout ?? "").trim()) : Number.NaN;
+  return Number.isInteger(ppid) ? ppid : null;
+}
+
+/** True when `pid` is this process or one of its ancestors. */
+function isOwnAncestor(pid: number): boolean {
+  let current: number | null = process.pid;
+  for (let depth = 0; current !== null && current > 1 && depth < 64; depth += 1) {
+    if (current === pid) return true;
+    current = depth === 0 ? process.ppid : parentPid(current);
+  }
+  return false;
+}
+
+/**
+ * True when another session's MCP server holds `agent`'s lease, so this
+ * session's tools only get AGENT_BUSY. The hook and the session's own server
+ * are both children of the same CLI process, so a holder whose parent is one
+ * of this hook's ancestors is this session's server. Limit: a server the CLI
+ * starts through a wrapper process (a shell, npx) has the wrapper as its
+ * parent and is taken for another session; where the parent cannot be read
+ * (Windows), or the owner file is not written yet, the gate blocks as before.
+ */
+function heldByAnotherSession(paths: GoalPaths, agent: string): boolean {
+  const holder = leaseHolder(paths, agent);
+  if (holder === null || holder.pid <= 0) return false;
+  if (holder.host !== LOCK_HOST) return true;
+  const parent = parentPid(holder.pid);
+  return parent !== null && !isOwnAncestor(parent);
+}
+
+/**
+ * The block decision, or null to let the turn end. `hookJson` is the Stop
+ * event on stdin; its `session_id` keys the GATE_CAP record.
+ */
+export function runGate(projectDir: string, agent: string, hookJson = ""): GateDecision | null {
   const store = humanStore(projectDir);
   const goal = store.activeGoal();
   if (goal === null || (goal.phase !== "PLAN" && goal.phase !== "EXECUTE")) return null;
+  if (heldByAnotherSession(goal.paths, agent)) return null;
   const state = store.state();
   if (state === null || state.goal !== goal.goalId) return null;
   const messages = store.listMessages();
   const unread = unreadFor(goal, messages, agent);
   const step = nextStep(state, messages, agent, unread);
-  const path = gateRecordPath(projectDir, agent);
+  const path = gateRecordPath(projectDir, agent, gateSessionKey(hookJson));
   const lastId = messages.length === 0 ? null : messages[messages.length - 1].id;
   let record = loadGateRecord(path);
   if (record.last_message_id !== lastId) record = { blocks: 0, last_message_id: lastId, updated: "" };
   if (!step.owes) {
-    if (record.blocks !== 0) saveGateRecord(path, { ...record, blocks: 0, updated: new Date().toISOString() });
+    // Nothing owed: the count starts over, and a finished session leaves no record behind.
+    rmSync(path, { force: true });
     return null;
   }
   if (record.blocks >= GATE_CAP) return null;

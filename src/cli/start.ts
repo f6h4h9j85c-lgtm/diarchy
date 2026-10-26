@@ -22,6 +22,7 @@ import {
   defaultFakeScript,
   detectSessionId,
   fakePlan,
+  flavorOf,
   loadSession,
   realPlan,
   saveSession,
@@ -117,7 +118,7 @@ export async function runStart(projectDir: string, goalText: string | undefined,
     }
   }
 
-  const worktrees = prepareWorktrees(projectDir, config, goal.goalId, agents, options.worktrees);
+  const worktrees = prepareWorktrees(projectDir, config, launcher, goal.goalId, agents, options.worktrees);
   if (driver === "real") {
     checkCommands(launcher, (agent) => worktrees.get(agent) ?? projectDir);
     for (const agent of agents) {
@@ -140,7 +141,7 @@ function logCorrupt(error: CorruptVaultFileError): void {
   console.log(`${nowHms()} ${error.message} It is left out here; diarchy reply and diarchy stop still work.`);
 }
 
-function prepareWorktrees(projectDir: string, config: DiarchyConfig, goalId: string, agents: string[], wanted: boolean): Map<string, string> {
+function prepareWorktrees(projectDir: string, config: DiarchyConfig, launcher: LauncherConfig, goalId: string, agents: string[], wanted: boolean): Map<string, string> {
   const map = new Map<string, string>();
   if (!wanted) {
     console.log(`${nowHms()} worktrees skipped (--no-worktrees); agents run in ${projectDir}`);
@@ -159,7 +160,9 @@ function prepareWorktrees(projectDir: string, config: DiarchyConfig, goalId: str
     console.log(`${nowHms()} worktree ${result.outcome} ${result.path} on ${result.branch}${note}`);
     map.set(result.agent, result.path);
   }
-  const missing = missingFromWorktrees(projectDir, [...map.values()]);
+  // Only a PM launched as Codex reads AGENTS.md and .codex/agents, whatever its agent id.
+  const codexWorktrees = [...map].filter(([agent]) => flavorOf(launcher.agents[agent].command) === "codex").map(([, path]) => path);
+  const missing = missingFromWorktrees(projectDir, codexWorktrees);
   if (missing.length > 0) {
     console.log(`${nowHms()} note: ${missing.join(" and ")} not in the worktrees (uncommitted?); Codex reads them only from its worktree. Commit them before the next diarchy start.`);
   }

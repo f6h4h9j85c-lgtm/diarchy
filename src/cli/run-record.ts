@@ -16,6 +16,7 @@ import { spawnSync } from "node:child_process";
 import { existsSync, linkSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
+import { releaseLock, tryLock } from "../vault/index.js";
 import { CliError, sleep } from "./common.js";
 
 export interface ProcessIdentity {
@@ -130,10 +131,13 @@ export function runningSupervisor(projectDir: string): number | null {
 
 /**
  * Claim the record for this process. The link fails when the file exists, so
- * of two starts racing past the pre-flight check only one gets it. On a
- * filesystem without hard links (exFAT, some network or 9p mounts) an
- * exclusive create keeps the claim, at the cost of a reader briefly seeing
- * an empty file.
+ * of two starts racing past the pre-flight check only one gets it, and a
+ * reader sees either no record or a whole one. On a filesystem without hard
+ * links (exFAT, some network or 9p mounts) the claim is the mkdir lock
+ * `.diarchy/start.pid.claim/` instead: its holder renames the complete
+ * record into place only while none exists. An exclusive create would show
+ * a concurrent `diarchy start` or `diarchy stop` an empty file, which they
+ * delete as stale.
  */
 export function claimRunRecord(projectDir: string): RunRecord {
   const record: RunRecord = { ...identify(process.pid), children: {} };
@@ -146,7 +150,7 @@ export function claimRunRecord(projectDir: string): RunRecord {
     } catch (error) {
       const code = (error as NodeJS.ErrnoException).code;
       if (code !== "EPERM" && code !== "ENOTSUP" && code !== "EOPNOTSUPP") throw error;
-      writeFileSync(path, serialize(record), { flag: "wx" });
+      publishExclusively(temp, path);
     }
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
@@ -155,6 +159,20 @@ export function claimRunRecord(projectDir: string): RunRecord {
     rmSync(temp, { force: true });
   }
   return record;
+}
+
+/** Rename `temp` to `path` unless `path` exists, holding the claim lock; EEXIST when another claim holds the lock or the record. */
+function publishExclusively(temp: string, path: string): void {
+  const lock = `${path}.claim`;
+  const token = tryLock(lock);
+  const taken = (): Error => Object.assign(new Error(`${path} is claimed`), { code: "EEXIST" });
+  if (token === null) throw taken();
+  try {
+    if (existsSync(path)) throw taken();
+    renameSync(temp, path);
+  } finally {
+    releaseLock(lock, token);
+  }
 }
 
 /** Rewrite the record this process claimed (after a child spawns). */

@@ -41,17 +41,19 @@ interface Background {
 
 const temps: string[] = [];
 const spawned: ChildProcess[] = [];
-const strays: number[] = [];
+/** Process groups of the CLI runs: a supervisor and every PM and server under it, orphaned or not. */
+const groups: number[] = [];
 const sessions: Client[] = [];
 
 afterEach(async () => {
   for (const session of sessions.splice(0)) await session.close();
   for (const proc of spawned.splice(0)) if (proc.exitCode === null && proc.signalCode === null) proc.kill("SIGKILL");
-  for (const pid of strays.splice(0)) {
+  // Passed or failed, no stand-in PM outlives its test (F158).
+  for (const group of groups.splice(0)) {
     try {
-      process.kill(pid, "SIGKILL");
+      process.kill(-group, "SIGKILL");
     } catch {
-      // gone
+      // the whole group is gone
     }
   }
 });
@@ -63,8 +65,10 @@ function launch(args: string[], extraEnv: NodeJS.ProcessEnv = {}): Background {
   const env: NodeJS.ProcessEnv = { ...process.env, ...extraEnv };
   delete env.DIARCHY_PROJECT;
   delete env.DIARCHY_FAKE_MODE;
-  const proc = spawn(process.execPath, ["--import", "tsx", CLI, ...args], { cwd: ROOT, env, stdio: ["ignore", "pipe", "pipe"] });
+  // Its own process group, so afterEach can kill the PMs a supervisor spawned even before they record their pids.
+  const proc = spawn(process.execPath, ["--import", "tsx", CLI, ...args], { cwd: ROOT, env, stdio: ["ignore", "pipe", "pipe"], detached: true });
   spawned.push(proc);
+  if (proc.pid !== undefined) groups.push(proc.pid);
   let stdout = "";
   let stderr = "";
   proc.stdout?.on("data", (chunk: Buffer) => (stdout += chunk.toString()));
@@ -294,6 +298,79 @@ describe("claimRunRecord on a filesystem without hard links", () => {
   });
 });
 
+/**
+ * A `--require` preload: link() fails with EPERM, as on exFAT or a 9p mount,
+ * and with $CLAIM_PAUSED set the first write of start.pid (an exclusive
+ * create or a rename) is held until $CLAIM_RESUME exists, as on a slow mount.
+ */
+function noLinkPreload(): string {
+  const path = join(tempDir(), "no-link.cjs");
+  writeFileSync(
+    path,
+    [
+      'const fs = require("node:fs");',
+      'const { syncBuiltinESMExports } = require("node:module");',
+      "const { closeSync, existsSync, openSync, renameSync, writeFileSync } = fs;",
+      "let held = process.env.CLAIM_PAUSED === undefined;",
+      "function hold(path) {",
+      '  if (held || !String(path).endsWith("start.pid")) return;',
+      "  held = true;",
+      '  writeFileSync(process.env.CLAIM_PAUSED, "");',
+      "  const cell = new Int32Array(new SharedArrayBuffer(4));",
+      "  const deadline = Date.now() + 60000;",
+      "  while (!existsSync(process.env.CLAIM_RESUME) && Date.now() < deadline) Atomics.wait(cell, 0, 0, 50);",
+      "}",
+      'fs.linkSync = () => { throw Object.assign(new Error("EPERM: operation not permitted, link"), { code: "EPERM" }); };',
+      "fs.writeFileSync = (path, data, options) => {",
+      '  if (options?.flag !== "wx") return writeFileSync(path, data, options);',
+      '  closeSync(openSync(path, "wx"));',
+      "  hold(path);",
+      "  return writeFileSync(path, data);",
+      "};",
+      "fs.renameSync = (from, to) => {",
+      "  hold(to);",
+      "  return renameSync(from, to);",
+      "};",
+      "syncBuiltinESMExports();",
+      "",
+    ].join("\n"),
+  );
+  return path;
+}
+
+describe("two starts on a filesystem without hard links (F155)", () => {
+  it("a start during the first one's claim is refused and leaves its record alone, so one supervisor runs", async () => {
+    const dir = await initProject("no-links");
+    const standin = tempDir();
+    const preload = { NODE_OPTIONS: `--require ${noLinkPreload()}`, STANDIN_DIR: standin };
+    const paused = join(standin, "claim-paused");
+    const resume = join(standin, "claim-resume");
+    const args = ["--driver", "fake", "--fake-script", sleeperScript(), "--no-worktrees", "--project", dir];
+    const first = launch(["start", "Claim without links", "--ac", "One supervisor runs.", "--lead", "claude", ...args], { ...preload, CLAIM_PAUSED: paused, CLAIM_RESUME: resume });
+    await until("the first claim in progress", () => existsSync(paused), 30_000);
+
+    const second = launch(["start", ...args], preload);
+    await until("the second start past its claim", () => second.proc.exitCode !== null || second.out().includes(" started"), 30_000);
+    writeFileSync(resume, "");
+    expect(second.out()).not.toContain("claude started");
+    const refused = await second.done;
+    expect(refused.code, refused.stdout + refused.stderr).toBe(1);
+    expect(refused.stderr).toContain(`another diarchy start claimed ${pidPath(dir)} first`);
+
+    await until(
+      "the first start's PMs recorded",
+      () => readRunRecord(dir)?.pid === first.proc.pid && Object.keys(readRunRecord(dir)?.children ?? {}).length === 2 && pids(standin, "claude").length > 0 && pids(standin, "codex").length > 0,
+      30_000,
+    );
+    expect(pids(standin, "claude")).toHaveLength(1);
+    expect(pids(standin, "codex")).toHaveLength(1);
+    expect(readdirSync(join(dir, ".diarchy")).filter((name) => name.startsWith("start.pid"))).toEqual(["start.pid"]);
+    const stop = await cli(["stop", "--project", dir]);
+    expect(stop.stdout).toContain(`signalled diarchy start (pid ${first.proc.pid})`);
+    expect((await first.done).code).toBe(2);
+  }, 60_000);
+});
+
 // ---------------------------------------------------------------------------
 // PMs left behind by a supervisor that died (F028)
 // ---------------------------------------------------------------------------
@@ -306,7 +383,6 @@ describe("PMs left behind by a killed supervisor", () => {
     const first = launch(["start", "Outlive the supervisor", "--ac", "Nothing is orphaned.", "--lead", "claude", "--driver", "fake", "--fake-script", script, "--no-worktrees", "--project", dir], { STANDIN_DIR: standin });
     await until("both PMs recorded", () => Object.keys(readRunRecord(dir)?.children ?? {}).length === 2 && pids(standin, "claude").length === 1 && pids(standin, "codex").length === 1);
     const orphans = [...pids(standin, "claude"), ...pids(standin, "codex")];
-    strays.push(...orphans);
     first.proc.kill("SIGKILL");
     await first.done;
     expect(orphans.every(alive)).toBe(true);
@@ -328,7 +404,6 @@ describe("PMs left behind by a killed supervisor", () => {
     const { dir, standin, script, orphans } = await killedRun("orphans-start");
     const second = launch(["start", "--driver", "fake", "--fake-script", script, "--no-worktrees", "--project", dir], { STANDIN_DIR: standin });
     await until("the new PMs", () => pids(standin, "claude").length === 2 && pids(standin, "codex").length === 2);
-    strays.push(...pids(standin, "claude"), ...pids(standin, "codex"));
     expect(second.out()).toContain(`stopped claude (pid ${orphans[0]}), left running by an earlier diarchy start`);
     await until("orphans gone", () => !orphans.some(alive), 3_000);
     const fresh = [pids(standin, "claude")[1], pids(standin, "codex")[1]];
@@ -355,7 +430,6 @@ describe("a hangup", () => {
     const run = launch(["start", "Survive no hangup", "--ac", "Nothing is orphaned.", "--lead", "claude", "--driver", "fake", "--fake-script", script, "--no-worktrees", "--project", dir], { STANDIN_DIR: standin });
     await until("both PMs recorded", () => Object.keys(readRunRecord(dir)?.children ?? {}).length === 2 && pids(standin, "claude").length === 1 && pids(standin, "codex").length === 1);
     const children = [...pids(standin, "claude"), ...pids(standin, "codex")];
-    strays.push(...children);
 
     run.proc.kill("SIGHUP");
     const result = await run.done;
@@ -486,8 +560,8 @@ describe("a PM out of restarts", () => {
       ].join("\n"),
     );
     const run = launch(["start", "Revive the idle PM", "--ac", "Both PMs stay reachable.", "--lead", "claude", "--driver", "fake", "--fake-script", script, "--no-worktrees", "--project", dir], { STANDIN_DIR: standin });
-    await until("codex out of restarts", () => run.out().includes("codex will not be restarted (3 restarts used)"));
-    strays.push(...pids(standin, "claude"));
+    // Launch, kickoff and four codex spawns: give a loaded machine room (F158).
+    await until("codex out of restarts", () => run.out().includes("codex will not be restarted (3 restarts used)"), 30_000);
     expect(pids(standin, "codex")).toHaveLength(4);
 
     const claude = new VaultStore({ projectDir: dir, config: loadConfig(dir), agent: "claude", pollIntervalMs: 20 });
@@ -505,14 +579,14 @@ describe("a PM out of restarts", () => {
     await until("the respawn logged", () => run.out().includes("codex respawning: a message landed"));
     // A fresh count: the respawned codex is restarted max_restarts times again before it is left dead, 4 more pids in all.
     const outOfRestarts = (): number => run.out().split("codex will not be restarted (3 restarts used)").length - 1;
-    await until("codex out of restarts again", () => outOfRestarts() === 2);
+    await until("codex out of restarts again", () => outOfRestarts() === 2, 30_000);
     expect(pids(standin, "codex")).toHaveLength(8);
     const afterRespawn = run.out().slice(run.out().indexOf("codex respawning: a message landed"));
     expect(afterRespawn).toContain("codex restarting in 0.2 s (restart 3 of 3)");
 
     await cli(["stop", "--project", dir]);
     expect((await run.done).code).toBe(2);
-  }, 40_000);
+  }, 90_000);
 });
 
 // ---------------------------------------------------------------------------
@@ -542,7 +616,6 @@ describe("another session holding an agent's lease", () => {
     const standin = tempDir();
     const run = launch(["start", "--driver", "real", "--no-worktrees", "--project", dir], { STANDIN_DIR: standin });
     await until("the supervisor waiting on the session", () => run.out().includes(waiting) && pids(standin, "codex").length === 1, 20_000);
-    strays.push(...pids(standin, "codex"));
     // Several poll ticks: the PM is neither spawned nor restarted, and the wait is logged once.
     await new Promise((done) => setTimeout(done, 1_000));
     expect(pids(standin, "claude")).toEqual([]);
@@ -551,7 +624,6 @@ describe("another session holding an agent's lease", () => {
 
     await session.close();
     await until("the PM's plan", () => run.out().includes(planPosted), 20_000);
-    strays.push(...pids(standin, "claude"));
     expect(run.out()).toContain(`claude starting: pid ${process.pid} no longer holds the goal`);
     expect(pids(standin, "claude")).toHaveLength(1);
     expect(run.out()).not.toContain("AGENT_BUSY");
@@ -575,7 +647,6 @@ describe("another session holding an agent's lease", () => {
     const standin = tempDir();
     const run = launch(["start", "--driver", "real", "--no-worktrees", "--project", dir], { STANDIN_DIR: standin, STANDIN_GATE: "1" });
     await until("both PMs spawned", () => pids(standin, "claude").length === 1 && pids(standin, "codex").length === 1, 20_000);
-    strays.push(...pids(standin, "codex"));
 
     // An interactive session touches the goal before the headless PM's first call does.
     const session = await interactiveSession(dir, "claude");
@@ -588,7 +659,6 @@ describe("another session holding an agent's lease", () => {
 
     await session.close();
     await until("the PM's plan", () => run.out().includes(planPosted), 20_000);
-    strays.push(...pids(standin, "claude"));
     expect(pids(standin, "claude")).toHaveLength(2);
     expect(run.out()).not.toContain("will not be restarted");
     expect(run.out()).not.toContain("every agent exited");
@@ -596,6 +666,50 @@ describe("another session holding an agent's lease", () => {
     await cli(["stop", "--project", dir]);
     await run.done;
   }, 60_000);
+
+  it("gives back the restart of a PM that exits while another session holds the agent, before restarts run out", async () => {
+    // claude waits for $STANDIN_DIR/go, then ends its turn without a word; codex works silently.
+    const quitter = join(tempDir(), "quitter.mjs");
+    writeFileSync(
+      quitter,
+      [
+        'import { appendFileSync, existsSync } from "node:fs";',
+        "appendFileSync(`${process.env.STANDIN_DIR}/${process.env.DIARCHY_AGENT}.pid`, `${process.pid}\\n`);",
+        "while (!existsSync(`${process.env.STANDIN_DIR}/go`)) await new Promise((done) => setTimeout(done, 50));",
+        "process.exit(1);",
+        "",
+      ].join("\n"),
+    );
+    const sleeper = sleeperScript();
+    const dir = await initProject("lease-refund", (config) => {
+      config.agents.claude = { command: process.execPath, args: [quitter] };
+      config.agents.codex = { command: process.execPath, args: [sleeper] };
+      config.launcher.max_restarts = 1;
+    });
+    expect((await cli(["kickoff", "Refund the restart.", "--ac", "A wait uses no restart.", "--lead", "claude", "--project", dir])).code).toBe(0);
+    const standin = tempDir();
+    const run = launch(["start", "--driver", "real", "--no-worktrees", "--project", dir], { STANDIN_DIR: standin });
+    await until("both PMs spawned", () => pids(standin, "claude").length === 1 && pids(standin, "codex").length === 1, 30_000);
+
+    // A session takes the agent while the PM runs; the PM then exits with its one restart left.
+    const session = await interactiveSession(dir, "claude");
+    const read = await session.callTool({ name: "read", arguments: {} });
+    expect(read.isError, JSON.stringify(read.content)).toBeFalsy();
+    writeFileSync(join(standin, "go"), "");
+    await until("the supervisor waiting on the session", () => run.out().includes(waiting), 30_000);
+    expect(run.out()).toContain("claude restarting in 0.2 s (restart 1 of 1)");
+    expect(run.out()).not.toContain("claude will not be restarted");
+
+    // Once the session exits the PM starts with its restart given back: it exits, is restarted once more, and only then given up.
+    await session.close();
+    await until("claude given up", () => run.out().includes("claude will not be restarted (1 restarts used)"), 30_000);
+    const afterWait = run.out().slice(run.out().indexOf(`claude starting: pid ${process.pid} no longer holds the goal`));
+    expect(afterWait).toContain("claude restarting in 0.2 s (restart 1 of 1)");
+    expect(pids(standin, "claude")).toHaveLength(3);
+
+    await cli(["stop", "--project", dir]);
+    await run.done;
+  }, 90_000);
 });
 
 // ---------------------------------------------------------------------------
@@ -611,7 +725,6 @@ describe("a corrupt chat file", () => {
     const run = launch(["start", "Survive a corrupt file", "--ac", "The run ends cleanly.", "--lead", "claude", ...args], { STANDIN_DIR: standin });
     await until("both PMs recorded", () => Object.keys(readRunRecord(dir)?.children ?? {}).length === 2 && pids(standin, "claude").length === 1 && pids(standin, "codex").length === 1);
     const children = [...pids(standin, "claude"), ...pids(standin, "codex")];
-    strays.push(...children);
 
     const claude = new VaultStore({ projectDir: dir, config: loadConfig(dir), agent: "claude", pollIntervalMs: 20 });
     const propose = await claude.post({ type: "PROPOSE", to: "all", re: ["AC1"], decision_id: "plan", claim: "One step does it.", body: "Nothing to split." });
@@ -659,7 +772,6 @@ describe("diarchy stop during the wall-clock grace", () => {
     const run = launch(["start", "--driver", "fake", "--fake-script", sleeperScript(), "--no-worktrees", "--project", dir], { STANDIN_DIR: standin });
     await until("the grace and both PMs", () => run.out().includes("wall clock reached") && pids(standin, "claude").length === 1 && pids(standin, "codex").length === 1);
     const children = [...pids(standin, "claude"), ...pids(standin, "codex")];
-    strays.push(...children);
 
     const stoppedAt = Date.now();
     const stop = await cli(["stop", "--project", dir]);

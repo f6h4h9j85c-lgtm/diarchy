@@ -16,10 +16,10 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { nextStep } from "../src/cli/brief.js";
 import { resolveProjectDir } from "../src/cli/common.js";
-import { humanCommand } from "../src/cli/hooks.js";
+import { heldByAnotherSession, humanCommand, type ProcessProbe } from "../src/cli/hooks.js";
 import { missingFromWorktrees } from "../src/cli/worktrees.js";
 import { hasControlChars, parseGoalState, type GoalState } from "../src/protocol/index.js";
-import { GENERATED, VaultStore, loadConfig, type GoalPaths, type MessageDraft } from "../src/vault/index.js";
+import { GENERATED, VaultStore, loadConfig, type GoalPaths, type LockOwner, type MessageDraft } from "../src/vault/index.js";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const CLI = join(ROOT, "src", "cli", "index.ts");
@@ -289,6 +289,30 @@ describe("worktree Codex files", () => {
     expect(missingFromWorktrees(dir, [after])).toEqual([]);
     expect(missingFromWorktrees(dir, [after, before])).toEqual(["AGENTS.md", ".codex/agents"]);
   });
+
+  it(
+    "diarchy start notes them only when an agent is launched as Codex, whatever its id (F156)",
+    async () => {
+      const quit = join(makeProject("bin", false), "quit.mjs");
+      writeFileSync(quit, "process.exit(0);\n");
+      const NOTE = "Codex reads them only from its worktree";
+      for (const [name, id, command, noted] of [
+        ["no-codex", "gemini", "gemini", false],
+        ["renamed-codex", "pm2", "/opt/bin/codex", true],
+      ] as const) {
+        // init installs AGENTS.md and .codex/agents, left uncommitted.
+        const dir = await initProject(name);
+        const config = readConfig(dir);
+        config.agents = { claude: { command: "claude" }, [id]: { command } };
+        config.launcher = { ...config.launcher, max_restarts: 0 };
+        writeFileSync(join(dir, "diarchy.config.json"), `${JSON.stringify(config, null, 2)}\n`);
+        const run = await cli(["start", "Add a hello file", "--ac", "hello.txt exists", "--driver", "fake", "--fake-script", quit, "--project", dir]);
+        expect(run.stdout, run.stderr).toContain(`worktree created ${join(dir, ".diarchy", "worktrees", id)}`);
+        expect(run.stdout.includes(NOTE), run.stdout).toBe(noted);
+      }
+    },
+    RUN_TIMEOUT * 2,
+  );
 });
 
 // ---------------------------------------------------------------------------
@@ -1319,6 +1343,216 @@ describe("inbox-skim and gate", () => {
     const thirteenth = await cli(["gate", "--agent", "claude", "--project", dir], { input: "{}" });
     expect(thirteenth).toEqual({ code: 0, stdout: "", stderr: "" });
     expect(JSON.parse(readFileSync(record, "utf8"))).toMatchObject({ blocks: 12 });
+
+    // The cap is counted per session: one that used none of it is still held (F154).
+    const other = await cli(["gate", "--agent", "claude", "--project", dir], { input: '{"session_id":"other-session"}' });
+    expect(other.stdout).toContain('"decision":"block"');
+    expect(JSON.parse(readFileSync(join(dir, ".diarchy", "gate-claude", "other-session.json"), "utf8"))).toMatchObject({ blocks: 1, last_message_id: challenge.id });
+  });
+});
+
+/**
+ * A Claude Code or Codex session as a process: it runs its own `diarchy mcp`
+ * server and calls `read`, which takes the agent's lease, then runs the Stop
+ * hook (`diarchy gate`) as its own child for each Stop event on stdin, as a
+ * CLI runs its hooks. Prints one JSON line per step; the first names its pid.
+ */
+function sessionScript(): string {
+  const root = mkdtempSync(join(tmpdir(), "diarchy-e2e-"));
+  temps.push(root);
+  const path = join(root, "session.mjs");
+  const sdk = (file: string): string => JSON.stringify(pathToFileURL(join(ROOT, "node_modules", "@modelcontextprotocol", "sdk", "dist", "esm", "client", file)).href);
+  writeFileSync(
+    path,
+    [
+      'import { spawnSync } from "node:child_process";',
+      'import { createInterface } from "node:readline";',
+      `import { Client } from ${sdk("index.js")};`,
+      `import { StdioClientTransport } from ${sdk("stdio.js")};`,
+      "const [cli, tsx, project, agent] = process.argv.slice(2);",
+      'const transport = new StdioClientTransport({ command: process.execPath, args: ["--import", tsx, cli, "mcp", "--agent", agent, "--project", project], env: { ...process.env }, stderr: "inherit" });',
+      'const client = new Client({ name: "session", version: "0.0.0" });',
+      "await client.connect(transport);",
+      'const read = await client.callTool({ name: "read", arguments: {} });',
+      'console.log(JSON.stringify({ read: read.isError ? read.content[0].text : "ok", pid: process.pid }));',
+      "for await (const event of createInterface({ input: process.stdin })) {",
+      '  const gate = spawnSync(process.execPath, ["--import", tsx, cli, "gate", "--agent", agent, "--project", project], { input: event, encoding: "utf8" });',
+      "  console.log(JSON.stringify({ gate: gate.stdout }));",
+      "}",
+      "await client.close();",
+      "",
+    ].join("\n"),
+  );
+  return path;
+}
+
+interface Session {
+  /** The session's `n`th JSON line (from 1), once it has printed it. */
+  step(n: number): Promise<Record<string, unknown>>;
+  /** Send one Stop event, and return what the session's own gate printed for it as its `n`th line. */
+  stop(event: string, n: number): Promise<string>;
+  /** End the session and wait for it to exit. */
+  close(): Promise<void>;
+}
+
+/** Start a session as `claude` in `dir`, run through `prefix` (for example `unshare ...`) when given. */
+function startSession(dir: string, prefix: string[] = []): Session {
+  const env: NodeJS.ProcessEnv = { ...process.env };
+  delete env.DIARCHY_PROJECT;
+  const [command, ...args] = [...prefix, process.execPath, sessionScript(), CLI, TSX, dir, "claude"];
+  const child = spawn(command, args, { cwd: ROOT, env, stdio: ["pipe", "pipe", "pipe"] });
+  let out = "";
+  let err = "";
+  child.stdout.on("data", (chunk: Buffer) => (out += chunk.toString()));
+  child.stderr.on("data", (chunk: Buffer) => (err += chunk.toString()));
+  const step = async (n: number): Promise<Record<string, unknown>> => {
+    const deadline = Date.now() + 30_000;
+    while (lines(out).length < n) {
+      if (Date.now() > deadline || child.exitCode !== null) throw new Error(`session step ${n}: ${out}${err}`);
+      await new Promise((done) => setTimeout(done, 50));
+    }
+    return JSON.parse(lines(out)[n - 1]) as Record<string, unknown>;
+  };
+  return {
+    step,
+    async stop(event: string, n: number): Promise<string> {
+      child.stdin.write(`${event}\n`);
+      return String((await step(n)).gate);
+    },
+    async close(): Promise<void> {
+      child.stdin.end();
+      child.kill("SIGTERM");
+      await new Promise<void>((done) => (child.exitCode !== null || child.signalCode !== null ? done() : child.once("exit", () => done())));
+    },
+  };
+}
+
+/** `unshare` words that run a command as pid 1 of a new pid namespace, or null where this machine cannot. */
+function pidNamespacePrefix(): string[] | null {
+  if (process.platform !== "linux") return null;
+  const base = ["--pid", "--fork", "--mount-proc", "--kill-child"];
+  for (const prefix of [["unshare", ...base], ["unshare", "--map-root-user", ...base]]) {
+    const probe = spawnSync(prefix[0], [...prefix.slice(1), "true"], { stdio: "ignore", timeout: 10_000 });
+    if (probe.status === 0) return prefix;
+  }
+  return null;
+}
+
+describe("gate and the agent lease (F154)", () => {
+  const otherGate = (dir: string): Promise<Run> => cli(["gate", "--agent", "claude", "--project", dir], { input: '{"session_id":"second"}' });
+
+  it("lets another session end its turn while the holder's own session stays held, and holds it again once the holder exits", async () => {
+    const dir = await initProject("lease-gate", false);
+    const kick = await human(dir).kickoff({ goal: "Gate by the lease.", acceptance_criteria: ["Only the holder is held."], lead: "claude", slug: "lg" });
+    expect(kick.ok).toBe(true);
+    const session = startSession(dir);
+    try {
+      expect(await session.step(1)).toMatchObject({ read: "ok" });
+
+      // This test process is another session: every diarchy tool would answer it AGENT_BUSY, so its turn may end.
+      expect(await otherGate(dir)).toEqual({ code: 0, stdout: "", stderr: "" });
+      expect(await otherGate(dir)).toEqual({ code: 0, stdout: "", stderr: "" });
+      expect(existsSync(join(dir, ".diarchy", "gate-claude", "second.json"))).toBe(false);
+
+      // The holder's own session owes the plan and is held.
+      const own = await session.stop('{"session_id":"first"}', 2);
+      expect(own).toContain('"decision":"block"');
+      expect(own).toContain("post PROPOSE with decision_id plan");
+    } finally {
+      await session.close();
+    }
+
+    // With the holder gone the lease is free, and the other session owes the plan again.
+    const deadline = Date.now() + 15_000;
+    let again = await otherGate(dir);
+    while (again.stdout === "" && Date.now() < deadline) {
+      await new Promise((done) => setTimeout(done, 200));
+      again = await otherGate(dir);
+    }
+    expect(again.stdout).toContain('"decision":"block"');
+  }, RUN_TIMEOUT);
+
+  // `docker run img claude` without --init: the CLI is pid 1, so its own server's parent is pid 1 (R2-12 review).
+  const PID_NAMESPACE = pidNamespacePrefix();
+  it.skipIf(PID_NAMESPACE === null)("still holds a session whose CLI is pid 1, and a session in another pid namespace of this machine", async () => {
+    const dir = await initProject("lease-gate-pid1", false);
+    const kick = await human(dir).kickoff({ goal: "Gate by the lease.", acceptance_criteria: ["Only the holder is held."], lead: "claude", slug: "lg1" });
+    expect(kick.ok).toBe(true);
+    const session = startSession(dir, PID_NAMESPACE ?? []);
+    try {
+      expect(await session.step(1)).toEqual({ read: "ok", pid: 1 });
+
+      // Its server's parent is pid 1, which the gate cannot tell from an orphan's: it blocks as it would without a lease.
+      const own = await session.stop('{"session_id":"first"}', 2);
+      expect(own).toContain('"decision":"block"');
+      expect(own).toContain("post PROPOSE with decision_id plan");
+
+      // This test process shares the hostname but not the pid namespace, so pids do not compare: it is held too.
+      expect((await otherGate(dir)).stdout).toContain('"decision":"block"');
+    } finally {
+      await session.close();
+    }
+  }, RUN_TIMEOUT);
+});
+
+describe("heldByAnotherSession (F154)", () => {
+  const HOST = "box pid:[4026531836]";
+  /**
+   * child -> parent. Init (1) <- a shell (100), which started two CLIs: 200,
+   * this session's, with its server 300 and its Stop hook 310 (bash) <- 320
+   * (`diarchy gate`, this process); and 400, another session's, with its
+   * server 500.
+   */
+  const TREE = new Map([
+    [1, 0],
+    [100, 1],
+    [200, 100],
+    [300, 200],
+    [310, 200],
+    [320, 310],
+    [400, 100],
+    [500, 400],
+  ]);
+  const probe = (tree: Map<number, number> = TREE, self = 320): ProcessProbe => ({ host: HOST, pid: self, parentOf: (pid) => tree.get(pid) ?? null });
+  const holder = (pid: number, host = HOST): LockOwner => ({ pid, host, token: "t" });
+
+  it("tells this session's own server from another session's", () => {
+    expect(heldByAnotherSession(holder(300), probe())).toBe(false);
+    expect(heldByAnotherSession(holder(500), probe())).toBe(true);
+  });
+
+  it("blocks when the holder's parent is pid 1: the CLI itself may be pid 1, or the holder an orphan", () => {
+    // `docker run img claude`: the CLI (1) started its server (17) and its Stop hook (20) <- the gate (21).
+    const container = new Map([
+      [1, 0],
+      [17, 1],
+      [20, 1],
+      [21, 20],
+    ]);
+    expect(heldByAnotherSession(holder(17), probe(container, 21))).toBe(false);
+    // On a host, an orphaned server is reparented to init.
+    expect(heldByAnotherSession(holder(600), probe(new Map([...TREE, [600, 1]])))).toBe(false);
+  });
+
+  it("blocks when a parent cannot be read: the holder's, or one on this hook's own chain", () => {
+    expect(heldByAnotherSession(holder(700), probe())).toBe(false);
+    const broken = new Map(TREE);
+    broken.delete(200);
+    expect(heldByAnotherSession(holder(500), probe(broken))).toBe(false);
+    // A chain that never reaches its root is not read either.
+    expect(heldByAnotherSession(holder(500), probe(new Map([...TREE, [100, 310]])))).toBe(false);
+  });
+
+  it("blocks for a holder in another pid namespace on this machine, and stands down for one on another machine", () => {
+    expect(heldByAnotherSession(holder(500, "box pid:[4026532265]"), probe())).toBe(false);
+    expect(heldByAnotherSession(holder(300, "box"), probe())).toBe(false);
+    expect(heldByAnotherSession(holder(500, "other-box pid:[4026531836]"), probe())).toBe(true);
+    expect(heldByAnotherSession(holder(500, "other-box"), probe())).toBe(true);
+  });
+
+  it("blocks when there is no holder or its owner file cannot be read", () => {
+    expect(heldByAnotherSession(null, probe())).toBe(false);
+    expect(heldByAnotherSession({ pid: 0, host: "unknown", token: "" }, probe())).toBe(false);
   });
 });
 

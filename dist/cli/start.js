@@ -16,7 +16,7 @@ import { AGENT_HUMAN } from "../protocol/index.js";
 import { VaultStore, leaseHolder, loadConfig } from "../vault/index.js";
 import { blockReason, blockSummary, replyHint } from "./brief.js";
 import { CliError, EXIT_BLOCKED, EXIT_ERROR, EXIT_OK, nowHms, onBrokenPipe, sleep } from "./common.js";
-import { clearSession, defaultFakeScript, detectSessionId, fakePlan, loadSession, realPlan, saveSession, sandboxNotice, } from "./drivers.js";
+import { clearSession, defaultFakeScript, detectSessionId, fakePlan, flavorOf, loadSession, realPlan, saveSession, sandboxNotice, } from "./drivers.js";
 import { kickoffInput } from "./kickoff.js";
 import { loadLauncherConfig } from "./launcher-config.js";
 import { missingCommands, platformProblem } from "./preflight.js";
@@ -101,7 +101,7 @@ export async function runStart(projectDir, goalText, options) {
             return EXIT_BLOCKED;
         }
     }
-    const worktrees = prepareWorktrees(projectDir, config, goal.goalId, agents, options.worktrees);
+    const worktrees = prepareWorktrees(projectDir, config, launcher, goal.goalId, agents, options.worktrees);
     if (driver === "real") {
         checkCommands(launcher, (agent) => worktrees.get(agent) ?? projectDir);
         for (const agent of agents) {
@@ -123,7 +123,7 @@ function checkCommands(launcher, cwdOf) {
 function logCorrupt(error) {
     console.log(`${nowHms()} ${error.message} It is left out here; diarchy reply and diarchy stop still work.`);
 }
-function prepareWorktrees(projectDir, config, goalId, agents, wanted) {
+function prepareWorktrees(projectDir, config, launcher, goalId, agents, wanted) {
     const map = new Map();
     if (!wanted) {
         console.log(`${nowHms()} worktrees skipped (--no-worktrees); agents run in ${projectDir}`);
@@ -142,7 +142,9 @@ function prepareWorktrees(projectDir, config, goalId, agents, wanted) {
         console.log(`${nowHms()} worktree ${result.outcome} ${result.path} on ${result.branch}${note}`);
         map.set(result.agent, result.path);
     }
-    const missing = missingFromWorktrees(projectDir, [...map.values()]);
+    // Only a PM launched as Codex reads AGENTS.md and .codex/agents, whatever its agent id.
+    const codexWorktrees = [...map].filter(([agent]) => flavorOf(launcher.agents[agent].command) === "codex").map(([, path]) => path);
+    const missing = missingFromWorktrees(projectDir, codexWorktrees);
     if (missing.length > 0) {
         console.log(`${nowHms()} note: ${missing.join(" and ")} not in the worktrees (uncommitted?); Codex reads them only from its worktree. Commit them before the next diarchy start.`);
     }

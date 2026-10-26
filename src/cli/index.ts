@@ -192,8 +192,7 @@ program
   .requiredOption("--agent <id>", "agent id (claude | codex)")
   .action(async (options: { agent: string }) => {
     try {
-      await readStdin(1_500);
-      const decision = runGate(projectDir(), options.agent);
+      const decision = runGate(projectDir(), options.agent, await readStdin(1_500));
       if (decision !== null) process.stdout.write(`${JSON.stringify(decision)}\n`);
     } catch {
       // the hook must never break a session

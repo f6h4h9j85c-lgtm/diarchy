@@ -640,7 +640,7 @@ describe("start --driver fake (good)", () => {
     expect(flag.stderr).toContain("Allowed choices are good, slop");
     const env = await cli(args, { env: { DIARCHY_FAKE_MODE: "bogus" } });
     expect(env.code).toBe(1);
-    expect(env.stderr).toContain('diarchy: --fake-mode (or DIARCHY_FAKE_MODE) must be good or slop, got "bogus"');
+    expect(env.stderr).toContain('diarchy: --fake-mode (or DIARCHY_FAKE_MODE) must be good, slop, or silent, got "bogus"');
     expect(human(dir).listGoals().map((goal) => goal.goalId)).toEqual([paths.goalId]);
   });
 
@@ -735,6 +735,47 @@ describe("start with a goal already active", () => {
     expect(after.lead).toBe("claude");
     expect(existsSync(join(dir, ".diarchy", "start.pid"))).toBe(false);
   });
+});
+
+// ---------------------------------------------------------------------------
+// start --driver fake, silent mode
+// ---------------------------------------------------------------------------
+
+describe("start --driver fake (silent)", () => {
+  it(
+    "the lead DECIDEs plan by authority after two wait_for_reply timeouts with no CHALLENGE, and the run reaches DONE",
+    async () => {
+      const dir = await initProject("quiet", false);
+      const run = await cli([
+        "start",
+        "Ship the quiet widget",
+        "--ac",
+        "The widget renders.",
+        "--ac",
+        "The widget has a test.",
+        "--lead",
+        "claude",
+        "--driver",
+        "fake",
+        "--fake-mode",
+        "silent",
+        "--no-worktrees",
+        "--project",
+        dir,
+      ]);
+      expect(run.code, run.stdout + run.stderr).toBe(0);
+      expect(goalState(dir).phase).toBe("DONE");
+      expect(readdirSync(goalPaths(dir).chatDir).filter((name) => name.endsWith("-CHALLENGE.md"))).toEqual([]);
+      const decide = human(dir)
+        .listMessages()
+        .find((message) => message.type === "DECIDE" && message.decision_id === "plan");
+      expect(decide).toMatchObject({ from: "claude", basis: "authority" });
+      expect(decide?.body.trim()).toBe("No CHALLENGE came after two wait_for_reply timeouts, so there is no test to run.");
+      expect(decide?.reply_to).toBeUndefined();
+      expect(run.stderr).not.toContain("rejected");
+    },
+    2 * RUN_TIMEOUT,
+  );
 });
 
 // ---------------------------------------------------------------------------

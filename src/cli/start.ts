@@ -72,8 +72,8 @@ function parseDriver(value: string): DriverName {
 /** The fake PM's mode: --fake-mode, else DIARCHY_FAKE_MODE, else good. Checked before kickoff, since the fake PM rejects anything else at startup. */
 function fakeMode(options: StartOptions): string {
   const mode = options.fakeMode ?? process.env.DIARCHY_FAKE_MODE ?? "good";
-  if (mode === "good" || mode === "slop") return mode;
-  throw new CliError(`--fake-mode (or DIARCHY_FAKE_MODE) must be good or slop, got "${mode}"`);
+  if (mode === "good" || mode === "slop" || mode === "silent") return mode;
+  throw new CliError(`--fake-mode (or DIARCHY_FAKE_MODE) must be good, slop, or silent, got "${mode}"`);
 }
 
 export async function runStart(projectDir: string, goalText: string | undefined, options: StartOptions): Promise<number> {

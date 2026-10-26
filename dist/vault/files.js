@@ -1,6 +1,6 @@
 /** The one write path for store-owned files: temp file in the same directory, then rename. */
 import { randomBytes } from "node:crypto";
-import { closeSync, fsyncSync, openSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { closeSync, fsyncSync, openSync, renameSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 /** Unique per writer: the pid alone collides across pid namespaces sharing a vault. */
 export function tempPath(path) {
@@ -41,9 +41,6 @@ function syncDirectory(dir) {
         if (fd !== null)
             closeSync(fd);
     }
-}
-export function readJson(path) {
-    return JSON.parse(readFileSync(path, "utf8"));
 }
 export function sleep(ms) {
     return new Promise((resolve) => setTimeout(resolve, ms));

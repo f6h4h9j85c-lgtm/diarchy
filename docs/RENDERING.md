@@ -36,7 +36,7 @@ Target: Obsidian reading view (mobile and desktop) and GitHub file view, from on
 ### 1.2 Time
 
 - All clock times are UTC, as the protocol gives them. Message headers show `HH:MM:SS` (mandated). The strip, the question callout, and `## Status` add `UTC` after the time when the time stands alone.
-- One local-time hint, in parentheses, follows the `last` time in the `chat.md` strip and the `since` time in the `goal.md` BLOCKED callout: `16:30:00 UTC (12:30 local)`. No other time carries one, and `decisions.md` has none. Local is the host timezone of the store process at render time, minutes precision. If the local calendar date differs from the UTC date, the hint carries the date: `(23:30 local, 2026-10-24)`.
+- One local-time hint, in parentheses, follows the `last` time in the `chat.md` strip and the `since` time in the `goal.md` BLOCKED callout: `16:30:00 UTC (12:30 local)`. No other time carries one, and `decisions.md` has none. Local is the host timezone of the store process at render time, minutes precision; a host whose timezone Intl does not accept (`TZ` set but empty resolves to `Etc/Unknown`) renders the hint in UTC. If the local calendar date differs from the UTC date, the hint carries the date: `(23:30 local, 2026-10-24)`.
 - Dates are `YYYY-MM-DD`. Durations are whole minutes: `150 of 240 min`.
 
 ### 1.3 Message type glyphs

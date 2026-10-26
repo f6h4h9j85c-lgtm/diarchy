@@ -6,9 +6,9 @@
  */
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, watch } from "node:fs";
 import { join, resolve } from "node:path";
-import { AC_LINE_PATTERN, AGENT_HUMAN, AGENT_SYSTEM, BODY_MAX_WORDS, GOAL_ID_PATTERN, LINE_TERMINATOR, SchemaError, allowedTypes, assignId, checkMessageShape, evaluate, initialState, isoSeconds, parseGoalState, parseKickoffFile, parseMessageFile, parseMessageId, roleOf, serializeMessageFile, tick, wordCount, } from "../protocol/index.js";
+import { AC_LINE_PATTERN, AGENT_HUMAN, AGENT_SYSTEM, BODY_MAX_WORDS, GOAL_ID_PATTERN, LINE_TERMINATOR, MESSAGE_ID_PATTERN, SchemaError, allowedTypes, assignId, checkMessageShape, describeIssue, evaluate, goalStateSchema, initialState, isoSeconds, parseKickoffFile, parseMessageFile, parseMessageId, roleOf, serializeMessageFile, tick, wordCount, } from "../protocol/index.js";
 import { resolveVaultPaths, vaultPaths } from "./config.js";
-import { atomicWrite, readJson, sleep as realSleep } from "./files.js";
+import { atomicWrite, sleep as realSleep } from "./files.js";
 import { serializeKickoff, slugify, suffixSlug } from "./kickoff.js";
 import { withDirLock } from "./lock.js";
 import { renderChat } from "./render/chat.js";
@@ -50,7 +50,7 @@ export class VaultStore {
     pollIntervalMs;
     /** Per goal directory: chat/ files the open transaction wrote since its last budget.json commit. */
     uncommitted = new Map();
-    /** budget.json files already reported as unreadable, so a poll loop warns once. */
+    /** budget.json and inbox files already reported as unreadable, so a poll loop warns once. */
     warned = new Set();
     constructor(options) {
         this.agent = options.agent;
@@ -65,16 +65,22 @@ export class VaultStore {
     // Goals
     // -------------------------------------------------------------------------
     /**
-     * Every goal whose KICKOFF committed, oldest first. A goal whose
-     * budget.json does not parse (damaged, or another protocol_version) is
-     * skipped with one stderr warning naming the file, so it cannot take the
-     * rest of the vault down with it (PROTOCOL.md 2.3).
+     * Every readable goal whose KICKOFF committed, oldest first. A goal whose
+     * budget.json does not parse (damaged, or another protocol_version) is left
+     * out with one stderr warning naming the file; it still blocks kickoff, and
+     * when no readable goal started after it, activeGoal and every tool throw
+     * CorruptVaultFileError naming it (PROTOCOL.md 2.3).
      */
     listGoals() {
+        return this.scanGoals().refs;
+    }
+    /** The readable goals, oldest first, and the goal directories whose budget.json will not parse. */
+    scanGoals() {
         const { goals } = vaultPaths(this.projectDir, this.config);
-        if (!existsSync(goals))
-            return [];
         const refs = [];
+        const unreadable = [];
+        if (!existsSync(goals))
+            return { refs, unreadable };
         for (const name of readdirSync(goals).sort()) {
             const paths = resolveVaultPaths(this.projectDir, this.config, name);
             let state;
@@ -82,30 +88,57 @@ export class VaultStore {
                 state = this.committedState(paths);
             }
             catch (error) {
+                if (!(error instanceof CorruptVaultFileError))
+                    throw error;
                 this.warnUnreadable(paths, error);
+                unreadable.push({ goalId: name, created: this.kickoffCreated(paths), error });
                 continue;
             }
             if (state === null)
                 continue;
             refs.push({ goalId: name, phase: state.phase, lead: state.lead, challenger: state.challenger, created: state.created, paths });
         }
-        return refs.sort((a, b) => (a.created < b.created ? -1 : a.created > b.created ? 1 : 0));
+        refs.sort((a, b) => (a.created < b.created ? -1 : a.created > b.created ? 1 : 0));
+        return { refs, unreadable };
     }
     warnUnreadable(paths, error) {
         if (this.warned.has(paths.budget))
             return;
         this.warned.add(paths.budget);
-        console.error(`diarchy: skipping goal ${paths.goalId}: ${error instanceof Error ? error.message : String(error)}`);
+        console.error(`diarchy: skipping goal ${paths.goalId}: ${error.message}`);
+    }
+    kickoffCreated(paths) {
+        try {
+            return this.loadKickoff(paths).created;
+        }
+        catch {
+            return null;
+        }
+    }
+    /**
+     * The readable goals, oldest first. Throws CorruptVaultFileError when a goal
+     * whose budget.json will not parse is not older than all of them: that goal
+     * may be the active one, so answering with no goal or an older goal would
+     * hide it.
+     */
+    knownGoals() {
+        const { refs, unreadable } = this.scanGoals();
+        const newest = refs[refs.length - 1];
+        const hidden = unreadable.find((goal) => newest === undefined || goal.created === null || goal.created >= newest.created);
+        if (hidden !== undefined)
+            throw hidden.error;
+        return refs;
     }
     /** The one goal in PLAN, EXECUTE, or BLOCKED, if any. */
     activeGoal() {
-        const active = this.listGoals().filter((goal) => goal.phase !== "DONE");
+        const active = this.knownGoals().filter((goal) => goal.phase !== "DONE");
         return active[active.length - 1] ?? null;
     }
     /** The active goal, else the newest (so `read` keeps working after DONE). */
     currentGoal() {
-        const goals = this.listGoals();
-        return this.activeGoal() ?? goals[goals.length - 1] ?? null;
+        const goals = this.knownGoals();
+        const active = goals.filter((goal) => goal.phase !== "DONE");
+        return active[active.length - 1] ?? goals[goals.length - 1] ?? null;
     }
     requireGoal() {
         const goal = this.currentGoal();
@@ -148,9 +181,9 @@ export class VaultStore {
      * first one active and gets SINGLE_KICKOFF.
      */
     async kickoff(input) {
-        const active = this.activeGoal();
-        if (active !== null)
-            return singleKickoff(active.goalId, active.phase);
+        const refused = this.kickoffRefusal();
+        if (refused !== null)
+            return refused;
         const agents = Object.keys(this.config.agents);
         if (agents.length < 2)
             throw new Error("diarchy.config.json must declare at least two agents");
@@ -161,10 +194,21 @@ export class VaultStore {
         mkdirSync(goals, { recursive: true });
         return withDirLock(join(goals, VAULT_LOCK), LOCK_RETRY_MS, realSleep, () => this.kickoffLocked(input, agents));
     }
+    /** SINGLE_KICKOFF while a goal is active, or while a goal whose budget.json will not parse may be. */
+    kickoffRefusal() {
+        const { refs, unreadable } = this.scanGoals();
+        const hidden = unreadable[0];
+        if (hidden !== undefined) {
+            return reject("SINGLE_KICKOFF", `Goal ${hidden.goalId} cannot be read: ${hidden.error.message} It may still be active, so kickoff waits until that file is repaired or its goal directory is moved out of the vault.`);
+        }
+        const active = refs.filter((goal) => goal.phase !== "DONE");
+        const last = active[active.length - 1];
+        return last === undefined ? null : singleKickoff(last.goalId, last.phase);
+    }
     async kickoffLocked(input, agents) {
-        const active = this.activeGoal();
-        if (active !== null)
-            return singleKickoff(active.goalId, active.phase);
+        const refused = this.kickoffRefusal();
+        if (refused !== null)
+            return refused;
         const lead = input.lead ?? this.defaultLead(agents);
         if (agents.includes(this.agent) && lead !== this.agent) {
             return reject("ROLE_GATE", `KICKOFF may only be posted by the lead (${lead}). You are the challenger.`);
@@ -213,7 +257,7 @@ export class VaultStore {
                 const final = await this.applyEffects(paths, outcome.transition);
                 this.persist(paths, final);
                 committed = true;
-                this.renderFiles(paths, kickoff, final);
+                this.renderCommitted(paths, kickoff, final);
                 return { ...this.postOk(outcome.message, final), goal_id: goalId, lead, challenger: kickoff.challenger, kickoff_id: outcome.message.id };
             }
             finally {
@@ -342,7 +386,7 @@ export class VaultStore {
                 return outcome;
             const final = await this.applyEffects(goal.paths, outcome.transition);
             this.persist(goal.paths, final);
-            this.renderFiles(goal.paths, kickoff, final);
+            this.renderCommitted(goal.paths, kickoff, final);
             return this.postOk(outcome.message, final);
         });
     }
@@ -408,7 +452,7 @@ export class VaultStore {
             return state;
         const final = await this.applyEffects(paths, transition);
         this.persist(paths, final);
-        this.renderFiles(paths, kickoff, final);
+        this.renderCommitted(paths, kickoff, final);
         return final;
     }
     postOk(message, state) {
@@ -459,8 +503,10 @@ export class VaultStore {
             cursor: last === undefined ? cursor : last.id,
         };
     }
+    /** Save the cursor when it moved, or when the stored file will not parse (PROTOCOL.md 2.3). */
     commitCursor(paths, cursor) {
-        if (cursor !== this.loadCursor(paths))
+        const stored = readInbox(paths.inbox(this.agent), this.agent);
+        if (stored.corrupt || cursor !== stored.cursor)
             this.saveCursor(paths, cursor);
     }
     /**
@@ -625,7 +671,7 @@ export class VaultStore {
             next.used.wall_clock_minutes = Math.floor((Date.parse(message.ts) - Date.parse(next.created)) / 60_000);
             next.updated = message.ts;
             this.persist(goal.paths, next);
-            this.renderFiles(goal.paths, kickoff, next);
+            this.renderCommitted(goal.paths, kickoff, next);
             return this.postOk(message, next);
         });
     }
@@ -751,14 +797,20 @@ export class VaultStore {
         }
         return messages;
     }
-    /** budget.json of one goal; a file that does not parse throws an error naming it. */
+    /** budget.json of one goal; a file that will not parse throws CorruptVaultFileError naming it. */
     loadState(paths) {
+        let input;
         try {
-            return parseGoalState(readJson(paths.budget));
+            input = JSON.parse(readFileSync(paths.budget, "utf8"));
         }
         catch (error) {
-            throw new Error(`${paths.budget} does not parse: ${error instanceof Error ? error.message : String(error)}`, { cause: error });
+            throw corruptFile(paths.budget, error instanceof Error ? error.message : String(error));
         }
+        const parsed = goalStateSchema.safeParse(input);
+        if (parsed.success)
+            return parsed.data;
+        const { field, problem } = describeIssue(parsed.error.issues[0], input);
+        throw corruptFile(paths.budget, `Field "${field}": ${problem}`);
     }
     /**
      * The goal's state once its KICKOFF has committed; null when the directory
@@ -779,16 +831,33 @@ export class VaultStore {
     loadKickoff(paths) {
         return parseStored(paths.kickoff, parseKickoffFile);
     }
+    /** This agent's cursor; an inbox file that will not parse reads as null, with one stderr warning naming it. */
     loadCursor(paths) {
         const path = paths.inbox(this.agent);
-        if (!existsSync(path))
-            return null;
-        return readJson(path).cursor;
+        const stored = readInbox(path, this.agent);
+        if (stored.corrupt && !this.warned.has(path)) {
+            this.warned.add(path);
+            console.error(`diarchy: ${path} will not parse; reading from the start of the goal, and the next delivery rewrites it`);
+        }
+        return stored.cursor;
     }
     saveCursor(paths, cursor) {
         mkdirSync(paths.inboxDir, { recursive: true });
         const inbox = { protocol_version: 1, agent: this.agent, cursor, updated: isoSeconds(this.now()) };
         atomicWrite(paths.inbox(this.agent), `${JSON.stringify(inbox, null, 2)}\n`);
+    }
+    /**
+     * Render after a commit. The transaction has committed, so a render failure
+     * is logged, not thrown: reporting it as an error would invite a retry that
+     * posts the message twice. The next transaction or `diarchy render` renders again.
+     */
+    renderCommitted(paths, kickoff, state) {
+        try {
+            this.renderFiles(paths, kickoff, state);
+        }
+        catch (error) {
+            console.error(`diarchy: ${paths.goalId} committed, but rendering its views failed: ${error instanceof Error ? error.message : String(error)}`);
+        }
     }
     renderFiles(paths, kickoff, state) {
         const messages = this.readMessages(paths, state, true);
@@ -800,11 +869,36 @@ export class VaultStore {
 // ---------------------------------------------------------------------------
 // Module helpers
 // ---------------------------------------------------------------------------
+/**
+ * The cursor an inbox/<agent>.json holds: null when the file is missing, and
+ * also when it will not parse or is not this agent's protocol_version 1 inbox
+ * (`corrupt`). The cursor only saves re-delivery, and delivering messages
+ * again is safe, so a damaged file never blocks a read.
+ */
+export function readInbox(path, agent) {
+    if (!existsSync(path))
+        return { cursor: null, corrupt: false };
+    let inbox;
+    try {
+        inbox = JSON.parse(readFileSync(path, "utf8"));
+    }
+    catch {
+        return { cursor: null, corrupt: true };
+    }
+    if (typeof inbox !== "object" || inbox === null)
+        return { cursor: null, corrupt: true };
+    const { protocol_version, agent: owner, cursor } = inbox;
+    const valid = protocol_version === 1 && owner === agent && (cursor === null || (typeof cursor === "string" && MESSAGE_ID_PATTERN.test(cursor)));
+    return valid ? { cursor: cursor, corrupt: false } : { cursor: null, corrupt: true };
+}
 function schemaText(field, problem) {
     return `Field "${field}": ${problem}. Fix it per PROTOCOL.md section 3 and post again.`;
 }
 function committedIds(state) {
     return new Set(state.messages.map((ref) => ref.id));
+}
+function corruptFile(path, problem) {
+    return new CorruptVaultFileError(path, new SchemaError("SCHEMA", problem, null, problem));
 }
 /** Parse a stored vault file; a parse failure names the file as corrupt instead of blaming the caller's draft. */
 function parseStored(path, parse) {

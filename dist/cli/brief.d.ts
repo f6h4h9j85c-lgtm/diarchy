@@ -1,5 +1,10 @@
+/**
+ * What a goal needs from an agent or the human right now. Shared by `status`,
+ * `inbox-skim`, and `gate`; pure over GoalState plus the message list, except
+ * for reading an inbox cursor file (never writing it).
+ */
 import { type AgentId, type GoalState, type Message, type TaskStatus } from "../protocol/index.js";
-import type { GoalRef } from "../vault/index.js";
+import { type GoalRef } from "../vault/index.js";
 export interface Assignment {
     task: string;
     kind: "implement" | "review";
@@ -17,7 +22,10 @@ export declare function challengedThreads(state: GoalState): {
     from: AgentId;
     challengeId: string;
 }[];
-/** Messages after the agent's inbox cursor, excluding its own. Reads the cursor file; never moves it. */
+/**
+ * Messages after the agent's inbox cursor, excluding its own. Reads the cursor
+ * file, never moves it; one that will not parse counts as no cursor, as in the store.
+ */
 export declare function unreadFor(goal: GoalRef, messages: Message[], agent: AgentId): Message[];
 /**
  * The `diarchy reply` invocation that answers the current block, mirroring the

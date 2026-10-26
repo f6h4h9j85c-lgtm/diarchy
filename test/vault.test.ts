@@ -1,11 +1,12 @@
 import { spawn, spawnSync } from "node:child_process";
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { afterEach, describe, expect, expectTypeOf, it, vi } from "vitest";
 
+import { runGate, runInboxSkim } from "../src/cli/hooks.js";
 import {
   assignId,
   wordCount,
@@ -36,7 +37,7 @@ import {
   type PostResult,
 } from "../src/vault/index.js";
 import { LOCK_HOST, inspectLock, isStale, lockOwner, reapIfSame, releaseLock, touchLock, tryLock } from "../src/vault/lock.js";
-import { budgetLine, cellCode, code, escapePunctuation, italic, link, linkText, localHint, plainBlock, plainInline, visible } from "../src/vault/render/shared.js";
+import { budgetLine, cellCode, code, escapePunctuation, hostTimeZone, italic, link, linkText, localHint, plainBlock, plainInline, visible } from "../src/vault/render/shared.js";
 import type { KickoffInput, ReplyOptions, WaitOptions } from "../src/vault/types.js";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
@@ -137,6 +138,16 @@ function setPhase(h: Harness, goalId: string, phase: GoalState["phase"]): void {
   const path = join(h.goalDir(goalId), "budget.json");
   const state = parseGoalState(JSON.parse(readFileSync(path, "utf8")));
   writeFileSync(path, `${JSON.stringify({ ...state, phase }, null, 2)}\n`);
+}
+
+/** What JSON.parse says about `text`: V8 words and truncates these itself. */
+function jsonError(text: string): string {
+  try {
+    JSON.parse(text);
+  } catch (error) {
+    return (error as Error).message;
+  }
+  throw new Error("parsed");
 }
 
 function listFiles(dir: string): string[] {
@@ -347,6 +358,36 @@ describe("renderer rules", () => {
     expect(italic("RATE_LIMIT is *fast*.")).toBe("*RATE\\_LIMIT is \\*fast\\*\\.*");
     expect(code("npm test")).toBe("`npm test`");
     expect(code("echo `x`")).toBe("`` echo `x` ``");
+  });
+
+  it("a timezone Intl rejects never fails a render: the hint falls back to the host's zone, and with TZ set but empty to UTC", async () => {
+    const h = harness();
+    await replay(h, 2);
+    const kickoff = h.claude.readKickoff();
+    if (kickoff === null) throw new Error("no kickoff");
+    const ts = "2026-10-25T23:30:00Z";
+    expect(localHint(ts, "Etc/Unknown")).toBe(localHint(ts, hostTimeZone()));
+    expect(localHint(ts, "Not/AZone")).toBe(localHint(ts, hostTimeZone()));
+    const messages = h.claude.listMessages();
+    expect(renderChat(messages, h.claude.state(), kickoff, { localTz: "Etc/Unknown" })).toBe(renderChat(messages, h.claude.state(), kickoff, { localTz: hostTimeZone() }));
+
+    // TZ="" resolves to Etc/Unknown on Node 22, which new Intl.DateTimeFormat rejects; a store in that process still commits and renders.
+    const project = harness().projectDir;
+    const script = [
+      'import { hostTimeZone, localHint } from "./src/vault/render/shared.ts";',
+      'import { VaultStore, loadConfig } from "./src/vault/index.ts";',
+      "const dir = process.argv[1];",
+      'const store = new VaultStore({ projectDir: dir, config: loadConfig(dir), agent: "human" });',
+      'const result = await store.kickoff({ goal: "Rate limit the API.", acceptance_criteria: ["Over-limit requests get 429."], lead: "claude", slug: "rl" });',
+      'console.log(JSON.stringify({ host: hostTimeZone(), hint: localHint("2026-10-25T23:30:00Z", undefined), ok: result.ok }));',
+    ].join("\n");
+    // `--import tsx` resolves from the child's cwd, so pin it to the repo.
+    const child = spawnSync(process.execPath, ["--import", "tsx", "--input-type=module", "-e", script, project], { cwd: ROOT, env: { ...process.env, TZ: "" }, encoding: "utf8" });
+    expect(child.status, child.stderr).toBe(0);
+    expect(child.stderr).not.toContain("rendering its views failed");
+    expect(JSON.parse(child.stdout)).toEqual({ host: "UTC", hint: "(23:30 local)", ok: true });
+    const goal = new VaultStore({ projectDir: project, config: CONFIG, agent: "human" }).listGoals()[0];
+    expect(readFileSync(goal.paths.chatMd, "utf8")).toMatch(/ UTC \(\d\d:\d\d local(, \d{4}-\d\d-\d\d)?\) /);
   });
 
   it("derives link text from GitHub PR and commit URLs and trims other URLs at 60 characters", () => {
@@ -1028,7 +1069,7 @@ describe("crash safety", () => {
     expect(existsSync(lock)).toBe(false);
   });
 
-  it("a goal whose budget.json does not parse is skipped with one warning naming the file; the rest of the vault keeps working", async () => {
+  it("an older goal whose budget.json does not parse is left out with one warning naming the file; the newer goal keeps working, but kickoff waits", async () => {
     const h = harness();
     ok(await h.human.kickoff({ goal: "Old goal.", acceptance_criteria: ["It shipped."], lead: "claude", slug: "old" }));
     setPhase(h, "20261025-old", "DONE");
@@ -1044,12 +1085,102 @@ describe("crash safety", () => {
       ok(await h.claude.post({ type: "PROPOSE", to: "all", re: ["AC1"], decision_id: "plan", claim: "One step ships it.", body: "Nothing to split." }));
       // Once per store, however often it lists the goals.
       expect(log).toHaveBeenCalledOnce();
-      expect(log.mock.calls[0][0]).toContain(`skipping goal 20261025-old: ${oldBudget} does not parse`);
+      expect(log.mock.calls[0][0]).toBe(`diarchy: skipping goal 20261025-old: Vault file ${oldBudget} is corrupt: Unexpected end of JSON input.`);
       expect(h.human.listGoals().map((goal) => goal.goalId)).toEqual(["20261025-new"]);
       expect(log).toHaveBeenCalledTimes(2);
+
+      // Once the newer goal is done, the unreadable one may be the goal still in flight: no new goal starts beside it.
+      setPhase(h, "20261025-new", "DONE");
+      expect(h.claude.activeGoal()).toBeNull();
+      expect(h.claude.read()?.goal).toBe("20261025-new");
+      expect(await h.human.kickoff({ goal: "Third goal.", acceptance_criteria: ["It ships."], lead: "claude", slug: "third" })).toEqual({
+        ok: false,
+        rule: "SINGLE_KICKOFF",
+        message: `Goal 20261025-old cannot be read: Vault file ${oldBudget} is corrupt: Unexpected end of JSON input. It may still be active, so kickoff waits until that file is repaired or its goal directory is moved out of the vault.`,
+      });
+      renameSync(h.goalDir("20261025-old"), join(h.projectDir, "old-goal"));
+      ok(await h.human.kickoff({ goal: "Third goal.", acceptance_criteria: ["It ships."], lead: "claude", slug: "third" }));
     } finally {
       log.mockRestore();
     }
+  });
+
+  it("an unreadable budget.json on the active goal fails closed: no NO_GOAL, no fallback to an older goal, and no second kickoff", async () => {
+    const antiSlop = readFileSync(fileURLToPath(new URL("../docs/ANTI-SLOP.md", import.meta.url)), "utf8");
+    const template = "Goal {id} cannot be read: Vault file {file} is corrupt: {problem}. It may still be active, so kickoff waits until that file is repaired or its goal directory is moved out of the vault.";
+    expect(antiSlop).toContain(template);
+    const refusal = (goalId: string, file: string, problem: string) =>
+      template.replace("{id}", goalId).replace("{file}", file).replace("{problem}", problem);
+    const second = { goal: "Second goal.", acceptance_criteria: ["It ships."], lead: "claude", slug: "second" };
+
+    for (const earlier of [false, true]) {
+      const h = harness();
+      if (earlier) {
+        ok(await h.human.kickoff({ goal: "Old goal.", acceptance_criteria: ["It shipped."], lead: "claude", slug: "old" }));
+        setPhase(h, "20261025-old", "DONE");
+        h.clock.advance(60_000);
+      }
+      ok(await h.human.kickoff({ goal: "Active goal.", acceptance_criteria: ["It ships."], lead: "claude", slug: "active" }));
+      const budget = join(h.goalDir("20261025-active"), "budget.json");
+      const intact = readFileSync(budget, "utf8");
+      const conflicted = `<<<<<<< HEAD\n${intact}=======\n${intact}>>>>>>> theirs\n`;
+      const cases: [string, string][] = [
+        // A git merge conflict, a truncated write, and a file from another protocol_version.
+        [conflicted, jsonError(conflicted)],
+        [intact.slice(0, 40), jsonError(intact.slice(0, 40))],
+        [intact.replace('"protocol_version": 1', '"protocol_version": 2'), 'Field "protocol_version": Invalid input: expected 1'],
+      ];
+      const log = vi.spyOn(console, "error").mockImplementation(() => undefined);
+      try {
+        for (const [text, problem] of cases) {
+          writeFileSync(budget, text);
+          const corrupt = { name: "CorruptVaultFileError", rule: "SCHEMA", file: budget, message: `Vault file ${budget} is corrupt: ${problem}.` };
+          const label = `earlier DONE goal: ${earlier}; ${problem}`;
+          expect(() => h.claude.activeGoal(), label).toThrow(expect.objectContaining(corrupt));
+          expect(() => h.claude.read(), label).toThrow(expect.objectContaining(corrupt));
+          await expect(h.claude.post({ type: "BLOCKED", to: "all", re: ["AC1"], kind: "external", body: "Paging the human." }), label).rejects.toMatchObject(corrupt);
+          await expect(h.codex.waitForReply({ timeoutMs: 0 }), label).rejects.toMatchObject(corrupt);
+          await expect(h.human.stop("Stop it."), label).rejects.toMatchObject(corrupt);
+          expect(await h.claude.kickoff(second), label).toEqual({ ok: false, rule: "SINGLE_KICKOFF", message: refusal("20261025-active", budget, problem) });
+          expect(existsSync(h.goalDir("20261025-second")), label).toBe(false);
+        }
+      } finally {
+        log.mockRestore();
+      }
+      // Repaired, it is the active goal again; nothing else started beside it.
+      writeFileSync(budget, intact);
+      expect(h.claude.activeGoal()?.goalId).toBe("20261025-active");
+      expect(await h.claude.kickoff(second)).toEqual({ ok: false, rule: "SINGLE_KICKOFF", message: "Goal 20261025-active is already active (phase PLAN). Call read instead of kickoff." });
+      expect(h.human.listGoals().map((goal) => goal.goalId)).toEqual(earlier ? ["20261025-old", "20261025-active"] : ["20261025-active"]);
+    }
+  });
+
+  it("a render failure after the budget.json commit is logged, not reported: the post stands, and the next transaction renders", async () => {
+    const h = harness();
+    await replay(h, 1);
+    // goal.md as a non-empty directory: the rename onto it fails after the commit.
+    const goalMd = join(h.goalDir(), "goal.md");
+    rmSync(goalMd);
+    mkdirSync(join(goalMd, "in-the-way"), { recursive: true });
+    const log = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      h.clock.set(RUN[1].ts);
+      const result = await h.claude.post(toDraft(RUN[1]));
+      ok(result);
+      expect(result.id).toBe(RUN[1].id);
+      expect(h.claude.state()?.messages.map((ref) => ref.id)).toEqual([RUN[0].id, RUN[1].id]);
+      expect(log).toHaveBeenCalledOnce();
+      expect(log.mock.calls[0][0]).toMatch(/^diarchy: 20261025-rate-limit committed, but rendering its views failed: /);
+    } finally {
+      log.mockRestore();
+    }
+    rmSync(goalMd, { recursive: true });
+    for (const name of readdirSync(h.goalDir()).filter((file) => file.startsWith("goal.md.tmp-"))) rmSync(join(h.goalDir(), name));
+    h.clock.set(RUN[2].ts);
+    ok(await h[RUN[2].from as Writer].post(toDraft(RUN[2])));
+    const kickoff = h.claude.readKickoff();
+    if (kickoff === null) throw new Error("no kickoff");
+    expect(h.file("goal.md")).toBe(renderGoal(h.claude.listMessages(), h.claude.state(), kickoff, { localTz: TZ }));
   });
 
   it("a kickoff that throws before its KICKOFF commits leaves no goal behind, so kickoff can be retried", async () => {
@@ -1461,6 +1592,59 @@ describe("read and waitForReply", () => {
     expect(own?.role).toBe("lead");
     expect(h.human.read()?.role).toBe("human");
     expect(h.codex.read({ since: null as unknown as string })?.messages).toHaveLength(0);
+  });
+
+  it("an inbox file that will not parse reads as no cursor with one warning: read, read({since}), and waitForReply still deliver, and the next delivery rewrites it", async () => {
+    const h = harness();
+    await replay(h, 2);
+    const inbox = join(h.goalDir(), "inbox", "codex.json");
+    const both = [RUN[0].id, RUN[1].id];
+    const ids = (result: ReturnType<VaultStore["read"]> | Awaited<ReturnType<VaultStore["waitForReply"]>>) =>
+      result === null || "timeout" in result ? null : result.messages.map((message) => message.id);
+    const rewritten = () => expect(JSON.parse(h.file("inbox/codex.json"))).toMatchObject({ protocol_version: 1, agent: "codex", cursor: RUN[1].id });
+    const log = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      h.codex.read();
+      const intact = h.file("inbox/codex.json");
+      // Empty: read delivers from the start of the goal again and rewrites the file.
+      writeFileSync(inbox, "");
+      expect(ids(h.codex.read())).toEqual(both);
+      rewritten();
+      expect(log).toHaveBeenCalledOnce();
+      expect(log.mock.calls[0][0]).toBe(`diarchy: ${inbox} will not parse; reading from the start of the goal, and the next delivery rewrites it`);
+      // Truncated: wait_for_reply delivers at once.
+      writeFileSync(inbox, intact.slice(0, 30));
+      expect(ids(await h.codex.waitForReply({ timeoutMs: 0 }))).toEqual(both);
+      rewritten();
+      // Another agent's inbox, another protocol_version, or a cursor that is no message id: no cursor either. An explicit since still works.
+      const base = JSON.parse(intact) as Record<string, unknown>;
+      for (const bad of [{ ...base, agent: "claude" }, { ...base, protocol_version: 2 }, { ...base, cursor: 7 }, [base]]) {
+        writeFileSync(inbox, JSON.stringify(bad));
+        expect(ids(h.codex.read({ since: RUN[0].id })), JSON.stringify(bad)).toEqual([RUN[1].id]);
+        rewritten();
+        writeFileSync(inbox, JSON.stringify(bad));
+        expect(ids(h.codex.read()), JSON.stringify(bad)).toEqual(both);
+        rewritten();
+      }
+      expect(log).toHaveBeenCalledOnce();
+    } finally {
+      log.mockRestore();
+    }
+  });
+
+  it("the Stop gate and the session brief count from the start of the goal when the inbox file will not parse, and leave it alone", async () => {
+    const h = harness();
+    await replay(h, 2);
+    h.codex.read();
+    expect(runGate(h.projectDir, "codex")).toBeNull();
+    expect(runInboxSkim(h.projectDir, "codex")).toContain("unread: 0 messages");
+    const inbox = join(h.goalDir(), "inbox", "codex.json");
+    for (const text of ["", '{"protocol_version": 1, "agent": "co']) {
+      writeFileSync(inbox, text);
+      expect(runGate(h.projectDir, "codex")).toEqual({ decision: "block", reason: "diarchy goal 20261025-rate-limit (PLAN): 2 unread messages: call read, then act on them." });
+      expect(runInboxSkim(h.projectDir, "codex")).toContain("unread: 2 messages");
+      expect(readFileSync(inbox, "utf8")).toBe(text);
+    }
   });
 
   it("waitForReply resolves within one poll after the other agent posts", async () => {

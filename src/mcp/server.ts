@@ -9,7 +9,7 @@
  * server checks them itself instead of leaving it to the SDK.
  */
 import { readFileSync } from "node:fs";
-import { posix } from "node:path";
+import { basename, posix } from "node:path";
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { RequestHandlerExtra } from "@modelcontextprotocol/sdk/shared/protocol.js";
@@ -94,8 +94,15 @@ function logError(error: unknown): void {
   console.error(`diarchy-mcp: ${error instanceof Error ? (error.stack ?? error.message) : String(error)}`);
 }
 
-/** A stored vault file will not parse: say so, and send the PM to the human instead of a retry. */
+/**
+ * A stored vault file will not parse: say so, and send the PM to the human
+ * instead of a retry. Nothing can post to a goal whose budget.json will not
+ * parse, so that one goes to the human outside the vault.
+ */
 function corruptFileText(error: CorruptVaultFileError): string {
+  if (basename(error.file) === "budget.json") {
+    return `${error.message} The vault is damaged, not your draft, so do not retry. No tool can reach that goal until the human repairs the file or moves its goal directory out of the vault: stop and tell the human, naming the file.`;
+  }
   return `${error.message} The vault is damaged, not your draft, so do not retry. Post BLOCKED with kind external naming that file so the human can fix it or run diarchy stop.`;
 }
 

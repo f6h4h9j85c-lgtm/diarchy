@@ -15,8 +15,12 @@ export declare const GLYPHS: Record<MessageType, string>;
 export declare function hms(ts: string): string;
 /** `2026-10-25T14:30:12Z` -> `2026-10-25` */
 export declare function utcDate(ts: string): string;
+/** The host's timezone, or UTC when Intl names none it accepts (TZ="" resolves to Etc/Unknown on Node 22). */
 export declare function hostTimeZone(): string;
-/** `(12:30 local)`, or `(23:30 local, 2026-10-24)` when the local date differs from the UTC date. */
+/**
+ * `(12:30 local)`, or `(23:30 local, 2026-10-24)` when the local date differs from the UTC date.
+ * A `localTz` Intl rejects falls back to the host's zone, so a bad zone never fails a render.
+ */
 export declare function localHint(ts: string, localTz: string | undefined): string;
 /**
  * Agent text with nothing invisible left in it (1.1 step 1): CR, CRLF, U+2028, and U+2029 become LF, a tab

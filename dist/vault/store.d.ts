@@ -15,17 +15,28 @@ export declare class VaultStore {
     private readonly pollIntervalMs;
     /** Per goal directory: chat/ files the open transaction wrote since its last budget.json commit. */
     private readonly uncommitted;
-    /** budget.json files already reported as unreadable, so a poll loop warns once. */
+    /** budget.json and inbox files already reported as unreadable, so a poll loop warns once. */
     private readonly warned;
     constructor(options: VaultStoreOptions);
     /**
-     * Every goal whose KICKOFF committed, oldest first. A goal whose
-     * budget.json does not parse (damaged, or another protocol_version) is
-     * skipped with one stderr warning naming the file, so it cannot take the
-     * rest of the vault down with it (PROTOCOL.md 2.3).
+     * Every readable goal whose KICKOFF committed, oldest first. A goal whose
+     * budget.json does not parse (damaged, or another protocol_version) is left
+     * out with one stderr warning naming the file; it still blocks kickoff, and
+     * when no readable goal started after it, activeGoal and every tool throw
+     * CorruptVaultFileError naming it (PROTOCOL.md 2.3).
      */
     listGoals(): GoalRef[];
+    /** The readable goals, oldest first, and the goal directories whose budget.json will not parse. */
+    private scanGoals;
     private warnUnreadable;
+    private kickoffCreated;
+    /**
+     * The readable goals, oldest first. Throws CorruptVaultFileError when a goal
+     * whose budget.json will not parse is not older than all of them: that goal
+     * may be the active one, so answering with no goal or an older goal would
+     * hide it.
+     */
+    private knownGoals;
     /** The one goal in PLAN, EXECUTE, or BLOCKED, if any. */
     activeGoal(): GoalRef | null;
     /** The active goal, else the newest (so `read` keeps working after DONE). */
@@ -48,6 +59,8 @@ export declare class VaultStore {
      * first one active and gets SINGLE_KICKOFF.
      */
     kickoff(input: KickoffInput): Promise<KickoffResult>;
+    /** SINGLE_KICKOFF while a goal is active, or while a goal whose budget.json will not parse may be. */
+    private kickoffRefusal;
     private kickoffLocked;
     /**
      * Shape checks before anything is written. kickoff.md is line based (goal
@@ -92,6 +105,7 @@ export declare class VaultStore {
     }): ReadResult | null;
     /** `read` without its side effect: what a read would deliver now, and the cursor that delivery commits. */
     private peek;
+    /** Save the cursor when it moved, or when the stored file will not parse (PROTOCOL.md 2.3). */
     private commitCursor;
     /**
      * Resolve as soon as a `read` would deliver something, or `{ timeout: true }`.
@@ -145,7 +159,7 @@ export declare class VaultStore {
      * block them (a function `skipCorrupt` also receives each error).
      */
     private readMessages;
-    /** budget.json of one goal; a file that does not parse throws an error naming it. */
+    /** budget.json of one goal; a file that will not parse throws CorruptVaultFileError naming it. */
     private loadState;
     /**
      * The goal's state once its KICKOFF has committed; null when the directory
@@ -156,7 +170,24 @@ export declare class VaultStore {
     /** The commit point: every chat/ file written so far is now accepted. */
     private persist;
     private loadKickoff;
+    /** This agent's cursor; an inbox file that will not parse reads as null, with one stderr warning naming it. */
     private loadCursor;
     private saveCursor;
+    /**
+     * Render after a commit. The transaction has committed, so a render failure
+     * is logged, not thrown: reporting it as an error would invite a retry that
+     * posts the message twice. The next transaction or `diarchy render` renders again.
+     */
+    private renderCommitted;
     private renderFiles;
 }
+/**
+ * The cursor an inbox/<agent>.json holds: null when the file is missing, and
+ * also when it will not parse or is not this agent's protocol_version 1 inbox
+ * (`corrupt`). The cursor only saves re-delivery, and delivering messages
+ * again is safe, so a damaged file never blocks a read.
+ */
+export declare function readInbox(path: string, agent: AgentId): {
+    cursor: string | null;
+    corrupt: boolean;
+};

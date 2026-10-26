@@ -28,13 +28,33 @@ export function hms(ts) {
 export function utcDate(ts) {
     return ts.slice(0, 10);
 }
+/** The host's timezone, or UTC when Intl names none it accepts (TZ="" resolves to Etc/Unknown on Node 22). */
 export function hostTimeZone() {
-    return Intl.DateTimeFormat().resolvedOptions().timeZone;
+    const zone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    return zone !== undefined && isTimeZone(zone) ? zone : "UTC";
 }
-/** `(12:30 local)`, or `(23:30 local, 2026-10-24)` when the local date differs from the UTC date. */
+/** Zone names already checked: building a formatter to check one costs as much as a render's hint. */
+const knownZones = new Map();
+function isTimeZone(zone) {
+    let valid = knownZones.get(zone);
+    if (valid === undefined) {
+        try {
+            valid = new Intl.DateTimeFormat("en-CA", { timeZone: zone }).resolvedOptions().timeZone !== undefined;
+        }
+        catch {
+            valid = false;
+        }
+        knownZones.set(zone, valid);
+    }
+    return valid;
+}
+/**
+ * `(12:30 local)`, or `(23:30 local, 2026-10-24)` when the local date differs from the UTC date.
+ * A `localTz` Intl rejects falls back to the host's zone, so a bad zone never fails a render.
+ */
 export function localHint(ts, localTz) {
     const parts = new Intl.DateTimeFormat("en-CA", {
-        timeZone: localTz ?? hostTimeZone(),
+        timeZone: localTz !== undefined && isTimeZone(localTz) ? localTz : hostTimeZone(),
         hourCycle: "h23",
         year: "numeric",
         month: "2-digit",

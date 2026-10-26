@@ -2,7 +2,7 @@
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 
 import type { AgentId } from "../protocol/index.js";
-import { createMcpServer } from "./server.js";
+import { createMcpServer, type ToolOutcome } from "./server.js";
 
 export {
   SERVER_ERRORS,
@@ -12,6 +12,7 @@ export {
   type ServerError,
   type ServerErrorCode,
   type ToolError,
+  type ToolOutcome,
 } from "./server.js";
 
 /**
@@ -19,7 +20,7 @@ export {
  * ends stdin or the connection drops). stdout carries MCP frames only; the
  * server logs to stderr.
  */
-export async function runMcpServer(options: { projectDir: string; agent: AgentId }): Promise<void> {
+export async function runMcpServer(options: { projectDir: string; agent: AgentId; onResult?: (result: ToolOutcome) => void }): Promise<void> {
   const server = createMcpServer(options);
   const transport = new StdioServerTransport();
   const closed = new Promise<void>((resolve) => {

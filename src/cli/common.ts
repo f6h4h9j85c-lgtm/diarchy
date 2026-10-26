@@ -56,15 +56,31 @@ export class CliError extends Error {
  * project's vault; `walkUp: false` (for `init`) keeps the cwd.
  */
 export function resolveProjectDir(option: string | undefined, options: { walkUp?: boolean } = {}): string {
-  if (option !== undefined && option !== "") return resolve(option);
+  return resolveProjectDirWithSource(option, options).dir;
+}
+
+/** Which rule of resolveProjectDir found the project. */
+export type ProjectSource = "option" | "env" | "worktree-marker" | "worktree-owner" | "walk-up" | "cwd";
+
+export interface ResolvedProject {
+  dir: string;
+  source: ProjectSource;
+}
+
+/** resolveProjectDir, also saying which rule found the project (for the diagnostics trail). */
+export function resolveProjectDirWithSource(option: string | undefined, options: { walkUp?: boolean } = {}): ResolvedProject {
+  if (option !== undefined && option !== "") return { dir: resolve(option), source: "option" };
   const env = process.env.DIARCHY_PROJECT;
-  if (env !== undefined && env !== "") return resolve(env);
+  if (env !== undefined && env !== "") return { dir: resolve(env), source: "env" };
   const cwd = process.cwd();
   const marker = `${sep}.diarchy${sep}worktrees${sep}`;
   const index = cwd.indexOf(marker);
-  if (index !== -1) return cwd.slice(0, index);
-  if (options.walkUp === false) return cwd;
-  return worktreeOwner(cwd) ?? findConfigDir(cwd) ?? cwd;
+  if (index !== -1) return { dir: cwd.slice(0, index), source: "worktree-marker" };
+  if (options.walkUp === false) return { dir: cwd, source: "cwd" };
+  const owner = worktreeOwner(cwd);
+  if (owner !== null) return { dir: owner, source: "worktree-owner" };
+  const found = findConfigDir(cwd);
+  return found === null ? { dir: cwd, source: "cwd" } : { dir: found, source: "walk-up" };
 }
 
 /** Whether the nearest `.git` at or above `start` is a file, as in a linked worktree (or a submodule). */

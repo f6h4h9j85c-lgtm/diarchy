@@ -164,6 +164,10 @@ export function heldByAnotherSession(holder, probe = THIS_PROCESS) {
         return false;
     return isOwnAncestor(parent, probe) === false;
 }
+/** How many times in a row the gate has blocked the session this Stop event names (0 once nothing is owed). */
+export function gateBlockCount(projectDir, agent, hookJson = "") {
+    return loadGateRecord(gateRecordPath(projectDir, agent, gateSessionKey(hookJson))).blocks;
+}
 /**
  * The block decision, or null to let the turn end. `hookJson` is the Stop
  * event on stdin; its `session_id` keys the GATE_CAP record.
@@ -675,6 +679,11 @@ function verdict(command, depth) {
  * that is not an event with a string `tool_input.command` is let through.
  */
 export function runGuard(agent, hookJson) {
+    const subcommand = guardedCommand(hookJson);
+    return subcommand === null ? null : guardDecision(agent, subcommand);
+}
+/** The human subcommand the hook event's `tool_input.command` runs, else null (also for anything that is not such an event). */
+export function guardedCommand(hookJson) {
     let command;
     try {
         const event = JSON.parse(hookJson);
@@ -683,11 +692,9 @@ export function runGuard(agent, hookJson) {
     catch {
         return null;
     }
-    if (typeof command !== "string")
-        return null;
-    const subcommand = humanCommand(command);
-    if (subcommand === null)
-        return null;
+    return typeof command === "string" ? humanCommand(command) : null;
+}
+export function guardDecision(agent, subcommand) {
     return {
         hookSpecificOutput: {
             hookEventName: "PreToolUse",

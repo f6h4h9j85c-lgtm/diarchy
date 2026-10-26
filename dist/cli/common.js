@@ -49,19 +49,27 @@ export class CliError extends Error {
  * project's vault; `walkUp: false` (for `init`) keeps the cwd.
  */
 export function resolveProjectDir(option, options = {}) {
+    return resolveProjectDirWithSource(option, options).dir;
+}
+/** resolveProjectDir, also saying which rule found the project (for the diagnostics trail). */
+export function resolveProjectDirWithSource(option, options = {}) {
     if (option !== undefined && option !== "")
-        return resolve(option);
+        return { dir: resolve(option), source: "option" };
     const env = process.env.DIARCHY_PROJECT;
     if (env !== undefined && env !== "")
-        return resolve(env);
+        return { dir: resolve(env), source: "env" };
     const cwd = process.cwd();
     const marker = `${sep}.diarchy${sep}worktrees${sep}`;
     const index = cwd.indexOf(marker);
     if (index !== -1)
-        return cwd.slice(0, index);
+        return { dir: cwd.slice(0, index), source: "worktree-marker" };
     if (options.walkUp === false)
-        return cwd;
-    return worktreeOwner(cwd) ?? findConfigDir(cwd) ?? cwd;
+        return { dir: cwd, source: "cwd" };
+    const owner = worktreeOwner(cwd);
+    if (owner !== null)
+        return { dir: owner, source: "worktree-owner" };
+    const found = findConfigDir(cwd);
+    return found === null ? { dir: cwd, source: "cwd" } : { dir: found, source: "walk-up" };
 }
 /** Whether the nearest `.git` at or above `start` is a file, as in a linked worktree (or a submodule). */
 function inGitFileCheckout(start) {

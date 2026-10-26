@@ -137,13 +137,16 @@ function nextSteps(projectDir: string, vaultPath: string, ignored: boolean | nul
     "                   then add [mcp_servers.diarchy] to ~/.codex/config.toml, trust the project, and approve the diarchy hooks in /hooks (docs/INSTALL-CODEX.md)",
     ...step,
     "  4. The Claude PM may run git, npm, node, and gh. If your checks use another command, add Bash(<cmd> *) to agents.claude.args in diarchy.config.json.",
-    '  5. Run a goal:   diarchy start "<goal>" --ac "<criterion>" [--ac ...]',
+    "  5. Check:        diarchy doctor   (both CLIs' plugin, MCP server, and hooks, no model calls; a fix line under each problem)",
+    "                   diarchy doctor --live   (then one short real turn per CLI that only calls the read tool)",
+    '  6. Run a goal:   diarchy start "<goal>" --ac "<criterion>" [--ac ...]',
     '     No model calls, protocol only:  diarchy start "<goal>" --ac "<criterion>" --driver fake',
-    '  6. Follow along: diarchy watch, diarchy status. Answer a BLOCKED run with diarchy reply "<text>".',
+    '  7. Follow along: diarchy watch, diarchy status. Answer a BLOCKED run with diarchy reply "<text>".',
   ].join("\n");
 }
 
-export function runInit(projectDir: string, options: InitOptions): number {
+/** `print` takes the summary and next steps (default: stdout); `diarchy doctor` passes a no-op for its probe projects. */
+export function runInit(projectDir: string, options: InitOptions, print: (text: string) => void = console.log): number {
   const agentIds = parseAgents(options.agents);
   const fullAccess = options.codexFullAccess === true;
   if (fullAccess && !agentIds.includes("codex")) throw new CliError("--codex-full-access needs an agent named codex in --agents");
@@ -165,7 +168,7 @@ export function runInit(projectDir: string, options: InitOptions): number {
     return EXIT_ERROR;
   }
   writeFileSync(configPath, `${JSON.stringify(buildConfig(projectDir, agentIds, vault, { codexFullAccess: fullAccess }), null, 2)}\n`);
-  console.log(nextSteps(projectDir, vaultPath, ignored, codex));
+  print(nextSteps(projectDir, vaultPath, ignored, codex));
   if (fullAccess) console.error(CODEX_FULL_ACCESS_WARNING);
   return EXIT_OK;
 }

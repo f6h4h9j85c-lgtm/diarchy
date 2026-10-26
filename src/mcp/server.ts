@@ -53,6 +53,16 @@ export interface McpServerOptions {
   /** Defaults to a VaultStore on `projectDir` for `agent`; tests inject one with a fake clock. */
   store?: VaultStore;
   now?: () => Date;
+  /** Called after every tool call with the outcome; the CLI logs it to the diagnostics trail. A throw here is ignored. */
+  onResult?: (result: ToolOutcome) => void;
+}
+
+/** What onResult reports about one tool call: never its arguments or its answer. */
+export interface ToolOutcome {
+  tool: (typeof TOOL_NAMES)[number];
+  ok: boolean;
+  /** The rejection's rule when ok is false. */
+  rule?: string;
 }
 
 /** Error codes the server adds to the protocol's RuleId set (PROTOCOL.md section 10). */
@@ -206,6 +216,18 @@ export function createMcpServer(options: McpServerOptions): McpServer {
   /** Run a tool body as this agent: refused with AGENT_BUSY unless this server holds the goal. */
   const asAgent = (body: () => Promise<object> | object): Promise<CallToolResult> => run(() => busy() ?? body());
 
+  /** Tell onResult how a tool call ended: the tool, ok, and the rule of a rejection. */
+  const report = (tool: (typeof TOOL_NAMES)[number], result: CallToolResult): void => {
+    if (options.onResult === undefined) return;
+    const ok = result.isError !== true;
+    const rule = ok ? undefined : result.structuredContent?.rule;
+    try {
+      options.onResult({ tool, ok, ...(typeof rule === "string" ? { rule } : {}) });
+    } catch {
+      // reporting never changes a tool's answer
+    }
+  };
+
   /** Register a tool whose arguments this server parses, so a malformed one is a rejection with a rule like any other. */
   const register = <S extends InputShape>(
     name: (typeof TOOL_NAMES)[number],
@@ -213,9 +235,11 @@ export function createMcpServer(options: McpServerOptions): McpServer {
     handler: (args: z.output<z.ZodObject<S>>, extra: Extra) => Promise<CallToolResult>,
   ): void => {
     const declared = z.object(config.inputSchema);
-    server.registerTool(name, { ...config, inputSchema: advertisedSchema(config.inputSchema) }, (args, extra) => {
+    server.registerTool(name, { ...config, inputSchema: advertisedSchema(config.inputSchema) }, async (args, extra) => {
       const parsed = declared.safeParse(args);
-      return parsed.success ? handler(parsed.data, extra) : run(() => inputRejection(parsed.error, args));
+      const result = await (parsed.success ? handler(parsed.data, extra) : run(() => inputRejection(parsed.error, args)));
+      report(name, result);
+      return result;
     });
   };
 

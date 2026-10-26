@@ -10,4 +10,5 @@ export declare const CODEX_FULL_ACCESS_WARNING: string;
 export declare function buildConfig(projectDir: string, agentIds: string[], vault: string, options?: {
     codexFullAccess?: boolean;
 }): Record<string, unknown>;
-export declare function runInit(projectDir: string, options: InitOptions): number;
+/** `print` takes the summary and next steps (default: stdout); `diarchy doctor` passes a no-op for its probe projects. */
+export declare function runInit(projectDir: string, options: InitOptions, print?: (text: string) => void): number;

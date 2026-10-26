@@ -7,8 +7,10 @@
 import { Command, Option } from "commander";
 
 import { VERSION } from "../index.js";
-import { CliError, EXIT_ERROR, EXIT_OK, handleBrokenPipes, resolveProjectDir } from "./common.js";
-import { runGate, runGuard, runInboxSkim } from "./hooks.js";
+import { CliError, EXIT_ERROR, EXIT_OK, handleBrokenPipes, resolveProjectDirWithSource, type ResolvedProject } from "./common.js";
+import { diag, errorName } from "./diag.js";
+import { runDoctor } from "./doctor.js";
+import { gateBlockCount, guardDecision, guardedCommand, runGate, runInboxSkim } from "./hooks.js";
 import { runReply, runStop } from "./human.js";
 import { runInit } from "./init.js";
 import { runKickoff } from "./kickoff.js";
@@ -30,8 +32,13 @@ function collect(value: string, previous: string[]): string[] {
   return [...previous, value];
 }
 
+/** The project and the rule that found it (common.ts resolveProjectDir). */
+function project(options: { walkUp?: boolean } = {}): ResolvedProject {
+  return resolveProjectDirWithSource(program.opts<{ project?: string }>().project, options);
+}
+
 function projectDir(options: { walkUp?: boolean } = {}): string {
-  return resolveProjectDir(program.opts<{ project?: string }>().project, options);
+  return project(options).dir;
 }
 
 /** Run a command, map its exit code, and print CliErrors without a stack. */
@@ -140,6 +147,14 @@ program
   .action((options: { follow?: boolean }) => exitWith(() => runWatch(projectDir(), options)));
 
 program
+  .command("doctor")
+  .description("Check Node, git, the project, and both CLIs' plugin, MCP server, and hook wiring without a model call; exits 1 on any failure")
+  .option("--json", "machine-readable output")
+  .option("--live", "then run one short real turn per CLI against a throwaway project (spends a little quota)")
+  .option("--out <dir>", "with --live, save each CLI's raw output and the diagnostics trail here")
+  .action((options: { json?: boolean; live?: boolean; out?: string }) => exitWith(() => runDoctor(projectDir(), options)));
+
+program
   .command("status")
   .description("Phase, roles, budgets, open assignments, last message, and the diarchy reply command if the human is needed")
   .option("--json", "machine-readable output")
@@ -177,11 +192,15 @@ program
   .description("SessionStart hook: a 15-line brief of the active goal for one agent; prints nothing without a goal")
   .requiredOption("--agent <id>", "agent id (claude | codex)")
   .action((options: { agent: string }) => {
+    let where: ResolvedProject | null = null;
     try {
-      const lines = runInboxSkim(projectDir(), options.agent);
+      where = project();
+      const lines = runInboxSkim(where.dir, options.agent);
       if (lines.length > 0) process.stdout.write(`${lines.join("\n")}\n`);
-    } catch {
+      diag(where, options.agent, "hook.session_start", { lines: lines.length });
+    } catch (error) {
       // the hook must never break a session
+      if (where !== null) diag(where, options.agent, "hook.session_start", { error: errorName(error) });
     }
     process.exit(EXIT_OK);
   });
@@ -191,11 +210,16 @@ program
   .description('Stop hook: print {"decision":"block",...} while this agent owes the goal something; never throws')
   .requiredOption("--agent <id>", "agent id (claude | codex)")
   .action(async (options: { agent: string }) => {
+    let where: ResolvedProject | null = null;
     try {
-      const decision = runGate(projectDir(), options.agent, await readStdin(1_500));
+      where = project();
+      const event = await readStdin(1_500);
+      const decision = runGate(where.dir, options.agent, event);
       if (decision !== null) process.stdout.write(`${JSON.stringify(decision)}\n`);
-    } catch {
+      diag(where, options.agent, "hook.stop", { decision: decision === null ? "allow" : "block", blocks: gateBlockCount(where.dir, options.agent, event) });
+    } catch (error) {
       // the hook must never break a session
+      if (where !== null) diag(where, options.agent, "hook.stop", { error: errorName(error) });
     }
     process.exit(EXIT_OK);
   });
@@ -206,8 +230,10 @@ program
   .requiredOption("--agent <id>", "agent id (claude | codex)")
   .action(async (options: { agent: string }) => {
     try {
-      const decision = runGuard(options.agent, await readStdin(1_500));
-      if (decision !== null) process.stdout.write(`${JSON.stringify(decision)}\n`);
+      const subcommand = guardedCommand(await readStdin(1_500));
+      if (subcommand !== null) process.stdout.write(`${JSON.stringify(guardDecision(options.agent, subcommand))}\n`);
+      // Only the human command's name: the shell command itself is never logged.
+      diag(project(), options.agent, "hook.pre_tool_use", subcommand === null ? { decision: "allow" } : { decision: "deny", command: subcommand });
     } catch {
       // the hook must never break a session
     }
@@ -220,7 +246,11 @@ program
   .requiredOption("--agent <id>", "agent id this server posts as")
   .action((options: { agent: string }) =>
     exitWith(async () => {
-      await startMcpServer({ projectDir: projectDir(), agent: options.agent });
+      const where = project();
+      diag(where, options.agent, "mcp.start");
+      const onResult = (result: { tool: string; ok: boolean; rule?: string }): void =>
+        diag(where, options.agent, "mcp.tool", { tool: result.tool, ok: result.ok, ...(result.rule === undefined ? {} : { rule: result.rule }) });
+      await startMcpServer({ projectDir: where.dir, agent: options.agent, onResult });
       return EXIT_OK;
     }),
   );

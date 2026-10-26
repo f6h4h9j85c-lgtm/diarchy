@@ -30,6 +30,16 @@ export declare class CliError extends Error {
 export declare function resolveProjectDir(option: string | undefined, options?: {
     walkUp?: boolean;
 }): string;
+/** Which rule of resolveProjectDir found the project. */
+export type ProjectSource = "option" | "env" | "worktree-marker" | "worktree-owner" | "walk-up" | "cwd";
+export interface ResolvedProject {
+    dir: string;
+    source: ProjectSource;
+}
+/** resolveProjectDir, also saying which rule found the project (for the diagnostics trail). */
+export declare function resolveProjectDirWithSource(option: string | undefined, options?: {
+    walkUp?: boolean;
+}): ResolvedProject;
 /**
  * The project that owns `dir` when `dir` is inside a linked git worktree that
  * the project's config places at `<worktrees.root>/<agent>` (PROTOCOL.md 9.1),

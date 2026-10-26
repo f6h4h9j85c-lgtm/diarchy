@@ -139,12 +139,27 @@ export function createMcpServer(options) {
     };
     /** Run a tool body as this agent: refused with AGENT_BUSY unless this server holds the goal. */
     const asAgent = (body) => run(() => busy() ?? body());
+    /** Tell onResult how a tool call ended: the tool, ok, and the rule of a rejection. */
+    const report = (tool, result) => {
+        if (options.onResult === undefined)
+            return;
+        const ok = result.isError !== true;
+        const rule = ok ? undefined : result.structuredContent?.rule;
+        try {
+            options.onResult({ tool, ok, ...(typeof rule === "string" ? { rule } : {}) });
+        }
+        catch {
+            // reporting never changes a tool's answer
+        }
+    };
     /** Register a tool whose arguments this server parses, so a malformed one is a rejection with a rule like any other. */
     const register = (name, config, handler) => {
         const declared = z.object(config.inputSchema);
-        server.registerTool(name, { ...config, inputSchema: advertisedSchema(config.inputSchema) }, (args, extra) => {
+        server.registerTool(name, { ...config, inputSchema: advertisedSchema(config.inputSchema) }, async (args, extra) => {
             const parsed = declared.safeParse(args);
-            return parsed.success ? handler(parsed.data, extra) : run(() => inputRejection(parsed.error, args));
+            const result = await (parsed.success ? handler(parsed.data, extra) : run(() => inputRejection(parsed.error, args)));
+            report(name, result);
+            return result;
         });
     };
     register("kickoff", {

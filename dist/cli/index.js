@@ -6,8 +6,10 @@
  */
 import { Command, Option } from "commander";
 import { VERSION } from "../index.js";
-import { CliError, EXIT_ERROR, EXIT_OK, handleBrokenPipes, resolveProjectDir } from "./common.js";
-import { runGate, runGuard, runInboxSkim } from "./hooks.js";
+import { CliError, EXIT_ERROR, EXIT_OK, handleBrokenPipes, resolveProjectDirWithSource } from "./common.js";
+import { diag, errorName } from "./diag.js";
+import { runDoctor } from "./doctor.js";
+import { gateBlockCount, guardDecision, guardedCommand, runGate, runInboxSkim } from "./hooks.js";
 import { runReply, runStop } from "./human.js";
 import { runInit } from "./init.js";
 import { runKickoff } from "./kickoff.js";
@@ -25,8 +27,12 @@ program
 function collect(value, previous) {
     return [...previous, value];
 }
+/** The project and the rule that found it (common.ts resolveProjectDir). */
+function project(options = {}) {
+    return resolveProjectDirWithSource(program.opts().project, options);
+}
 function projectDir(options = {}) {
-    return resolveProjectDir(program.opts().project, options);
+    return project(options).dir;
 }
 /** Run a command, map its exit code, and print CliErrors without a stack. */
 async function exitWith(run) {
@@ -110,6 +116,13 @@ program
     .option("--follow", "keep watching across DONE, BLOCKED, and the next goal")
     .action((options) => exitWith(() => runWatch(projectDir(), options)));
 program
+    .command("doctor")
+    .description("Check Node, git, the project, and both CLIs' plugin, MCP server, and hook wiring without a model call; exits 1 on any failure")
+    .option("--json", "machine-readable output")
+    .option("--live", "then run one short real turn per CLI against a throwaway project (spends a little quota)")
+    .option("--out <dir>", "with --live, save each CLI's raw output and the diagnostics trail here")
+    .action((options) => exitWith(() => runDoctor(projectDir(), options)));
+program
     .command("status")
     .description("Phase, roles, budgets, open assignments, last message, and the diarchy reply command if the human is needed")
     .option("--json", "machine-readable output")
@@ -140,13 +153,18 @@ program
     .description("SessionStart hook: a 15-line brief of the active goal for one agent; prints nothing without a goal")
     .requiredOption("--agent <id>", "agent id (claude | codex)")
     .action((options) => {
+    let where = null;
     try {
-        const lines = runInboxSkim(projectDir(), options.agent);
+        where = project();
+        const lines = runInboxSkim(where.dir, options.agent);
         if (lines.length > 0)
             process.stdout.write(`${lines.join("\n")}\n`);
+        diag(where, options.agent, "hook.session_start", { lines: lines.length });
     }
-    catch {
+    catch (error) {
         // the hook must never break a session
+        if (where !== null)
+            diag(where, options.agent, "hook.session_start", { error: errorName(error) });
     }
     process.exit(EXIT_OK);
 });
@@ -155,13 +173,19 @@ program
     .description('Stop hook: print {"decision":"block",...} while this agent owes the goal something; never throws')
     .requiredOption("--agent <id>", "agent id (claude | codex)")
     .action(async (options) => {
+    let where = null;
     try {
-        const decision = runGate(projectDir(), options.agent, await readStdin(1_500));
+        where = project();
+        const event = await readStdin(1_500);
+        const decision = runGate(where.dir, options.agent, event);
         if (decision !== null)
             process.stdout.write(`${JSON.stringify(decision)}\n`);
+        diag(where, options.agent, "hook.stop", { decision: decision === null ? "allow" : "block", blocks: gateBlockCount(where.dir, options.agent, event) });
     }
-    catch {
+    catch (error) {
         // the hook must never break a session
+        if (where !== null)
+            diag(where, options.agent, "hook.stop", { error: errorName(error) });
     }
     process.exit(EXIT_OK);
 });
@@ -171,9 +195,11 @@ program
     .requiredOption("--agent <id>", "agent id (claude | codex)")
     .action(async (options) => {
     try {
-        const decision = runGuard(options.agent, await readStdin(1_500));
-        if (decision !== null)
-            process.stdout.write(`${JSON.stringify(decision)}\n`);
+        const subcommand = guardedCommand(await readStdin(1_500));
+        if (subcommand !== null)
+            process.stdout.write(`${JSON.stringify(guardDecision(options.agent, subcommand))}\n`);
+        // Only the human command's name: the shell command itself is never logged.
+        diag(project(), options.agent, "hook.pre_tool_use", subcommand === null ? { decision: "allow" } : { decision: "deny", command: subcommand });
     }
     catch {
         // the hook must never break a session
@@ -185,7 +211,10 @@ program
     .description("Run the diarchy MCP server on stdio for one agent (used by the Claude Code and Codex plugins)")
     .requiredOption("--agent <id>", "agent id this server posts as")
     .action((options) => exitWith(async () => {
-    await startMcpServer({ projectDir: projectDir(), agent: options.agent });
+    const where = project();
+    diag(where, options.agent, "mcp.start");
+    const onResult = (result) => diag(where, options.agent, "mcp.tool", { tool: result.tool, ok: result.ok, ...(result.rule === undefined ? {} : { rule: result.rule }) });
+    await startMcpServer({ projectDir: where.dir, agent: options.agent, onResult });
     return EXIT_OK;
 }));
 handleBrokenPipes();

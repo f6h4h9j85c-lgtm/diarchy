@@ -870,7 +870,8 @@ describe("runMcpServer over stdio", () => {
     expect(parsed.find((frame) => frame.id === 2)?.result?.tools?.map((tool) => tool.name).sort()).toEqual(SORTED_TOOLS);
   });
 
-  it("bin/diarchy.js mcp, the plugins' entry over the committed dist/, serves the same tools and reads the project's goal", async () => {
+  // The plugins pass no --project; e2e.test.ts covers how their server and hooks find the project in a launcher run.
+  it("bin/diarchy.js mcp over the committed dist/ serves the same tools and reads the goal of the project --project names", async () => {
     const projectDir = tempProject();
     const human = new VaultStore({ projectDir, config: loadConfig(projectDir), agent: "human" });
     const kicked = await human.kickoff({ ...KICKOFF_ARGS, lead: "claude" });

@@ -12,8 +12,9 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
+import { resolveProjectDir } from "../src/cli/common.js";
 import { humanCommand } from "../src/cli/hooks.js";
 import { missingFromWorktrees } from "../src/cli/worktrees.js";
 import { hasControlChars, parseGoalState, type GoalState } from "../src/protocol/index.js";
@@ -23,6 +24,8 @@ const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const CLI = join(ROOT, "src", "cli", "index.ts");
 /** tsx by path, so the CLI also runs from a cwd outside this checkout. */
 const TSX = pathToFileURL(join(ROOT, "node_modules", "tsx", "dist", "loader.mjs")).href;
+/** The installed entry over the committed dist/, as the plugins start it. */
+const BIN = join(ROOT, "bin", "diarchy.js");
 const RUN_TIMEOUT = 45_000;
 
 const GIT_ENV = {
@@ -286,47 +289,55 @@ describe("worktree Codex files", () => {
 });
 
 // ---------------------------------------------------------------------------
+// The Codex MCP server started as Codex starts it: no --project, Codex's env
+// ---------------------------------------------------------------------------
+
+/** What Codex gives a stdio MCP server by default: a fixed allowlist, so no DIARCHY_PROJECT unless env_vars passes it on. */
+function codexServerEnv(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = {};
+  for (const key of ["HOME", "LOGNAME", "PATH", "SHELL", "USER", "LANG", "LC_ALL", "TERM", "TMPDIR", "TZ"]) {
+    if (process.env[key] !== undefined) env[key] = process.env[key];
+  }
+  return { ...env, ...extra };
+}
+
+/**
+ * `diarchy mcp --agent codex` started in `cwd` with no --project, as the documented config.toml server would be
+ * (from source), or as the plugin's mcp.json starts it (`bin` over the committed dist/); returns the `read` result.
+ */
+function mcpRead(cwd: string, options: { bin?: boolean; env?: NodeJS.ProcessEnv } = {}): Promise<Record<string, unknown>> {
+  const entry = options.bin === true ? [BIN] : ["--import", TSX, CLI];
+  return new Promise((resolveRead, reject) => {
+    const child = spawn(process.execPath, [...entry, "mcp", "--agent", "codex"], { cwd, env: options.env ?? codexServerEnv(), stdio: ["pipe", "pipe", "pipe"] });
+    let stdout = "";
+    let stderr = "";
+    child.stderr.on("data", (chunk: Buffer) => (stderr += chunk.toString()));
+    child.on("exit", (code) => reject(new Error(`diarchy mcp exited ${code} before answering: ${stderr}`)));
+    child.stdout.on("data", (chunk: Buffer) => {
+      stdout += chunk.toString();
+      const frame = stdout
+        .split("\n")
+        .filter((line) => line.trim() !== "")
+        .map((line) => JSON.parse(line) as { id?: number; result?: { structuredContent?: Record<string, unknown>; content?: { text: string }[] } })
+        .find((candidate) => candidate.id === 2);
+      if (frame === undefined) return;
+      child.stdin.end();
+      resolveRead(frame.result?.structuredContent ?? (JSON.parse(frame.result?.content?.[0]?.text ?? "{}") as Record<string, unknown>));
+    });
+    const frames = [
+      { jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "raw", version: "0" } } },
+      { jsonrpc: "2.0", method: "notifications/initialized" },
+      { jsonrpc: "2.0", id: 2, method: "tools/call", params: { name: "read", arguments: {} } },
+    ];
+    for (const frame of frames) child.stdin.write(`${JSON.stringify(frame)}\n`);
+  });
+}
+
+// ---------------------------------------------------------------------------
 // An agent worktree under a custom worktrees.root resolves to the project that owns it
 // ---------------------------------------------------------------------------
 
 describe("project resolution from an agent worktree under a custom worktrees.root", () => {
-  /** What Codex gives a stdio MCP server by default: a fixed allowlist, so no DIARCHY_PROJECT. */
-  function codexServerEnv(): NodeJS.ProcessEnv {
-    const env: NodeJS.ProcessEnv = {};
-    for (const key of ["HOME", "LOGNAME", "PATH", "SHELL", "USER", "LANG", "LC_ALL", "TERM", "TMPDIR", "TZ"]) {
-      if (process.env[key] !== undefined) env[key] = process.env[key];
-    }
-    return env;
-  }
-
-  /** `diarchy mcp --agent codex` started in `cwd` as the documented config.toml server would be; returns the `read` result. */
-  function mcpRead(cwd: string): Promise<Record<string, unknown>> {
-    return new Promise((resolveRead, reject) => {
-      const child = spawn(process.execPath, ["--import", TSX, CLI, "mcp", "--agent", "codex"], { cwd, env: codexServerEnv(), stdio: ["pipe", "pipe", "pipe"] });
-      let stdout = "";
-      let stderr = "";
-      child.stderr.on("data", (chunk: Buffer) => (stderr += chunk.toString()));
-      child.on("exit", (code) => reject(new Error(`diarchy mcp exited ${code} before answering: ${stderr}`)));
-      child.stdout.on("data", (chunk: Buffer) => {
-        stdout += chunk.toString();
-        const frame = stdout
-          .split("\n")
-          .filter((line) => line.trim() !== "")
-          .map((line) => JSON.parse(line) as { id?: number; result?: { structuredContent?: Record<string, unknown>; content?: { text: string }[] } })
-          .find((candidate) => candidate.id === 2);
-        if (frame === undefined) return;
-        child.stdin.end();
-        resolveRead(frame.result?.structuredContent ?? (JSON.parse(frame.result?.content?.[0]?.text ?? "{}") as Record<string, unknown>));
-      });
-      const frames = [
-        { jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "raw", version: "0" } } },
-        { jsonrpc: "2.0", method: "notifications/initialized" },
-        { jsonrpc: "2.0", id: 2, method: "tools/call", params: { name: "read", arguments: {} } },
-      ];
-      for (const frame of frames) child.stdin.write(`${JSON.stringify(frame)}\n`);
-    });
-  }
-
   async function customRootProject(name: string, root: string, commitConfig: boolean): Promise<{ dir: string; goalId: string; worktree: string }> {
     const dir = await initProject(name);
     const config = readConfig(dir);
@@ -373,6 +384,94 @@ describe("project resolution from an agent worktree under a custom worktrees.roo
     const status = await cli(["status"], { cwd: feature });
     expect(status.code, status.stderr).toBe(0);
     expect(status.stdout).toMatch(/^no goal in .*feature brain/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// A launcher run: the plugins' hooks and MCP servers pass no --project
+// ---------------------------------------------------------------------------
+
+describe("project resolution in a launcher run, where the hooks and MCP servers pass no --project", () => {
+  /** A git project with its config committed, so every agent worktree carries a copy, and a goal kicked off with claude leading. */
+  async function kickedOff(name: string): Promise<{ dir: string; goalId: string }> {
+    const dir = await initProject(name);
+    git(dir, "add", "diarchy.config.json");
+    git(dir, "commit", "-q", "-m", "diarchy config");
+    const kick = await cli(["kickoff", "Rate limit the API.", "--ac", "Over-limit requests get 429.", "--slug", "limit", "--lead", "claude", "--project", dir]);
+    expect(kick.code, kick.stderr).toBe(0);
+    return { dir, goalId: goalPaths(dir).goalId };
+  }
+
+  /** The SessionStart brief, the Stop gate, and the Codex MCP server, all started in `cwd` with no --project, see the goal. */
+  async function seesGoal(goalId: string, hooksCwd: string, mcpCwd: string, env: NodeJS.ProcessEnv): Promise<void> {
+    const skim = await cli(["inbox-skim", "--agent", "codex"], { cwd: hooksCwd, env });
+    expect(skim.code, skim.stderr).toBe(0);
+    expect(lines(skim.stdout)[0]).toBe(`diarchy goal ${goalId} · phase PLAN · you are codex (challenger)`);
+    const gate = await cli(["gate", "--agent", "codex"], { cwd: hooksCwd, env, input: "{}" });
+    expect(gate.code, gate.stderr).toBe(0);
+    const decision = JSON.parse(gate.stdout === "" ? "{}" : gate.stdout) as { decision?: string; reason?: string };
+    expect(decision.decision).toBe("block");
+    expect(decision.reason).toContain("1 unread message");
+    expect(await mcpRead(mcpCwd, { bin: true, env: codexServerEnv(env) })).toMatchObject({ goal: goalId, phase: "PLAN", role: "challenger" });
+  }
+
+  it(
+    "from <project>/.diarchy/worktrees/codex holding its own committed config, with DIARCHY_PROJECT unset",
+    async () => {
+      const { dir, goalId } = await kickedOff("launched");
+      const worktree = join(dir, ".diarchy", "worktrees", "codex");
+      git(dir, "worktree", "add", "-q", "-b", `diarchy/${goalId}/codex`, worktree, "HEAD");
+      expect(existsSync(join(worktree, "diarchy.config.json"))).toBe(true);
+      await seesGoal(goalId, worktree, worktree, {});
+      expect(readdirSync(worktree).some((entry) => entry.endsWith(" brain"))).toBe(false);
+    },
+    RUN_TIMEOUT,
+  );
+
+  it(
+    "with DIARCHY_PROJECT set, as the launcher sets it: the hooks from a directory holding another config, the MCP server from the plugin root",
+    async () => {
+      const { dir, goalId } = await kickedOff("exported");
+      const elsewhere = makeProject("elsewhere", false);
+      writeFileSync(join(elsewhere, "diarchy.config.json"), readFileSync(join(dir, "diarchy.config.json")));
+      await seesGoal(goalId, elsewhere, ROOT, { DIARCHY_PROJECT: dir });
+      expect(readdirSync(elsewhere).some((entry) => entry.endsWith(" brain"))).toBe(false);
+    },
+    RUN_TIMEOUT,
+  );
+
+  it("resolveProjectDir takes --project, then DIARCHY_PROJECT, then the .diarchy/worktrees/ marker, then walk-up, then the cwd", () => {
+    const dir = makeProject("order", false);
+    // Resolution only checks that a config file exists.
+    writeFileSync(join(dir, "diarchy.config.json"), "{}\n");
+    const worktree = join(dir, ".diarchy", "worktrees", "codex");
+    mkdirSync(join(worktree, "src"), { recursive: true });
+    writeFileSync(join(worktree, "diarchy.config.json"), "{}\n");
+    const src = join(dir, "src");
+    mkdirSync(src);
+    const other = makeProject("other", false);
+    const cwd = vi.spyOn(process, "cwd");
+    vi.stubEnv("DIARCHY_PROJECT", "");
+    try {
+      // The marker wins over a config committed into the worktree, from the worktree root and below it.
+      for (const at of [worktree, join(worktree, "src")]) {
+        cwd.mockReturnValue(at);
+        expect(resolveProjectDir(undefined), at).toBe(dir);
+      }
+      expect(resolveProjectDir(other)).toBe(other);
+      vi.stubEnv("DIARCHY_PROJECT", other);
+      expect(resolveProjectDir(undefined)).toBe(other);
+      expect(resolveProjectDir(dir)).toBe(dir);
+      vi.stubEnv("DIARCHY_PROJECT", "");
+      cwd.mockReturnValue(src);
+      expect(resolveProjectDir(undefined)).toBe(dir);
+      expect(resolveProjectDir(undefined, { walkUp: false })).toBe(src);
+      cwd.mockReturnValue(other);
+      expect(resolveProjectDir(undefined)).toBe(other);
+    } finally {
+      cwd.mockRestore();
+      vi.unstubAllEnvs();
+    }
   });
 });
 
@@ -788,8 +887,6 @@ describe("guard", () => {
 // ---------------------------------------------------------------------------
 
 describe("bin/diarchy.js kickoff, status, and stop", () => {
-  const BIN = join(ROOT, "bin", "diarchy.js");
-
   /** The installed entry, run from inside the project so the cwd default for --project is exercised too. */
   function launchBin(dir: string, args: string[]): { pid: number | undefined; done: Promise<Run> } {
     const env: NodeJS.ProcessEnv = { ...process.env, ...GIT_ENV };

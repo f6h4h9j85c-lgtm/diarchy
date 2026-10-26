@@ -400,7 +400,7 @@ The `allowed_types` a tool returns (section 10) apply these gates: at the `talk_
 
 This is the file `diarchy init` writes, with `<project>` standing for the project directory's name.
 
-`worktrees.branch_prefix` follows the section 3 `branch` rules, 133 characters max, and `worktrees.root` is one line of 183 characters max, so the default ASSIGN `branch` (`<branch_prefix>/<goal-id>/<agent>`) and `worktree` (`<worktrees.root>/<agent>`) the `assign` tool fills in always pass section 3, and git accepts the branch. Loading a config that breaks either fails with an error naming the file and the key, and `diarchy start` loads the config before kickoff, so a bad key starts no goal.
+`worktrees.branch_prefix` follows the section 3 `branch` rules, 133 characters max, and `worktrees.root` is one line of 183 characters max, so the default ASSIGN `branch` (`<branch_prefix>/<goal-id>/<agent>`) and `worktree` (`<worktrees.root>/<agent>`) the `assign` tool fills in always pass section 3, and git accepts the branch. Loading a config that breaks either fails with an error naming the file and the key, and `diarchy start` loads the config before kickoff, so a bad key starts no goal. It also refuses before kickoff when an existing branch is named like a leading path of `branch_prefix` (a branch `diarchy` blocks every `diarchy/<goal-id>/<agent>`, since git cannot create a branch below another), and notes a `worktrees.root` inside the repository that git does not ignore.
 
 `vault` is relative to the project root. `kickoff.budgets` overrides config per goal; a human DECIDE `budgets` overrides for the rest of the goal (without it, an exhausted budget re-blocks on the next accepted message). `review.required: false` waives 9.2(c) and (f) only; NO_SELF_REVIEW still applies.
 
@@ -409,7 +409,7 @@ This is the file `diarchy init` writes, with `<project>` standing for the projec
 `launcher` tunes the `diarchy start` supervisor; a missing key takes the default shown above.
 
 - `poll_ms`: how often the supervisor re-reads `budget.json`, in ms, at most 1000.
-- `max_restarts`: restarts per agent between two messages. Past it the agent stays dead until the next message lands, which respawns it with a fresh count.
+- `max_restarts`: restarts per agent between two messages. Past it the agent stays dead until the next message lands, which respawns it with a fresh count. A PM that exits with code 0 while it owes nothing (as the Stop gate judges it) and the other PM is running uses no restart and is not relaunched; it starts again when a message lands, or once no PM is left running.
 - `restart_backoff_ms`: the wait before each restart.
 - `stop_grace_ms`: after DONE or a block other than WALL_CLOCK, how long the PMs get to exit on their own before SIGTERM, and again before SIGKILL.
 - `wall_clock_grace_ms`: after a WALL_CLOCK block, how long the CLIs may run on before SIGKILL.

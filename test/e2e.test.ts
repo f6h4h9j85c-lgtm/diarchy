@@ -17,7 +17,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { nextStep } from "../src/cli/brief.js";
 import { resolveProjectDir } from "../src/cli/common.js";
 import { heldByAnotherSession, humanCommand, type ProcessProbe } from "../src/cli/hooks.js";
-import { missingFromWorktrees } from "../src/cli/worktrees.js";
+import { branchPrefixClash, missingFromWorktrees } from "../src/cli/worktrees.js";
 import { hasControlChars, parseGoalState, type GoalState } from "../src/protocol/index.js";
 import { GENERATED, VaultStore, loadConfig, type GoalPaths, type LockOwner, type MessageDraft } from "../src/vault/index.js";
 
@@ -310,6 +310,80 @@ describe("worktree Codex files", () => {
         expect(run.stdout, run.stderr).toContain(`worktree created ${join(dir, ".diarchy", "worktrees", id)}`);
         expect(run.stdout.includes(NOTE), run.stdout).toBe(noted);
       }
+    },
+    RUN_TIMEOUT * 2,
+  );
+});
+
+// ---------------------------------------------------------------------------
+// Worktree guards in diarchy start (F157)
+// ---------------------------------------------------------------------------
+
+describe("start: worktree guards", () => {
+  /** A script that ends its turn at once: with max_restarts 0 the run ends as soon as both PMs exit. */
+  function quitScript(): string {
+    const quit = join(makeProject("bin", false), "quit.mjs");
+    writeFileSync(quit, "process.exit(0);\n");
+    return quit;
+  }
+
+  async function quickProject(name: string, edit: (config: Config) => void = () => undefined): Promise<string> {
+    const dir = await initProject(name);
+    const config = readConfig(dir);
+    config.launcher = { ...config.launcher, max_restarts: 0 };
+    edit(config);
+    writeFileSync(join(dir, "diarchy.config.json"), `${JSON.stringify(config, null, 2)}\n`);
+    return dir;
+  }
+
+  it("branchPrefixClash finds a branch named like any leading path of the prefix", () => {
+    const dir = makeProject("clash");
+    expect(branchPrefixClash(dir, "team/diarchy")).toBeNull();
+    git(dir, "branch", "team");
+    expect(branchPrefixClash(dir, "team/diarchy")).toBe("team");
+    expect(branchPrefixClash(dir, "diarchy")).toBeNull();
+  });
+
+  it("refuses before kickoff when a branch blocks the agent branches, so no goal is left behind", async () => {
+    const dir = await quickProject("branch-clash");
+    git(dir, "branch", "diarchy");
+    const run = await cli(["start", "Add a hello file", "--ac", "hello.txt exists", "--driver", "fake", "--fake-script", quitScript(), "--project", dir]);
+    expect(run.code, run.stdout + run.stderr).toBe(1);
+    expect(run.stderr).toContain("branch diarchy blocks the agent branches diarchy/<goal-id>/<agent>");
+    expect(run.stderr).toContain("change worktrees.branch_prefix in diarchy.config.json");
+    expect(run.stdout).not.toContain("kickoff");
+    expect(human(dir).listGoals()).toHaveLength(0);
+  });
+
+  it("says the goal is kicked off and how to attach when git fails to add a worktree after kickoff", async () => {
+    const dir = await quickProject("worktree-fails");
+    // A file where the worktrees directory should go: `git worktree add` cannot create the agent worktree.
+    mkdirSync(join(dir, ".diarchy"), { recursive: true });
+    writeFileSync(join(dir, ".diarchy", "worktrees"), "");
+    const run = await cli(["start", "Add a hello file", "--ac", "hello.txt exists", "--driver", "fake", "--fake-script", quitScript(), "--project", dir]);
+    expect(run.code, run.stdout + run.stderr).toBe(1);
+    const goals = human(dir).listGoals();
+    expect(goals).toHaveLength(1);
+    expect(run.stderr).toContain("git worktree add failed for claude");
+    expect(run.stderr).toContain(`goal ${goals[0].goalId} is kicked off; fix this and run diarchy start again to attach to it`);
+  });
+
+  it(
+    "notes a worktrees.root inside the repository that git does not ignore, and stays quiet once it is ignored",
+    async () => {
+      const NOTE = "note: worktrees.root .wt is inside the repository but not git-ignored";
+      const dir = await quickProject("root-not-ignored", (config) => {
+        config.worktrees = { root: ".wt", branch_prefix: "diarchy" };
+      });
+      const script = quitScript();
+      const first = await cli(["start", "Add a hello file", "--ac", "hello.txt exists", "--driver", "fake", "--fake-script", script, "--project", dir]);
+      expect(first.stdout, first.stderr).toContain(`worktree created ${join(dir, ".wt", "claude")}`);
+      expect(first.stdout).toContain(NOTE);
+
+      writeFileSync(join(dir, ".gitignore"), `${readFileSync(join(dir, ".gitignore"), "utf8")}.wt/\n`);
+      const second = await cli(["start", "--driver", "fake", "--fake-script", script, "--project", dir]);
+      expect(second.stdout, second.stderr).toContain(`worktree reused ${join(dir, ".wt", "claude")}`);
+      expect(second.stdout).not.toContain("is inside the repository but not git-ignored");
     },
     RUN_TIMEOUT * 2,
   );

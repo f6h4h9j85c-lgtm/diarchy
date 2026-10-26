@@ -54,6 +54,25 @@ function ensureOne(projectDir, config, goalId, agent) {
     return { ...base, outcome: "created", note: branchExists ? "existing branch" : null };
 }
 /**
+ * The existing branch that blocks every `<branch_prefix>/<goal-id>/<agent>`,
+ * or null. git stores a branch as a path under refs/heads/, so no branch can
+ * be created below a branch named like one of its leading paths.
+ */
+export function branchPrefixClash(projectDir, branchPrefix) {
+    const parts = branchPrefix.split("/");
+    for (let depth = 1; depth <= parts.length; depth += 1) {
+        const branch = parts.slice(0, depth).join("/");
+        if (git(projectDir, ["rev-parse", "--verify", "-q", `refs/heads/${branch}`]).ok)
+            return branch;
+    }
+    return null;
+}
+/** The paths inside the project's repository that git does not ignore; a path outside it is no concern of the repository. */
+export function notIgnored(projectDir, paths) {
+    // check-ignore exits 0 for an ignored path, 1 for one that is not, and 128 for one outside the repository.
+    return paths.filter((path) => spawnSync("git", ["check-ignore", "-q", path], { cwd: projectDir }).status === 1);
+}
+/**
  * Project files Codex reads from its git root, which for a PM in a linked
  * worktree is the worktree itself, never the main checkout.
  */

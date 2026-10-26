@@ -18,6 +18,14 @@ export interface WorktreeResult {
 export declare function worktreePath(projectDir: string, config: DiarchyConfig, agent: string): string;
 export declare function branchName(config: DiarchyConfig, goalId: string, agent: string): string;
 /**
+ * The existing branch that blocks every `<branch_prefix>/<goal-id>/<agent>`,
+ * or null. git stores a branch as a path under refs/heads/, so no branch can
+ * be created below a branch named like one of its leading paths.
+ */
+export declare function branchPrefixClash(projectDir: string, branchPrefix: string): string | null;
+/** The paths inside the project's repository that git does not ignore; a path outside it is no concern of the repository. */
+export declare function notIgnored(projectDir: string, paths: string[]): string[];
+/**
  * Project files Codex reads from its git root, which for a PM in a linked
  * worktree is the worktree itself, never the main checkout.
  */

@@ -9,23 +9,32 @@
  * PROTOCOL.md 10), that agent's PM would only get AGENT_BUSY, so the
  * supervisor does not spawn it: it logs the holder's pid once, waits without
  * using up a restart, and spawns the PM once the lease is free or stale.
+ *
+ * A PM that ends its turn cleanly (code 0) while it owes nothing, as the Stop
+ * gate judges it, and the other PM is running is parked: no restart is used
+ * and it starts again when a message lands, or once no PM is left running.
+ * Any other exit is restarted with backoff and counted against max_restarts.
  */
 import { spawn } from "node:child_process";
 import { createInterface } from "node:readline";
 import { AGENT_HUMAN } from "../protocol/index.js";
-import { VaultStore, leaseHolder, loadConfig } from "../vault/index.js";
-import { blockReason, blockSummary, replyHint } from "./brief.js";
+import { CONFIG_FILENAME, VaultStore, leaseHolder, loadConfig } from "../vault/index.js";
+import { blockReason, blockSummary, nextStep, replyHint, unreadFor } from "./brief.js";
 import { CliError, EXIT_BLOCKED, EXIT_ERROR, EXIT_OK, nowHms, onBrokenPipe, sleep } from "./common.js";
 import { clearSession, defaultFakeScript, detectSessionId, fakePlan, flavorOf, loadSession, realPlan, saveSession, sandboxNotice, } from "./drivers.js";
 import { kickoffInput } from "./kickoff.js";
 import { loadLauncherConfig } from "./launcher-config.js";
 import { missingCommands, platformProblem } from "./preflight.js";
 import { claimRunRecord, identify, reapLeftovers, releaseRunRecord, runningSupervisor, saveRunRecord } from "./run-record.js";
-import { ensureWorktrees, hasCommits, isGitRepo, missingFromWorktrees } from "./worktrees.js";
+import { branchPrefixClash, ensureWorktrees, hasCommits, isGitRepo, missingFromWorktrees, notIgnored } from "./worktrees.js";
 /** A resumed child that dies this fast is treated as a failed resume, not a crash. */
 const FAST_FAIL_MS = 5_000;
 /** How long after a PM exits its own MCP server may still hold the agent's lease; only a holder seen after this is another session. */
 const OWN_SERVER_EXIT_MS = 2_000;
+/** How a lease holder is named in the log; a fresh lease whose owner file cannot be read yet has no pid. */
+function pidLabel(pid) {
+    return pid > 0 ? `pid ${pid}` : "pid unknown";
+}
 /** The signals on which the supervisor stops its PMs and removes its run record before exiting. */
 const STOP_SIGNALS = ["SIGINT", "SIGTERM", "SIGHUP"];
 /** The kickoff inputs given on the command line; they only mean something when no goal is active. */
@@ -79,6 +88,8 @@ export async function runStart(projectDir, goalText, options) {
     let goal = human.activeGoal();
     if (goal === null) {
         const input = kickoffInput(goalText, options);
+        if (options.worktrees)
+            refuseBranchPrefixClash(projectDir, config);
         const result = await human.kickoff(input);
         if (!result.ok)
             throw new CliError(`kickoff rejected ${result.rule}: ${result.message}`);
@@ -101,7 +112,14 @@ export async function runStart(projectDir, goalText, options) {
             return EXIT_BLOCKED;
         }
     }
-    const worktrees = prepareWorktrees(projectDir, config, launcher, goal.goalId, agents, options.worktrees);
+    let worktrees;
+    try {
+        worktrees = prepareWorktrees(projectDir, config, launcher, goal.goalId, agents, options.worktrees);
+    }
+    catch (error) {
+        const reason = error instanceof Error ? error.message : String(error);
+        throw new CliError(`${reason}\ngoal ${goal.goalId} is kicked off; fix this and run diarchy start again to attach to it`);
+    }
     if (driver === "real") {
         checkCommands(launcher, (agent) => worktrees.get(agent) ?? projectDir);
         for (const agent of agents) {
@@ -123,6 +141,16 @@ function checkCommands(launcher, cwdOf) {
 function logCorrupt(error) {
     console.log(`${nowHms()} ${error.message} It is left out here; diarchy reply and diarchy stop still work.`);
 }
+/** Refuse before kickoff when an existing branch would make every `git worktree add` fail once the goal exists. */
+function refuseBranchPrefixClash(projectDir, config) {
+    if (!isGitRepo(projectDir) || !hasCommits(projectDir))
+        return;
+    const prefix = config.worktrees.branch_prefix;
+    const clash = branchPrefixClash(projectDir, prefix);
+    if (clash === null)
+        return;
+    throw new CliError(`branch ${clash} blocks the agent branches ${prefix}/<goal-id>/<agent> (git cannot create a branch below another branch); rename it or change worktrees.branch_prefix in ${CONFIG_FILENAME}`);
+}
 function prepareWorktrees(projectDir, config, launcher, goalId, agents, wanted) {
     const map = new Map();
     if (!wanted) {
@@ -141,6 +169,9 @@ function prepareWorktrees(projectDir, config, launcher, goalId, agents, wanted) 
         const note = result.note === null ? "" : ` (${result.note})`;
         console.log(`${nowHms()} worktree ${result.outcome} ${result.path} on ${result.branch}${note}`);
         map.set(result.agent, result.path);
+    }
+    if (notIgnored(projectDir, [...map.values()]).length > 0) {
+        console.log(`${nowHms()} note: worktrees.root ${config.worktrees.root} is inside the repository but not git-ignored, so git status lists the agent worktrees and git add -A would commit them as embedded repositories; add it to .gitignore`);
     }
     // Only a PM launched as Codex reads AGENTS.md and .codex/agents, whatever its agent id.
     const codexWorktrees = [...map].filter(([agent]) => flavorOf(launcher.agents[agent].command) === "codex").map(([, path]) => path);
@@ -207,7 +238,7 @@ class Supervisor {
             const exited = new Promise((resolve) => {
                 markExited = resolve;
             });
-            child = { agent, proc: null, plan: null, spawnedAt: 0, exitedAt: 0, restarts: 0, timer: null, dead: false, waitingOn: null, exited, markExited };
+            child = { agent, proc: null, plan: null, spawnedAt: 0, exitedAt: 0, restarts: 0, timer: null, dead: false, parked: false, waitingOn: null, exited, markExited };
             this.children.set(agent, child);
         }
         return child;
@@ -235,10 +266,21 @@ class Supervisor {
     /** Spawn `child`, or wait while another session holds its agent's lease; watchLeases() spawns it once the lease frees. */
     launch(child) {
         const holder = this.holder(child.agent);
-        if (holder === null)
+        if (holder === null) {
             this.spawnChild(child);
-        else
-            this.waitFor(child, holder);
+            return;
+        }
+        // Shortly after the PM exits the holder may be its own MCP server, still exiting: look again once that has had time to go.
+        const settle = OWN_SERVER_EXIT_MS - (Date.now() - child.exitedAt);
+        if (child.exitedAt > 0 && settle > 0) {
+            child.timer = setTimeout(() => {
+                child.timer = null;
+                if (!this.stopping)
+                    this.launch(child);
+            }, settle);
+            return;
+        }
+        this.waitFor(child, holder);
     }
     /**
      * The live session acting as `agent` on the goal. Asked only while this
@@ -254,7 +296,7 @@ class Supervisor {
         if (child.waitingOn === holder.pid)
             return;
         child.waitingOn = holder.pid;
-        this.log(`${child.agent} waiting: another session (pid ${holder.pid}) acts as ${child.agent} on this goal; ${child.agent} starts once it exits`);
+        this.log(`${child.agent} waiting: another session (${pidLabel(holder.pid)}) acts as ${child.agent} on this goal; ${child.agent} starts once it exits`);
     }
     spawnChild(child) {
         child.waitingOn = null;
@@ -348,6 +390,26 @@ class Supervisor {
         }
         if (this.stopping)
             return;
+        const others = [...this.children.values()].filter((entry) => entry !== child);
+        const othersActive = others.some((entry) => entry.proc !== null || entry.waitingOn !== null || (entry.timer !== null && !entry.dead));
+        if (code === 0 && signal === null && othersActive && !this.owes(child.agent)) {
+            child.parked = true;
+            child.dead = true;
+            this.log(`${child.agent} idle: ended its turn with nothing owed; starts again when a message lands (no restart used)`);
+            return;
+        }
+        if (!othersActive) {
+            // Nobody is left to post the message a parked PM waits for (a lead waiting out a silent CHALLENGE window, say).
+            // Bounded: each wake follows an exit that is restarted and counted below.
+            for (const entry of others) {
+                if (!entry.parked)
+                    continue;
+                entry.parked = false;
+                entry.dead = false;
+                this.log(`${entry.agent} starting again: no PM is running`);
+                this.launch(entry);
+            }
+        }
         const { max_restarts, restart_backoff_ms } = this.input.launcher.launcher;
         if (child.restarts >= max_restarts) {
             child.dead = true;
@@ -385,6 +447,20 @@ class Supervisor {
         if (restart)
             child.restarts = Math.max(0, child.restarts - 1);
         this.waitFor(child, holder);
+    }
+    /** Whether `agent` owes the goal something now, as the Stop gate judges it; true when the state cannot be read. */
+    owes(agent) {
+        try {
+            const { human, goal } = this.input;
+            const state = human.state();
+            if (state === null || state.goal !== goal.goalId)
+                return true;
+            const messages = human.listMessages(() => undefined);
+            return nextStep(state, messages, agent, unreadFor(goal, messages, agent)).owes;
+        }
+        catch {
+            return true;
+        }
     }
     /** Leave `child` dead until a message lands, and end the run once no agent is left. */
     giveUp(child) {
@@ -426,7 +502,7 @@ class Supervisor {
                 this.waitFor(child, holder);
                 continue;
             }
-            this.log(`${child.agent} starting: pid ${child.waitingOn} no longer holds the goal`);
+            this.log(`${child.agent} starting: ${pidLabel(child.waitingOn)} no longer holds the goal`);
             this.spawnChild(child);
         }
     }
@@ -468,11 +544,12 @@ class Supervisor {
             void this.finish(EXIT_BLOCKED, reason);
         }
         else if (landed) {
-            // A PM left dead after max_restarts may now owe a reply to what landed.
+            // A PM parked or left dead after max_restarts may now owe a reply to what landed.
             for (const child of this.children.values()) {
                 if (!child.dead)
                     continue;
                 child.dead = false;
+                child.parked = false;
                 if (child.timer !== null)
                     clearTimeout(child.timer);
                 child.timer = null;

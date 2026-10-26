@@ -14,6 +14,13 @@
  * server holds the agent's lease, since every diarchy tool would answer it
  * AGENT_BUSY; when it cannot tell whose server holds the lease, it blocks.
  *
+ * Both read a chat file that will not parse as left out and name it, on
+ * stderr and in their output. In PLAN/EXECUTE the agent then owes the BLOCKED
+ * with kind external that brings the human (PROTOCOL.md section 10), so the
+ * gate keeps its turn open, up to GATE_CAP, until one is posted. A
+ * budget.json that will not parse leaves nothing to post: inbox-skim says to
+ * stop and tell the human, and the gate lets the turn end.
+ *
  * `guard --agent <id>` (PreToolUse): a deny decision when the shell command
  * on stdin runs `diarchy reply` or `diarchy stop`, the human's commands.
  */
@@ -22,26 +29,57 @@ import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
-import { FIELD_MAX_CHARS, oneLine, roleOf } from "../protocol/index.js";
-import { LOCK_HOST, leaseHolder, type LockOwner } from "../vault/index.js";
+import { FIELD_MAX_CHARS, oneLine, roleOf, type Message } from "../protocol/index.js";
+import { CorruptVaultFileError, LOCK_HOST, leaseHolder, type GoalRef, type LockOwner, type VaultStore } from "../vault/index.js";
 import { budgetLine } from "../vault/render/shared.js";
-import { nextStep, openAssignments, unreadFor } from "./brief.js";
+import { nextStep, openAssignments, unreadFor, type NextStep } from "./brief.js";
 import { headerLine, humanStore } from "./common.js";
 
 export const GATE_CAP = 12;
 const SKIM_MAX_LINES = 15;
 const SKIM_MAX_HEADERS = 8;
 
+/** A stored vault file that will not parse, as one line: the file, and its problem cut to FIELD_MAX_CHARS. */
+function corruptText(error: CorruptVaultFileError): string {
+  return `Vault file ${oneLine(error.file, Number.MAX_SAFE_INTEGER)} is corrupt: ${oneLine(error.problem, FIELD_MAX_CHARS)}.`;
+}
+
+/** The active goal's messages, leaving out each chat file that will not parse: that file is named on stderr for the human, and returned. */
+function readChat(store: VaultStore): { messages: Message[]; corrupt: CorruptVaultFileError[] } {
+  const corrupt: CorruptVaultFileError[] = [];
+  const messages = store.listMessages((error) => {
+    corrupt.push(error);
+    console.error(`diarchy: ${corruptText(error)} It is left out here; repair that file, or stop the run with diarchy stop.`);
+  });
+  return { messages, corrupt };
+}
+
+/** What a PM owes in PLAN/EXECUTE while a chat file will not parse: the BLOCKED that brings the human (PROTOCOL.md section 10). */
+function corruptStep(error: CorruptVaultFileError): NextStep {
+  return { text: `${corruptText(error)} Post BLOCKED with kind external naming that file (call post), so the human can repair it or run diarchy stop`, owes: true };
+}
+
 export function runInboxSkim(projectDir: string, agent: string): string[] {
   const store = humanStore(projectDir);
-  const goal = store.activeGoal();
+  let goal: GoalRef | null;
+  try {
+    goal = store.activeGoal();
+  } catch (error) {
+    // budget.json will not parse (the store names it on stderr), so no tool can reach the goal.
+    if (!(error instanceof CorruptVaultFileError)) throw error;
+    return [`diarchy: ${corruptText(error)} Nothing can be posted to this goal: stop and tell the human, naming the file.`];
+  }
   if (goal === null) return [];
   const state = store.state();
   if (state === null || state.goal !== goal.goalId) return [];
-  const messages = store.listMessages();
+  const { messages, corrupt } = readChat(store);
   const unread = unreadFor(goal, messages, agent);
+  const owesBlocked = corrupt.length > 0 && (state.phase === "PLAN" || state.phase === "EXECUTE");
   const lines: string[] = [];
   lines.push(`diarchy goal ${goal.goalId} · phase ${state.phase} · you are ${agent} (${roleOf(state, agent)})`);
+  if (corrupt.length > 0) {
+    lines.push(`vault: ${oneLine(corrupt[0].file, Number.MAX_SAFE_INTEGER)} is corrupt and left out here${owesBlocked ? "; post BLOCKED kind external naming it" : ""}`);
+  }
   lines.push(`budget: ${budgetLine(state)}`);
   const owed = openAssignments(state, agent);
   if (owed.length > 0) {
@@ -52,7 +90,7 @@ export function runInboxSkim(projectDir: string, agent: string): string[] {
   const shown = unread.slice(-SKIM_MAX_HEADERS);
   if (unread.length > shown.length) lines.push(`  (${unread.length - shown.length} older not shown)`);
   for (const message of shown) lines.push(`  ${headerLine(message)}`);
-  lines.push(`next: ${nextStep(state, messages, agent, unread).text}`);
+  lines.push(`next: ${(owesBlocked ? corruptStep(corrupt[0]) : nextStep(state, messages, agent, unread)).text}`);
   // Cap output lines, not array entries, so no entry can stretch the brief past 15 lines.
   return lines.join("\n").split("\n").slice(0, SKIM_MAX_LINES);
 }
@@ -125,6 +163,39 @@ function parentPid(pid: number): number | null {
   return Number.isInteger(ppid) ? ppid : null;
 }
 
+/** The arguments `pid` runs with: /proc on Linux, `ps` elsewhere (split on spaces); null when they cannot be read. */
+function argvOf(pid: number): string[] | null {
+  if (existsSync("/proc/self/cmdline")) {
+    try {
+      return readFileSync(`/proc/${pid}/cmdline`, "utf8").split("\0").filter((word) => word !== "");
+    } catch {
+      return null;
+    }
+  }
+  if (process.platform === "win32") return null;
+  const ps = spawnSync("ps", ["-o", "args=", "-p", String(pid)], { encoding: "utf8" });
+  return ps.status === 0 ? (ps.stdout ?? "").trim().split(/\s+/) : null;
+}
+
+/** Programs that only start another one: shells, env, and the package runners. */
+const LAUNCHERS = new Set(["sh", "bash", "dash", "zsh", "ksh", "env", "npx", "npm", "pnpm", "yarn", "bunx"]);
+
+/**
+ * Whether `argv` is a launch wrapper a CLI may start its MCP server through:
+ * a shell, env, npx or `npm exec` (whose process title reads `npm exec`),
+ * pnpm, yarn, bunx, or bin/diarchy.js handing `mcp` on to the diarchy on PATH.
+ */
+export function isLaunchWrapper(argv: string[]): boolean {
+  const name = (word: string | undefined): string => (word ?? "").split("/").pop() ?? "";
+  if (argv.length === 0) return false;
+  if (argv[0].startsWith("npm exec")) return true;
+  // A runner started as `node /usr/bin/npx ...` before it sets its title.
+  const program = name(argv[0]) === "node" ? name(argv[1]).replace(/(?:-cli)?\.[cm]?js$/, "") : name(argv[0]);
+  if (LAUNCHERS.has(program)) return true;
+  const script = argv.findIndex((word) => /(?:^|\/)diarchy(?:\.js)?$/.test(word));
+  return script !== -1 && argv[script + 1] === "mcp";
+}
+
 /** What the gate reads about processes; the defaults are this process's, and tests pass their own. */
 export interface ProcessProbe {
   /** Where this process's locks say they come from (LOCK_HOST). */
@@ -132,9 +203,22 @@ export interface ProcessProbe {
   pid: number;
   /** The parent of `pid`, or null when it cannot be read. */
   parentOf(pid: number): number | null;
+  /** Whether `pid` is a launch wrapper (`isLaunchWrapper`); without it, no process is one. */
+  isWrapper?(pid: number): boolean;
 }
 
-const THIS_PROCESS: ProcessProbe = { host: LOCK_HOST, pid: process.pid, parentOf: parentPid };
+const THIS_PROCESS: ProcessProbe = {
+  host: LOCK_HOST,
+  pid: process.pid,
+  parentOf: parentPid,
+  isWrapper: (pid) => {
+    const argv = argvOf(pid);
+    return argv !== null && isLaunchWrapper(argv);
+  },
+};
+
+/** Launch wrappers stepped over between the lease holder and its CLI; behind more, the gate cannot tell. */
+const MAX_WRAPPERS = 4;
 
 /** The machine part of a lock host: LOCK_HOST adds the pid namespace on Linux. */
 function machineOf(host: string): string {
@@ -163,19 +247,25 @@ function isOwnAncestor(pid: number, probe: ProcessProbe): boolean | null {
  * server are both children of the same CLI process, so a holder whose parent
  * is one of this hook's ancestors is this session's server, and one whose
  * parent is not on the hook's chain, read up to pid 1, is another session's.
+ * A CLI may start its server through launch wrappers (`sh -c`, npx, or
+ * bin/diarchy.js handing on to the diarchy on PATH, `isLaunchWrapper`): up to
+ * MAX_WRAPPERS of them are stepped over, so the parent compared is the CLI.
  * When it cannot tell, it answers false and the gate blocks as it would with
  * no lease: the owner file is not readable or not written yet; the holder's
  * parent is pid 1 (a CLI that is itself pid 1 in a container, or an orphaned
- * server); a parent cannot be read (Windows); or the holder is on this
- * machine but in another pid namespace, where its pids mean nothing here. A
- * holder on another machine is another session. Limit: a server the CLI
- * starts through a wrapper process (a shell, npx) has the wrapper as its
- * parent and is taken for another session.
+ * server); a parent cannot be read (Windows); more than MAX_WRAPPERS wrappers
+ * stand in a row; or the holder is on this machine but in another pid
+ * namespace, where its pids mean nothing here. A holder on another machine is
+ * another session.
  */
 export function heldByAnotherSession(holder: LockOwner | null, probe: ProcessProbe = THIS_PROCESS): boolean {
   if (holder === null || holder.pid <= 0) return false;
   if (holder.host !== probe.host) return machineOf(holder.host) !== machineOf(probe.host);
-  const parent = probe.parentOf(holder.pid);
+  let parent = probe.parentOf(holder.pid);
+  for (let hops = 0; parent !== null && parent > 1 && probe.isWrapper?.(parent) === true; hops += 1) {
+    if (hops === MAX_WRAPPERS) return false;
+    parent = probe.parentOf(parent);
+  }
   if (parent === null || parent <= 1) return false;
   return isOwnAncestor(parent, probe) === false;
 }
@@ -191,9 +281,9 @@ export function runGate(projectDir: string, agent: string, hookJson = ""): GateD
   if (heldByAnotherSession(leaseHolder(goal.paths, agent))) return null;
   const state = store.state();
   if (state === null || state.goal !== goal.goalId) return null;
-  const messages = store.listMessages();
+  const { messages, corrupt } = readChat(store);
   const unread = unreadFor(goal, messages, agent);
-  const step = nextStep(state, messages, agent, unread);
+  const step = corrupt.length > 0 ? corruptStep(corrupt[0]) : nextStep(state, messages, agent, unread);
   const path = gateRecordPath(projectDir, agent, gateSessionKey(hookJson));
   const lastId = messages.length === 0 ? null : messages[messages.length - 1].id;
   let record = loadGateRecord(path);

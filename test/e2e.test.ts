@@ -7,16 +7,16 @@
  */
 import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { delimiter, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { nextStep } from "../src/cli/brief.js";
 import { resolveProjectDir } from "../src/cli/common.js";
-import { heldByAnotherSession, humanCommand, type ProcessProbe } from "../src/cli/hooks.js";
+import { heldByAnotherSession, humanCommand, isLaunchWrapper, type ProcessProbe } from "../src/cli/hooks.js";
 import { missingFromWorktrees } from "../src/cli/worktrees.js";
 import { hasControlChars, parseGoalState, type GoalState } from "../src/protocol/index.js";
 import { GENERATED, VaultStore, loadConfig, type GoalPaths, type LockOwner, type MessageDraft } from "../src/vault/index.js";
@@ -1356,6 +1356,8 @@ describe("inbox-skim and gate", () => {
  * server and calls `read`, which takes the agent's lease, then runs the Stop
  * hook (`diarchy gate`) as its own child for each Stop event on stdin, as a
  * CLI runs its hooks. Prints one JSON line per step; the first names its pid.
+ * Its fifth argument, when given, is the JSON array of words the server's
+ * `mcp --agent ... --project ...` follows (default: this checkout's CLI).
  */
 function sessionScript(): string {
   const root = mkdtempSync(join(tmpdir(), "diarchy-e2e-"));
@@ -1369,8 +1371,9 @@ function sessionScript(): string {
       'import { createInterface } from "node:readline";',
       `import { Client } from ${sdk("index.js")};`,
       `import { StdioClientTransport } from ${sdk("stdio.js")};`,
-      "const [cli, tsx, project, agent] = process.argv.slice(2);",
-      'const transport = new StdioClientTransport({ command: process.execPath, args: ["--import", tsx, cli, "mcp", "--agent", agent, "--project", project], env: { ...process.env }, stderr: "inherit" });',
+      "const [cli, tsx, project, agent, server] = process.argv.slice(2);",
+      'const [command, ...args] = [...(server === undefined ? [process.execPath, "--import", tsx, cli] : JSON.parse(server)), "mcp", "--agent", agent, "--project", project];',
+      'const transport = new StdioClientTransport({ command, args, env: { ...process.env }, stderr: "inherit" });',
       'const client = new Client({ name: "session", version: "0.0.0" });',
       "await client.connect(transport);",
       'const read = await client.callTool({ name: "read", arguments: {} });',
@@ -1395,11 +1398,16 @@ interface Session {
   close(): Promise<void>;
 }
 
-/** Start a session as `claude` in `dir`, run through `prefix` (for example `unshare ...`) when given. */
-function startSession(dir: string, prefix: string[] = []): Session {
-  const env: NodeJS.ProcessEnv = { ...process.env };
+/**
+ * Start a session as `claude` in `dir`, run through `prefix` (for example
+ * `unshare ...`) when given. `server` replaces the words that start its MCP
+ * server (`sessionScript`), and `env` adds to its environment.
+ */
+function startSession(dir: string, prefix: string[] = [], server: string[] | null = null, extraEnv: NodeJS.ProcessEnv = {}): Session {
+  const env: NodeJS.ProcessEnv = { ...process.env, ...extraEnv };
   delete env.DIARCHY_PROJECT;
-  const [command, ...args] = [...prefix, process.execPath, sessionScript(), CLI, TSX, dir, "claude"];
+  delete env.DIARCHY_FALLBACK_FROM;
+  const [command, ...args] = [...prefix, process.execPath, sessionScript(), CLI, TSX, dir, "claude", ...(server === null ? [] : [JSON.stringify(server)])];
   const child = spawn(command, args, { cwd: ROOT, env, stdio: ["pipe", "pipe", "pipe"] });
   let out = "";
   let err = "";
@@ -1471,6 +1479,53 @@ describe("gate and the agent lease (F154)", () => {
     }
     expect(again.stdout).toContain('"decision":"block"');
   }, RUN_TIMEOUT);
+
+  /** A plugin copy of bin/diarchy.js with no dist/ next to it, and a PATH whose `diarchy` runs this checkout's CLI: the copy hands every call on to it. */
+  function pluginCopyHandingOn(): { bin: string; path: string } {
+    const root = mkdtempSync(join(tmpdir(), "diarchy-e2e-"));
+    temps.push(root);
+    mkdirSync(join(root, "plugin", "bin"), { recursive: true });
+    const bin = join(root, "plugin", "bin", "diarchy.js");
+    writeFileSync(bin, readFileSync(BIN, "utf8"));
+    mkdirSync(join(root, "path"));
+    const global = join(root, "path", "diarchy");
+    writeFileSync(global, `#!/bin/sh\nexec ${JSON.stringify(process.execPath)} --import ${JSON.stringify(TSX)} ${JSON.stringify(CLI)} "$@"\n`);
+    chmodSync(global, 0o755);
+    return { bin, path: `${join(root, "path")}${delimiter}${process.env.PATH ?? ""}` };
+  }
+
+  // A CLI may start its server through a launch wrapper, which is then the server's parent (F154).
+  const WRAPPED: [string, () => { server: string[]; env: NodeJS.ProcessEnv }][] = [
+    ["sh -c", () => ({ server: ["/bin/sh", "-c", '"$@"; true', "sh", process.execPath, "--import", TSX, CLI], env: {} })],
+    [
+      "bin/diarchy.js handing on to the diarchy on PATH",
+      () => {
+        const copy = pluginCopyHandingOn();
+        return { server: [process.execPath, copy.bin], env: { PATH: copy.path } };
+      },
+    ],
+  ];
+  it.each(WRAPPED)(
+    "holds the holder's own session when its CLI starts the server through %s, and still lets another session go",
+    async (name, wrap) => {
+      const slug = name.startsWith("sh") ? "lgsh" : "lgbin";
+      const dir = await initProject(`lease-gate-${slug}`, false);
+      const kick = await human(dir).kickoff({ goal: "Gate by the lease.", acceptance_criteria: ["Only the holder is held."], lead: "claude", slug });
+      expect(kick.ok).toBe(true);
+      const { server, env } = wrap();
+      const session = startSession(dir, [], server, env);
+      try {
+        expect(await session.step(1)).toMatchObject({ read: "ok" });
+        expect(await otherGate(dir)).toEqual({ code: 0, stdout: "", stderr: "" });
+        const own = await session.stop('{"session_id":"first"}', 2);
+        expect(own).toContain('"decision":"block"');
+        expect(own).toContain("post PROPOSE with decision_id plan");
+      } finally {
+        await session.close();
+      }
+    },
+    RUN_TIMEOUT,
+  );
 
   // `docker run img claude` without --init: the CLI is pid 1, so its own server's parent is pid 1 (R2-12 review).
   const PID_NAMESPACE = pidNamespacePrefix();
@@ -1554,6 +1609,138 @@ describe("heldByAnotherSession (F154)", () => {
     expect(heldByAnotherSession(null, probe())).toBe(false);
     expect(heldByAnotherSession({ pid: 0, host: "unknown", token: "" }, probe())).toBe(false);
   });
+
+  it("steps over up to four launch wrappers between a server and its CLI", () => {
+    // Each server starts through `count` wrappers in a row: 300's under this session's CLI 200, 500's under the other CLI 400.
+    const wrappedTree = (count: number): { tree: Map<number, number>; wrappers: Set<number> } => {
+      const tree = new Map(TREE);
+      const wrappers = new Set<number>();
+      for (const [server, cli] of [
+        [300, 200],
+        [500, 400],
+      ]) {
+        let child = server;
+        for (let k = 1; k <= count; k += 1) {
+          tree.set(child, server - 50 + k);
+          wrappers.add(server - 50 + k);
+          child = server - 50 + k;
+        }
+        tree.set(child, cli);
+      }
+      return { tree, wrappers };
+    };
+    const wrapping = ({ tree, wrappers }: { tree: Map<number, number>; wrappers: Set<number> }): ProcessProbe => ({ ...probe(tree), isWrapper: (pid) => wrappers.has(pid) });
+
+    for (const count of [1, 4]) {
+      expect(heldByAnotherSession(holder(300), wrapping(wrappedTree(count))), `own, ${count}`).toBe(false);
+      expect(heldByAnotherSession(holder(500), wrapping(wrappedTree(count))), `other, ${count}`).toBe(true);
+    }
+    // A probe that cannot tell a wrapper (the default before F154) took the session's own server for another's.
+    expect(heldByAnotherSession(holder(300), probe(wrappedTree(1).tree))).toBe(true);
+    // Behind a fifth wrapper it cannot tell, so it blocks as it would with no lease.
+    expect(heldByAnotherSession(holder(500), wrapping(wrappedTree(5)))).toBe(false);
+    // A wrapper whose parent is pid 1 is an orphan's, or the CLI is pid 1: it blocks.
+    expect(heldByAnotherSession(holder(610), wrapping({ tree: new Map([...TREE, [610, 600], [600, 1]]), wrappers: new Set([600]) }))).toBe(false);
+    // A wrapper whose parent cannot be read: it blocks.
+    expect(heldByAnotherSession(holder(710), wrapping({ tree: new Map([...TREE, [710, 700]]), wrappers: new Set([700]) }))).toBe(false);
+  });
+});
+
+describe("isLaunchWrapper (F154)", () => {
+  it("names shells, env, the package runners, and bin/diarchy.js handing mcp on to the diarchy on PATH", () => {
+    const wrappers = [
+      ["/bin/sh", "-c", '"$@"; true', "sh", "node", "dist/cli/index.js", "mcp"],
+      ["bash", "-lc", "diarchy mcp --agent claude"],
+      ["/usr/bin/env", "DIARCHY_PROJECT=/p", "node", "bin/diarchy.js", "mcp"],
+      // npm overwrites its argv with its title, so /proc reads one word.
+      ["npm exec"],
+      ["npm exec @scope/diarchy"],
+      ["npx", "-y", "diarchy", "mcp"],
+      ["node", "/usr/bin/npx", "-y", "diarchy", "mcp"],
+      ["node", "/usr/lib/node_modules/npm/bin/npx-cli.js", "diarchy", "mcp"],
+      ["/usr/local/bin/pnpm", "dlx", "diarchy", "mcp"],
+      ["node", "/usr/lib/node_modules/yarn/bin/yarn.js", "dlx", "diarchy"],
+      ["bunx", "diarchy", "mcp"],
+      ["node", "/home/u/.codex/plugins/cache/diarchy/bin/diarchy.js", "mcp", "--agent", "codex"],
+      ["node", "/usr/local/bin/diarchy", "mcp", "--agent", "codex"],
+    ];
+    for (const argv of wrappers) expect(isLaunchWrapper(argv), argv.join(" ")).toBe(true);
+    const programs = [
+      [],
+      ["/opt/claude-code/bin/claude", "--preload", "x"],
+      ["/usr/local/bin/codex", "exec"],
+      ["node", "/usr/lib/node_modules/@anthropic-ai/claude-code/cli.js"],
+      ["node", "--import", "tsx", "src/cli/index.ts", "gate", "--agent", "claude"],
+      ["node", "bin/diarchy.js", "gate", "--agent", "claude"],
+      ["/usr/bin/shellcheck", "x.sh"],
+    ];
+    for (const argv of programs) expect(isLaunchWrapper(argv), argv.join(" ")).toBe(false);
+  });
+});
+
+describe("inbox-skim and gate with a vault file that will not parse", () => {
+  it("name a corrupt chat file on stderr and in their output, and hold both PMs until one posts BLOCKED kind external", async () => {
+    const dir = await initProject("corrupt-hooks", false);
+    expect((await human(dir).kickoff({ goal: "Survive a corrupt file.", acceptance_criteria: ["The PM is told."], lead: "claude", slug: "ch" })).ok).toBe(true);
+    const { chatDir } = goalPaths(dir);
+    const kickoffFile = readdirSync(chatDir).find((name) => name.endsWith(".md"));
+    if (kickoffFile === undefined) throw new Error("no KICKOFF chat file");
+    const file = join(chatDir, kickoffFile);
+    // A hand edit in Obsidian: one property the schema does not know.
+    writeFileSync(file, readFileSync(file, "utf8").replace(/^---\n/, "---\nbogus_key: 1\n"));
+    const named = `Vault file ${file} is corrupt: `;
+
+    for (const agent of ["claude", "codex"]) {
+      const gate = await cli(["gate", "--agent", agent, "--project", dir], { input: '{"session_id":"s"}' });
+      expect(gate.code).toBe(0);
+      const decision = JSON.parse(gate.stdout) as { decision: string; reason: string };
+      expect(decision.decision).toBe("block");
+      expect(decision.reason).toContain(named);
+      expect(decision.reason).toContain("Post BLOCKED with kind external naming that file (call post), so the human can repair it or run diarchy stop.");
+      expect(hasControlChars(decision.reason)).toBe(false);
+      expect(lines(gate.stderr)).toHaveLength(1);
+      expect(gate.stderr).toContain(`diarchy: ${named}`);
+      expect(gate.stderr).toContain("It is left out here; repair that file, or stop the run with diarchy stop.");
+    }
+
+    const skim = await cli(["inbox-skim", "--agent", "claude", "--project", dir]);
+    expect(skim.code).toBe(0);
+    const out = lines(skim.stdout);
+    expect(out[0]).toContain("phase PLAN · you are claude (lead)");
+    expect(out[1]).toBe(`vault: ${file} is corrupt and left out here; post BLOCKED kind external naming it`);
+    expect(out[out.length - 1]).toMatch(/^next: Vault file .* is corrupt: .* Post BLOCKED with kind external naming that file \(call post\)/);
+    expect(skim.stderr).toContain(`diarchy: ${named}`);
+
+    // The first BLOCKED moves the goal to BLOCKED: both gates go quiet, and the brief still names the file.
+    const claude = new VaultStore({ projectDir: dir, config: loadConfig(dir), agent: "claude", pollIntervalMs: 20 });
+    expect((await claude.post({ type: "BLOCKED", to: "all", re: ["AC1"], kind: "external", body: `A chat file is corrupt: ${file}` })).ok).toBe(true);
+    for (const agent of ["claude", "codex"]) {
+      expect((await cli(["gate", "--agent", agent, "--project", dir], { input: '{"session_id":"s"}' })).stdout).toBe("");
+    }
+    const blocked = lines((await cli(["inbox-skim", "--agent", "codex", "--project", dir])).stdout);
+    expect(blocked[1]).toBe(`vault: ${file} is corrupt and left out here`);
+    expect(blocked[blocked.length - 1]).toMatch(/^next: waiting on the human/);
+  }, RUN_TIMEOUT);
+
+  it("an unreadable budget.json: inbox-skim says to stop and tell the human, and the gate lets the turn end", async () => {
+    const dir = await initProject("corrupt-budget-hooks", false);
+    expect((await human(dir).kickoff({ goal: "Survive a corrupt file.", acceptance_criteria: ["The PM is told."], lead: "claude", slug: "cb" })).ok).toBe(true);
+    const { budget } = goalPaths(dir);
+    writeFileSync(budget, "{");
+
+    const skim = await cli(["inbox-skim", "--agent", "claude", "--project", dir]);
+    expect(skim.code).toBe(0);
+    const out = lines(skim.stdout);
+    expect(out).toHaveLength(1);
+    expect(out[0]).toMatch(/^diarchy: Vault file .* is corrupt: .*\. Nothing can be posted to this goal: stop and tell the human, naming the file\.$/);
+    expect(out[0]).toContain(`Vault file ${budget} is corrupt`);
+    expect(skim.stderr).toContain(`Vault file ${budget} is corrupt`);
+
+    const gate = await cli(["gate", "--agent", "claude", "--project", dir], { input: '{"session_id":"s"}' });
+    expect(gate.code).toBe(0);
+    expect(gate.stdout).toBe("");
+    expect(gate.stderr).toContain(`Vault file ${budget} is corrupt`);
+  }, RUN_TIMEOUT);
 });
 
 describe("brief and Stop gate guidance", () => {

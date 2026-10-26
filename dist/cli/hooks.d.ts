@@ -7,6 +7,12 @@ export interface GateDecision {
     decision: "block";
     reason: string;
 }
+/**
+ * Whether `argv` is a launch wrapper a CLI may start its MCP server through:
+ * a shell, env, npx or `npm exec` (whose process title reads `npm exec`),
+ * pnpm, yarn, bunx, or bin/diarchy.js handing `mcp` on to the diarchy on PATH.
+ */
+export declare function isLaunchWrapper(argv: string[]): boolean;
 /** What the gate reads about processes; the defaults are this process's, and tests pass their own. */
 export interface ProcessProbe {
     /** Where this process's locks say they come from (LOCK_HOST). */
@@ -14,6 +20,8 @@ export interface ProcessProbe {
     pid: number;
     /** The parent of `pid`, or null when it cannot be read. */
     parentOf(pid: number): number | null;
+    /** Whether `pid` is a launch wrapper (`isLaunchWrapper`); without it, no process is one. */
+    isWrapper?(pid: number): boolean;
 }
 /**
  * True only when the lease `holder` is surely another session's MCP server,
@@ -21,14 +29,16 @@ export interface ProcessProbe {
  * server are both children of the same CLI process, so a holder whose parent
  * is one of this hook's ancestors is this session's server, and one whose
  * parent is not on the hook's chain, read up to pid 1, is another session's.
+ * A CLI may start its server through launch wrappers (`sh -c`, npx, or
+ * bin/diarchy.js handing on to the diarchy on PATH, `isLaunchWrapper`): up to
+ * MAX_WRAPPERS of them are stepped over, so the parent compared is the CLI.
  * When it cannot tell, it answers false and the gate blocks as it would with
  * no lease: the owner file is not readable or not written yet; the holder's
  * parent is pid 1 (a CLI that is itself pid 1 in a container, or an orphaned
- * server); a parent cannot be read (Windows); or the holder is on this
- * machine but in another pid namespace, where its pids mean nothing here. A
- * holder on another machine is another session. Limit: a server the CLI
- * starts through a wrapper process (a shell, npx) has the wrapper as its
- * parent and is taken for another session.
+ * server); a parent cannot be read (Windows); more than MAX_WRAPPERS wrappers
+ * stand in a row; or the holder is on this machine but in another pid
+ * namespace, where its pids mean nothing here. A holder on another machine is
+ * another session.
  */
 export declare function heldByAnotherSession(holder: LockOwner | null, probe?: ProcessProbe): boolean;
 /**

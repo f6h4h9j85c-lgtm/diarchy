@@ -1,8 +1,8 @@
 /**
  * `diarchy start` supervision and portability: the run record in
  * `.diarchy/start.pid`, PMs left behind by a supervisor that died, a hangup,
- * children that cannot be spawned, revival of a PM left dead, another session
- * holding an agent's lease, a corrupt chat file, a stop during the wall-clock
+ * children that cannot be spawned, revival of a PM left dead, parking an idle
+ * PM, another session holding an agent's lease, a corrupt chat file, a stop during the wall-clock
  * grace, the Codex git check, and the supported-platform statement. The CLI runs from source as in e2e.test.ts,
  * with small stand-in PM scripts instead of model calls.
  */
@@ -22,10 +22,20 @@ import { findExecutable, platformProblem } from "../src/cli/preflight.js";
 import { claimRunRecord, identify, pidPath, psStartTime, readRunRecord, reapLeftovers, runningSupervisor } from "../src/cli/run-record.js";
 import { worktreePath } from "../src/cli/worktrees.js";
 import { createMcpServer } from "../src/mcp/index.js";
-import { VaultStore, loadConfig } from "../src/vault/index.js";
+import { VaultStore, loadConfig, type MessageDraft } from "../src/vault/index.js";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const CLI = join(ROOT, "src", "cli", "index.ts");
+/** The store as the plugins ship it, for stand-in PMs that need no tsx loader. */
+const DIST_VAULT = JSON.stringify(pathToFileURL(join(ROOT, "dist", "vault", "index.js")).href);
+const PLAN_PROPOSE: MessageDraft = {
+  type: "PROPOSE",
+  to: "all",
+  re: ["AC1"],
+  decision_id: "plan",
+  claim: "Parking an idle PM keeps its restarts for real failures.",
+  body: "Two tasks: park and test.",
+};
 
 interface Run {
   code: number;
@@ -590,6 +600,130 @@ describe("a PM out of restarts", () => {
 });
 
 // ---------------------------------------------------------------------------
+// A PM that ends its turn with nothing owed is parked, not restarted (F030)
+// ---------------------------------------------------------------------------
+
+describe("a PM that ends its turn with nothing owed", () => {
+  /**
+   * A stand-in PM: an agent named in $STANDIN_READERS reads its inbox through
+   * the store, as a PM's first `read` does, and ends its turn with exit 0;
+   * any other agent works silently.
+   */
+  function readerScript(): string {
+    const path = join(tempDir(), "reader.mjs");
+    writeFileSync(
+      path,
+      [
+        'import { appendFileSync } from "node:fs";',
+        "const agent = process.env.DIARCHY_AGENT;",
+        "appendFileSync(`${process.env.STANDIN_DIR}/${agent}.pid`, `${process.pid}\\n`);",
+        'if ((process.env.STANDIN_READERS ?? "").split(",").includes(agent)) {',
+        `  const { VaultStore, loadConfig } = await import(${DIST_VAULT});`,
+        "  const projectDir = process.env.DIARCHY_PROJECT;",
+        "  new VaultStore({ projectDir, config: loadConfig(projectDir), agent }).read();",
+        "  process.exit(0);",
+        "}",
+        "setInterval(() => undefined, 1000);",
+        "",
+      ].join("\n"),
+    );
+    return path;
+  }
+
+  const idle = (agent: string): string => `${agent} idle: ended its turn with nothing owed; starts again when a message lands (no restart used)`;
+
+  it("uses no restart while the other PM works, and is parked again after the message that wakes it", async () => {
+    const dir = await initProject("park-idle");
+    const standin = tempDir();
+    const run = launch(
+      ["start", "Park the idle PM", "--ac", "An idle PM spends no restart.", "--lead", "claude", "--driver", "fake", "--fake-script", readerScript(), "--no-worktrees", "--project", dir],
+      { STANDIN_DIR: standin, STANDIN_READERS: "codex" },
+    );
+    await until("codex parked or restarting", () => run.out().includes(idle("codex")) || run.out().includes("codex restarting"), 30_000);
+    // Several backoffs and poll ticks: nothing relaunches it.
+    await new Promise((done) => setTimeout(done, 1_500));
+    expect(run.out()).not.toContain("codex restarting");
+    expect(run.out()).toContain(idle("codex"));
+    expect(pids(standin, "codex")).toHaveLength(1);
+
+    // The plan PROPOSE is for codex: it starts, reads it, owes nothing in the CHALLENGE window, and is parked again.
+    const claude = new VaultStore({ projectDir: dir, config: loadConfig(dir), agent: "claude", pollIntervalMs: 20 });
+    expect((await claude.post(PLAN_PROPOSE)).ok).toBe(true);
+    await until("codex parked again", () => run.out().split(idle("codex")).length - 1 === 2, 30_000);
+    expect(run.out()).toContain("codex respawning: a message landed");
+    expect(pids(standin, "codex")).toHaveLength(2);
+    expect(run.out()).not.toContain("codex restarting");
+
+    await cli(["stop", "--project", dir]);
+    expect((await run.done).code).toBe(2);
+  }, 60_000);
+
+  it("is started again once no PM is running, and the run still ends once restarts run out", async () => {
+    const dir = await initProject("park-both", (config) => {
+      config.launcher.max_restarts = 1;
+    });
+    expect((await cli(["kickoff", "Park both PMs", "--ac", "The run ends.", "--lead", "claude", "--project", dir])).code).toBe(0);
+    // With the plan proposed, the lead waits out the CHALLENGE window and the challenger may stay silent: neither owes anything.
+    const claude = new VaultStore({ projectDir: dir, config: loadConfig(dir), agent: "claude", pollIntervalMs: 20 });
+    expect((await claude.post(PLAN_PROPOSE)).ok).toBe(true);
+
+    const standin = tempDir();
+    const run = await cli(["start", "--driver", "fake", "--fake-script", readerScript(), "--no-worktrees", "--project", dir], { STANDIN_DIR: standin, STANDIN_READERS: "claude,codex" });
+    expect(run.code, run.stdout + run.stderr).toBe(1);
+    expect(run.stdout).toMatch(/(claude|codex) idle: ended its turn with nothing owed/);
+    expect(run.stdout).toMatch(/(claude|codex) starting again: no PM is running/);
+    // Bounded: each wake follows a counted restart of the PM that exited, so both run out.
+    expect(run.stdout).toContain("claude will not be restarted (1 restarts used)");
+    expect(run.stdout).toContain("codex will not be restarted (1 restarts used)");
+    expect(run.stdout).toContain("every agent exited while the goal is still PLAN");
+  }, 60_000);
+
+  it("waits out its own MCP server's lease before a message revives it, instead of taking it for another session", async () => {
+    const dir = await initProject("revive-settle", (config) => {
+      config.launcher.max_restarts = 0;
+    });
+    expect((await cli(["kickoff", "Settle before reviving", "--ac", "No other session is reported.", "--lead", "claude", "--project", dir])).code).toBe(0);
+    const lease = new VaultStore({ projectDir: dir, config: loadConfig(dir), agent: "human" }).activeGoal()?.paths.lease("claude") ?? "";
+    // claude's first run leaves the lease held by a lingering process, as its own MCP server does while it exits, then fails; its next run works silently.
+    const script = join(tempDir(), "lingering-server.mjs");
+    writeFileSync(
+      script,
+      [
+        'import { spawn } from "node:child_process";',
+        'import { appendFileSync, existsSync, mkdirSync, writeFileSync } from "node:fs";',
+        "const agent = process.env.DIARCHY_AGENT;",
+        "const pidFile = `${process.env.STANDIN_DIR}/${agent}.pid`;",
+        "const first = !existsSync(pidFile);",
+        "appendFileSync(pidFile, `${process.pid}\\n`);",
+        'if (agent === "claude" && first) {',
+        `  const { LOCK_HOST } = await import(${DIST_VAULT});`,
+        "  const lease = process.env.STANDIN_LEASE;",
+        '  const server = spawn("sh", ["-c", \'sleep 1; rm -rf "$0"\', lease], { detached: true, stdio: "ignore" });',
+        "  server.unref();",
+        "  mkdirSync(lease, { recursive: true });",
+        '  writeFileSync(`${lease}/owner`, `${JSON.stringify({ pid: server.pid, host: LOCK_HOST, token: "lingering" })}\\n`);',
+        "  process.exit(1);",
+        "}",
+        "setInterval(() => undefined, 1000);",
+        "",
+      ].join("\n"),
+    );
+    const standin = tempDir();
+    const run = launch(["start", "--driver", "fake", "--fake-script", script, "--no-worktrees", "--project", dir], { STANDIN_DIR: standin, STANDIN_LEASE: lease });
+    await until("claude's first exit", () => run.out().includes("claude exited (code 1)"), 30_000);
+    // A message lands while the lingering server still holds the lease.
+    const claude = new VaultStore({ projectDir: dir, config: loadConfig(dir), agent: "claude", pollIntervalMs: 20 });
+    expect((await claude.post(PLAN_PROPOSE)).ok).toBe(true);
+    await until("claude started again", () => pids(standin, "claude").length === 2, 30_000);
+    expect(run.out()).toContain("claude respawning: a message landed");
+    expect(run.out()).not.toContain("claude waiting: another session");
+
+    await cli(["stop", "--project", dir]);
+    await run.done;
+  }, 60_000);
+});
+
+// ---------------------------------------------------------------------------
 // Another session holding an agent's lease (F149)
 // ---------------------------------------------------------------------------
 
@@ -628,6 +762,27 @@ describe("another session holding an agent's lease", () => {
     expect(pids(standin, "claude")).toHaveLength(1);
     expect(run.out()).not.toContain("AGENT_BUSY");
     expect(run.out()).not.toContain("will not be restarted");
+
+    await cli(["stop", "--project", dir]);
+    await run.done;
+  }, 60_000);
+
+  it("names a holder whose owner file cannot be read yet as pid unknown, never pid 0", async () => {
+    const dir = await initProject("lease-no-owner");
+    expect((await cli(["kickoff", "Wait for an unnamed holder.", "--ac", "No pid 0 is logged.", "--lead", "claude", "--project", dir])).code).toBe(0);
+    // A lease being taken: the directory exists, its owner file is not written yet, and its mtime is fresh.
+    const lease = new VaultStore({ projectDir: dir, config: loadConfig(dir), agent: "human" }).activeGoal()?.paths.lease("claude") ?? "";
+    mkdirSync(lease, { recursive: true });
+    const standin = tempDir();
+    const run = launch(["start", "--driver", "fake", "--fake-script", sleeperScript(), "--no-worktrees", "--project", dir], { STANDIN_DIR: standin });
+    await until("the supervisor waiting on the holder", () => /claude waiting: another session \(pid \w+\)/.test(run.out()), 20_000);
+    expect(run.out()).toContain("claude waiting: another session (pid unknown) acts as claude on this goal");
+
+    rmSync(lease, { recursive: true, force: true });
+    await until("claude started", () => pids(standin, "claude").length === 1, 20_000);
+    await until("the start logged", () => run.out().includes("claude starting:"));
+    expect(run.out()).toContain("claude starting: pid unknown no longer holds the goal");
+    expect(run.out()).not.toContain("pid 0");
 
     await cli(["stop", "--project", dir]);
     await run.done;

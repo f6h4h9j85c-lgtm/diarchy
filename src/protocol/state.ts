@@ -10,6 +10,7 @@ import {
   type MessageRef,
   type MessageType,
   type Phase,
+  type TaskState,
 } from "./types.js";
 
 export type Role = "lead" | "challenger" | "human" | "system" | "unknown";
@@ -97,6 +98,11 @@ export function openThreads(state: GoalState): string[] {
     .map(([id]) => id);
 }
 
+/** Open threads other than `plan`: PHASE_GATE refuses DECIDE `plan` until each is decided (PROTOCOL.md section 6). */
+export function threadsBeforePlan(state: GoalState): string[] {
+  return openThreads(state).filter((id) => id !== "plan");
+}
+
 export function challengeCount(state: GoalState, id: string): number {
   return decisionLineage(state, id).reduce((sum, d) => sum + (state.decisions[d]?.challenges ?? 0), 0);
 }
@@ -170,16 +176,21 @@ export function authoredPr(state: GoalState, agent: AgentId | null): boolean {
 }
 
 /**
- * The PR an agent still owes a review on, if any (BUSY_REVIEWING). Only that
- * agent's `review` evidence settles it: a STATUS marking the task done does not.
+ * Does this review task still owe its review? The engine closes a review task
+ * when its assignee's `review` evidence on the PR lands, so one that is not done
+ * is owed, a re-review ASSIGNed after an earlier review included. A STATUS
+ * marking it done settles it only if the assignee has reviewed that PR at all
+ * (budget.json keeps no record of which review closed which task).
  */
+export function reviewOwed(state: GoalState, task: TaskState): boolean {
+  if (task.kind !== "review" || task.assignee === null || task.pr === null) return false;
+  if (task.status !== "done") return true;
+  return !(state.prs[task.pr]?.reviews.some((review) => review.by === task.assignee) ?? false);
+}
+
+/** The PR an agent still owes a review on, if any (BUSY_REVIEWING). */
 export function pendingReviewUrl(state: GoalState, agent: AgentId): string | undefined {
-  for (const task of Object.values(state.tasks)) {
-    if (task.kind !== "review" || task.assignee !== agent || task.pr === null) continue;
-    const reviewed = state.prs[task.pr]?.reviews.some((review) => review.by === agent) ?? false;
-    if (!reviewed) return task.pr;
-  }
-  return undefined;
+  return Object.values(state.tasks).find((task) => task.assignee === agent && reviewOwed(state, task))?.pr ?? undefined;
 }
 
 // ---------------------------------------------------------------------------

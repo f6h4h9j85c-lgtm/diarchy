@@ -172,3 +172,11 @@ describe("docs: the sandboxed Codex PM's PR stays its own (PROTOCOL.md 9.1, 9.2(
     expect(install).toContain("git diff main...<branch>");
   });
 });
+
+describe("docs: answering a deadlock", () => {
+  it("QUICKSTART.md says a plan ruling is refused while another thread is open and the plain reply answers then", () => {
+    const answer = section(read("docs", "QUICKSTART.md"), "## 6. Answer");
+    expect(answer).toContain("unless another thread is still open: then `--decision plan` is refused (PHASE_GATE decides plan last)");
+    expect(answer).toContain('answer with the plain `diarchy reply "<ruling>"` that goal.md shows');
+  });
+});

@@ -466,9 +466,19 @@ describe("codex-config: skills", () => {
   it("diarchy-pm bounds the lead's wait on a silent challenger and names the basis to DECIDE on", () => {
     const text = readFileSync(at("skills", "diarchy-pm", "SKILL.md"), "utf8");
     const plan = text.slice(text.indexOf("## PLAN phase"), text.indexOf("## EXECUTE phase"));
-    expect(plan).toContain("After two `{ timeout: true }` with none, or once the challenger posts something else, DECIDE.");
+    // PHASE_GATE decides plan last, so a thread the challenger opened comes first.
+    expect(plan).toContain("After two `{ timeout: true }` with none, or once the challenger posts something else, DECIDE any thread it opened, then plan.");
     expect(plan).toContain("`authority` when no CHALLENGE came");
     expect(plan).toContain("the lead decides after two of its `wait_for_reply` timeouts");
+  });
+
+  it("diarchy-pm and diarchy-review carry the fix and re-review loop after request_changes", () => {
+    const pm = readFileSync(at("skills", "diarchy-pm", "SKILL.md"), "utf8");
+    const execute = pm.slice(pm.indexOf("## EXECUTE phase"), pm.indexOf("## Delegation"));
+    expect(execute).toContain("On `request_changes`: author fixes, posts STATUS with the `commit` and the PR url as `pr`; lead ASSIGNs a re-review.");
+    const review = readFileSync(at("skills", "diarchy-review", "SKILL.md"), "utf8");
+    // The brief counts a fix only when the STATUS ties to the PR (its url, or the task that opened it).
+    expect(review).toContain("After `request_changes`, the author fixes the PR and posts STATUS with the fix `commit` and the PR url as `pr` evidence, then the lead ASSIGNs a re-review.");
   });
 
   it("diarchy-review checks out the PR detached and keeps a request_changes STATUS from marking ACs passing", () => {

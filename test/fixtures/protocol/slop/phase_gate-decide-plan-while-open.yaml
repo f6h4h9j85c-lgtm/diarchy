@@ -1,0 +1,48 @@
+description: "PHASE_GATE: the lead DECIDEs plan while D1 is still open; plan is decided last, and the rejection names D1 instead of listing DECIDE as allowed."
+state:
+  base: plan-challenged
+prior:
+  - message:
+      protocol_version: 1
+      id: 20261025T140530Z-0002-claude-PROPOSE
+      goal: 20261025-rate-limit
+      from: claude
+      to: all
+      type: PROPOSE
+      re:
+        - AC2
+      claim: The default limit is 100 requests per minute per key.
+      phase: PLAN
+      ts: 2026-10-25T14:05:30Z
+      body: Matches the current dashboard poll rate.
+message:
+  protocol_version: 1
+  id: 20261025T140600Z-0003-claude-DECIDE
+  goal: 20261025-rate-limit
+  from: claude
+  to: all
+  type: DECIDE
+  re:
+    - AC1
+    - AC2
+    - AC3
+  reply_to: 20261025T140455Z-0001-codex-CHALLENGE
+  decision_id: plan
+  claim: Use the Redis-backed token bucket because the API runs three replicas.
+  basis: authority
+  tasks:
+    - Token-bucket middleware in src/middleware/rateLimit.ts
+    - RATE_LIMIT_PER_MIN config, default 100
+  phase: PLAN
+  ts: 2026-10-25T14:06:00Z
+  body: The replica count is not checkable from here, so ruling by authority.
+expect:
+  ok: false
+  rule: PHASE_GATE
+  message: "DECIDE plan waits for open thread(s) D1: DECIDE those first, then plan."
+  state:
+    decisions:
+      plan:
+        status: open
+      D1:
+        status: open

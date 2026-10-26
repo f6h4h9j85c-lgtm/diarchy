@@ -28,9 +28,11 @@ import {
   planBudgetSpent,
   prAuthor,
   repliesToOpenChallenge,
+  roleAllows,
   roleOf,
   talkRatioReached,
   targetDecisionId,
+  threadsBeforePlan,
   totalBudgetReached,
   type Role,
 } from "./state.js";
@@ -287,16 +289,19 @@ const wallClock: Rule = ({ message, state, now }) => {
 };
 
 const phaseGate: Rule = ({ message, state, callerAgent }) => {
-  const planDecideWhileOpen =
-    message.type === "DECIDE" &&
-    message.decision_id === "plan" &&
-    openThreads(state).some((id) => id !== "plan");
+  const inPhase = phaseAllows(state, message.type);
+  // `plan` is decided last. DECIDE (the type) stays allowed, so a sender who may DECIDE is told which threads go first;
+  // PHASE_GATE runs before ROLE_GATE, so any other sender gets the types it may post.
+  const waiting = message.type === "DECIDE" && message.decision_id === "plan" ? threadsBeforePlan(state) : [];
+  if (inPhase && waiting.length > 0 && roleAllows(state, roleOf(state, callerAgent), "DECIDE")) {
+    return reject("PHASE_GATE", `DECIDE plan waits for open thread(s) ${waiting.join(", ")}: DECIDE those first, then plan.`);
+  }
   // One watch at a time: a second CHALLENGE would replace it and leave the first one unenforced.
   const challengeWhileWatched =
     message.type === "CHALLENGE" &&
     state.deadlock_watch !== null &&
     message.decision_id !== state.deadlock_watch.decision_id;
-  if (phaseAllows(state, message.type) && !planDecideWhileOpen && !challengeWhileWatched) return null;
+  if (inPhase && waiting.length === 0 && !challengeWhileWatched) return null;
   const allowed = allowedTypes(state, callerAgent);
   return reject(
     "PHASE_GATE",

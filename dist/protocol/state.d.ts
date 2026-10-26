@@ -1,5 +1,5 @@
 /** Read-only queries over GoalState shared by the rules and the engine. */
-import { type AgentId, type DeadlockWatch, type EvidenceItem, type GoalState, type Message, type MessageRef, type MessageType } from "./types.js";
+import { type AgentId, type DeadlockWatch, type EvidenceItem, type GoalState, type Message, type MessageRef, type MessageType, type TaskState } from "./types.js";
 export type Role = "lead" | "challenger" | "human" | "system" | "unknown";
 export declare function isPm(state: GoalState, agent: string): boolean;
 export declare function isKnownSender(state: GoalState, agent: string): boolean;
@@ -19,6 +19,8 @@ export declare function targetDecisionId(message: Message): string | undefined;
 /** A decision id followed by every decision it supersedes, transitively. */
 export declare function decisionLineage(state: GoalState, id: string): string[];
 export declare function openThreads(state: GoalState): string[];
+/** Open threads other than `plan`: PHASE_GATE refuses DECIDE `plan` until each is decided (PROTOCOL.md section 6). */
+export declare function threadsBeforePlan(state: GoalState): string[];
 export declare function challengeCount(state: GoalState, id: string): number;
 export declare function nextDecisionId(state: GoalState): string;
 export declare function nextTaskId(state: GoalState): string;
@@ -34,9 +36,14 @@ export declare function prAuthor(state: GoalState, message: Message, url: string
 /** Has `agent` introduced a PR on this goal (first `pr` evidence)? DONE 9.2(f). */
 export declare function authoredPr(state: GoalState, agent: AgentId | null): boolean;
 /**
- * The PR an agent still owes a review on, if any (BUSY_REVIEWING). Only that
- * agent's `review` evidence settles it: a STATUS marking the task done does not.
+ * Does this review task still owe its review? The engine closes a review task
+ * when its assignee's `review` evidence on the PR lands, so one that is not done
+ * is owed, a re-review ASSIGNed after an earlier review included. A STATUS
+ * marking it done settles it only if the assignee has reviewed that PR at all
+ * (budget.json keeps no record of which review closed which task).
  */
+export declare function reviewOwed(state: GoalState, task: TaskState): boolean;
+/** The PR an agent still owes a review on, if any (BUSY_REVIEWING). */
 export declare function pendingReviewUrl(state: GoalState, agent: AgentId): string | undefined;
 /** Is `type` legal in the current phase for any sender? */
 export declare function phaseAllows(state: GoalState, type: MessageType): boolean;

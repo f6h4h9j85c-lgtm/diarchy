@@ -19,7 +19,9 @@
  * pending test, lead DECIDEs by authority, ASSIGNs tasks alternately, both do
  * fake work (a commit in their worktree, else a fabricated sha) and post
  * STATUS with commit, test, and pr evidence, lead ASSIGNs cross reviews,
- * reviewers approve, lead posts DONE. 13 messages for two ACs.
+ * reviewers approve, lead posts DONE. 13 messages for two ACs. After a human
+ * ruling on plan (`diarchy reply --decision plan`) EXECUTE has no tasks, and
+ * the lead ASSIGNs one new_task per AC instead.
  *
  * slop: challenger posts an ack-only PROPOSE (NO_ACK), a CHALLENGE without a
  * test (CHALLENGE_NEEDS_TEST), then a valid CHALLENGE; the lead never DECIDEs
@@ -31,7 +33,7 @@ import { spawnSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { existsSync, writeFileSync } from "node:fs";
 import { join, posix } from "node:path";
-import { openThreads } from "../protocol/index.js";
+import { openThreads, reviewOwed } from "../protocol/index.js";
 import { VaultStore, loadConfig } from "../vault/index.js";
 import { branchName } from "./worktrees.js";
 const agent = process.env.DIARCHY_AGENT ?? "";
@@ -182,7 +184,7 @@ function goodAction(ctx) {
             });
         };
     }
-    const review = mine.find((task) => task.kind === "review" && task.status !== "done" && task.pr !== null && !(state.prs[task.pr]?.reviews.some((entry) => entry.by === agent) ?? false));
+    const review = mine.find((task) => reviewOwed(state, task));
     if (review !== undefined && review.pr !== null) {
         const url = review.pr;
         const introduced = messages.find((message) => message.type === "STATUS" && (message.evidence ?? []).some((item) => item.kind === "pr" && item.url === url));
@@ -205,6 +207,22 @@ function goodAction(ctx) {
             to: assignee,
             re: [acOfTask(todo)],
             task: todo.id,
+            kind: "implement",
+            worktree: posix.join(config.worktrees.root, assignee),
+            branch: branchName(config, state.goal, assignee),
+            reason: "availability",
+        }));
+    }
+    // EXECUTE opened by a human ruling carries no tasks: one new_task per AC, in AC order so T<n> is AC<n>'s task.
+    const uncovered = acs.findIndex((ac) => !tasks.some((task) => acOfTask(task) === ac));
+    if (uncovered >= 0 && tasks.every((task) => task.kind === "implement")) {
+        const ac = acs[uncovered];
+        const assignee = uncovered % 2 === 0 ? other : agent;
+        return async () => void (await post(store, {
+            type: "ASSIGN",
+            to: assignee,
+            re: [ac],
+            new_task: `${ac}: ${state.acs[ac].criterion}`,
             kind: "implement",
             worktree: posix.join(config.worktrees.root, assignee),
             branch: branchName(config, state.goal, assignee),

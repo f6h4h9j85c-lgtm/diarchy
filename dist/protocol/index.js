@@ -3,6 +3,6 @@ export * from "./types.js";
 export * from "./text.js";
 export { AC_ID_PATTERN, AC_LINE_PATTERN, DECISION_ID_PATTERN, FRONTMATTER_KEY_ORDER, GOAL_ID_PATTERN, ISO_TS_PATTERN, LINE_TERMINATOR, MESSAGE_ID_PATTERN, TASK_ID_PATTERN, SchemaError, budgetLimitsSchema, checkMessageShape, compactTs, configSchema, describeIssue, evidenceItemSchema, goalStateSchema, isMessageType, isoSeconds, kickoffFrontmatterSchema, messageSchema, messageSchemas, parseConfig, parseGoalState, parseKickoffFile, parseMessageFile, parseMessageId, partialBudgetsSchema, schemaMessage, serializeMessageFile, splitFrontmatter, typedOnlyMessage, } from "./schema.js";
 export { RULES, RULES_IN_ORDER, doneMissing, stateProblem } from "./rules.js";
-export { allowedTypes, evidenceKey, newEvidenceKeys, openThreads, phaseAllows, roleAllows, roleOf, } from "./state.js";
+export { allowedTypes, evidenceKey, newEvidenceKeys, openThreads, phaseAllows, reviewOwed, roleAllows, roleOf, threadsBeforePlan, } from "./state.js";
 export { assignId, evaluate, initialState, tick } from "./engine.js";
 //# sourceMappingURL=index.js.map

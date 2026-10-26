@@ -331,7 +331,7 @@ The store writes the ASK_HUMAN body from one template per trigger; none carries 
 | lead | `lead` in kickoff.md: the agent that received the goal from the human (launcher alternates from the previous goal's lead, `--lead` overrides; a goal typed into a CLI makes that CLI's agent lead) | PROPOSE, DECIDE, ASSIGN, STATUS, DONE, BLOCKED |
 | challenger | every other PM | PROPOSE (not `plan`), CHALLENGE, STATUS, BLOCKED |
 
-Roles are per goal and swap on the next goal unless the human says otherwise. No rule routes work by model identity or frontend/backend ownership; ASSIGN `reason` is limited to availability-style values. An agent holding a review assignment MUST NOT be assigned implementation until it posts `review` evidence on that PR; a STATUS marking the review task done does not count (BUSY_REVIEWING). The lead MAY assign itself.
+Roles are per goal and swap on the next goal unless the human says otherwise. No rule routes work by model identity or frontend/backend ownership; ASSIGN `reason` is limited to availability-style values. An agent holding a review assignment MUST NOT be assigned implementation until it posts `review` evidence on that PR, which closes the review task; a re-review ASSIGNed after an earlier review is held until the next one. A STATUS marking a review task done does not count while that agent has no `review` evidence on the PR (BUSY_REVIEWING). The lead MAY assign itself.
 
 ## 6. Phases
 

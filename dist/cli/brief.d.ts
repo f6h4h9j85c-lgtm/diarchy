@@ -14,14 +14,27 @@ export interface Assignment {
     pr: string | null;
     status: TaskStatus;
 }
-/** Tasks still owed: implement tasks not done, review tasks with no review evidence from the assignee yet. */
+/** Tasks still owed: implement tasks not done, review tasks whose review is still owed (`reviewOwed`, as BUSY_REVIEWING counts them). */
 export declare function openAssignments(state: GoalState, agent?: AgentId): Assignment[];
-/** Open threads whose CHALLENGE still awaits the lead's DECIDE. */
-export declare function challengedThreads(state: GoalState): {
+export interface ChallengedThread {
     id: string;
     from: AgentId;
     challengeId: string;
-}[];
+    /** False for a decided thread (an EXECUTE CHALLENGE): only a DECIDE with `supersedes` answers it. */
+    open: boolean;
+}
+/** Decisions whose CHALLENGE still awaits the lead's DECIDE, open or decided; the one the deadlock watch is on first. */
+export declare function challengedThreads(state: GoalState): ChallengedThread[];
+export interface ChangesRequested {
+    url: string;
+    author: AgentId;
+    /** The agent whose latest review of the PR asked for changes. */
+    by: AgentId;
+    /** The author has posted a STATUS with a commit for this PR since that review. */
+    fixed: boolean;
+}
+/** PRs no other agent has approved whose latest review by another agent is request_changes (the fix and re-review loop). */
+export declare function changesRequested(state: GoalState, messages: Message[]): ChangesRequested[];
 /**
  * Messages after the agent's inbox cursor, excluding its own. Reads the cursor
  * file, never moves it; one that will not parse counts as no cursor, as in the store.

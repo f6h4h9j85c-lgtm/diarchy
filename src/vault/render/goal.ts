@@ -1,5 +1,5 @@
 /** goal.md: docs/RENDERING.md section 4. Pure and byte-deterministic. */
-import type { GoalState, Kickoff, Message, Phase, TaskState } from "../../protocol/index.js";
+import { threadsBeforePlan, type GoalState, type Kickoff, type Message, type Phase, type TaskState } from "../../protocol/index.js";
 import {
   GENERATED,
   SEP,
@@ -139,9 +139,9 @@ function externalParagraphs(blocked: Message, from: Phase): string[] {
  */
 function answerLine(decision: string, state: GoalState, from: Phase): string {
   const planOpen = decision === "plan" && state.decisions.plan?.status === "open";
-  const otherOpen = Object.entries(state.decisions).some(([id, thread]) => id !== decision && thread.status === "open");
-  if (planOpen && otherOpen) {
-    return `**To answer:** run \`diarchy reply "<ruling>"\`. Your ruling is recorded as a new DECIDE with basis human, ${from} resumes, and ${state.lead} must then DECIDE plan. \`diarchy stop\` ends the run.`;
+  const first = threadsBeforePlan(state);
+  if (planOpen && first.length > 0) {
+    return `**To answer:** run \`diarchy reply "<ruling>"\`. Your ruling is recorded as a new DECIDE with basis human, ${from} resumes, and ${state.lead} must DECIDE ${first.join(", ")}, then plan. \`diarchy stop\` ends the run.`;
   }
   if (planOpen) {
     return `**To answer:** run \`diarchy reply "<ruling>" --decision plan\`. Your ruling closes plan as a DECIDE with basis human, and EXECUTE begins with no tasks: ${state.lead} must ASSIGN each task with new_task. \`diarchy stop\` ends the run.`;

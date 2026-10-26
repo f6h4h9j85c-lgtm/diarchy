@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 
 import { afterEach, describe, expect, expectTypeOf, it, vi } from "vitest";
 
+import { nextStep } from "../src/cli/brief.js";
 import { runGate, runInboxSkim } from "../src/cli/hooks.js";
 import {
   assignId,
@@ -418,7 +419,12 @@ describe("renderer rules", () => {
       used: { ...state.used, spend_usd: 12.5 },
       deadlock_watch: { decision_id: "D1", challenge_id: RUN[16].id, remaining: 2, deadline: "2026-10-25T15:59:12Z" },
     };
+    // D1 is decided here, so the watch is on an EXECUTE CHALLENGE, not on an open thread.
     expect(budgetLine(spending)).toBe(
+      "18 of 80 messages (PLAN 5 of 12) · 150 of 240 min · 12.50 of 50.00 USD · CHALLENGE on D1, DECIDE due by 15:59:12 UTC",
+    );
+    const reopened: GoalState = { ...spending, decisions: { ...spending.decisions, D1: { ...spending.decisions.D1, status: "open" } } };
+    expect(budgetLine(reopened)).toBe(
       "18 of 80 messages (PLAN 5 of 12) · 150 of 240 min · 12.50 of 50.00 USD · open D1, DECIDE due by 15:59:12 UTC",
     );
     expect(budgetLine(null)).toBe("budget unavailable");
@@ -434,7 +440,7 @@ describe("renderer rules", () => {
     await replay(h, RUN.findIndex((message) => message.id === RUN[16].id) + 1);
     expect(RUN[16].type).toBe("CHALLENGE");
     const chat = h.file("chat.md");
-    expect(chat).toContain("> 14 of 80 messages (PLAN 5 of 12) · 109 of 240 min · open D1, DECIDE due by 15:59:12 UTC\n");
+    expect(chat).toContain("> 14 of 80 messages (PLAN 5 of 12) · 109 of 240 min · CHALLENGE on D1, DECIDE due by 15:59:12 UTC\n");
     // RENDERING.md 2.1 "Example, EXECUTE" is this very strip, its summary escaped and cut as 1.1 and 2.1 say.
     const rendering = readFileSync(join(SAMPLES, "..", "RENDERING.md"), "utf8");
     const strip = /Example, EXECUTE:\n\n```\n([\s\S]*?)```/.exec(rendering)?.[1];
@@ -1855,7 +1861,7 @@ describe("read and waitForReply", () => {
 describe("deadlock question callout variants", () => {
   const RL_GOAL = "20261025-rl";
 
-  it("a plan deadlock while D1 is open shows the reply without --decision, and that reply unblocks PLAN", async () => {
+  it("a plan deadlock while D1 is open shows the reply without --decision, and that reply unblocks PLAN for D1, then plan", async () => {
     const h = harness();
     ok(await h.human.kickoff({ goal: "Rate limit the API.", acceptance_criteria: ["Over-limit requests get 429.", "The limit is configurable."], lead: "claude", slug: "rl" }));
     h.clock.advance(60_000);
@@ -1890,16 +1896,36 @@ describe("deadlock question callout variants", () => {
         "> 1. claude PROPOSE 14:01:00: *One task per AC\\.*",
         "> 2. codex CHALLENGE 14:02:00: *An in\\-process bucket suffices on one replica\\.* (test `kubectl get deploy api prints 1` · pending)",
         ">",
-        '> **To answer:** run `diarchy reply "<ruling>"`. Your ruling is recorded as a new DECIDE with basis human, PLAN resumes, and claude must then DECIDE plan. `diarchy stop` ends the run.',
+        '> **To answer:** run `diarchy reply "<ruling>"`. Your ruling is recorded as a new DECIDE with basis human, PLAN resumes, and claude must DECIDE D1, then plan. `diarchy stop` ends the run.',
         "",
       ].join("\n"),
     );
-    // Why the callout drops --decision: a ruling on plan is refused while D1 is open.
-    expect(await h.human.reply("Use the in-process bucket.", { decision: "plan" })).toMatchObject({ ok: false, rule: "PHASE_GATE" });
+    // Why the callout drops --decision: a ruling on plan is refused while D1 is open, and the refusal names D1.
+    expect(await h.human.reply("Use the in-process bucket.", { decision: "plan" })).toEqual({
+      ok: false,
+      rule: "PHASE_GATE",
+      message: "DECIDE plan waits for open thread(s) D1: DECIDE those first, then plan.",
+    });
     const ruling = await h.human.reply("Use the in-process bucket.");
     ok(ruling);
     expect(ruling).toMatchObject({ decision_id: "D2", phase: "PLAN" });
-    expect(h.human.state()?.decisions.plan.status).toBe("open");
+    const state = h.human.state();
+    if (state === null) throw new Error("no goal");
+    expect(state.decisions.plan.status).toBe("open");
+
+    // The lead's brief and Stop gate point at D1 before plan, and following them reaches EXECUTE.
+    expect(nextStep(state, h.human.listMessages(), "claude", [])).toEqual({
+      text: "thread plan has a CHALLENGE from codex awaiting your DECIDE, but plan is decided last: decide D1 first (call decide with decision_id D1), then plan",
+      owes: true,
+    });
+    const decide: MessageDraft = { type: "DECIDE", to: "all", re: ["AC1"], basis: "authority", body: "Ruling by authority after the human's answer." };
+    expect(await h.claude.post({ ...decide, decision_id: "plan", claim: "One task per AC stands." })).toMatchObject({ ok: false, rule: "PHASE_GATE" });
+    ok(await h.claude.post({ ...decide, decision_id: "D1", claim: "The default matches nginx." }));
+    const afterD1 = h.human.state();
+    if (afterD1 === null) throw new Error("no goal");
+    expect(nextStep(afterD1, h.human.listMessages(), "claude", []).text).toBe("thread plan has a CHALLENGE from codex awaiting your DECIDE: call decide");
+    ok(await h.claude.post({ ...decide, decision_id: "plan", claim: "One task per AC stands.", tasks: ["Middleware", "Config"] }));
+    expect(h.human.state()?.phase).toBe("EXECUTE");
   });
 
   it("a reopened plan thread lists the DECIDE it reopens and answers with the general line, keeping EXECUTE's tasks", async () => {

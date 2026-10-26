@@ -47,8 +47,10 @@ export {
   newEvidenceKeys,
   openThreads,
   phaseAllows,
+  reviewOwed,
   roleAllows,
   roleOf,
+  threadsBeforePlan,
   type Role,
 } from "./state.js";
 export { assignId, evaluate, initialState, tick, type AssignedId, type EvaluateOptions } from "./engine.js";

@@ -76,7 +76,7 @@ enabled = true
 [mcp_servers.diarchy]
 command = "diarchy"
 args = ["mcp", "--agent", "codex"]
-startup_timeout_sec = 20
+startup_timeout_sec = 60
 tool_timeout_sec = 1800
 ```
 

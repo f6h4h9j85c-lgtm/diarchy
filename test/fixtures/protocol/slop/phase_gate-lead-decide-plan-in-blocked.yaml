@@ -1,0 +1,51 @@
+description: "PHASE_GATE: in BLOCKED with D1 open, the lead DECIDEs plan; only the human may DECIDE in BLOCKED, so the rejection lists what the lead may post (nothing) instead of telling it to DECIDE D1."
+state:
+  base: plan-challenged
+  phase: BLOCKED
+  blocked_from: PLAN
+  decisions:
+    plan:
+      status: open
+      proposer: claude
+      messages: 2
+      challenges: 1
+      supersedes: null
+      superseded_by: null
+      evidence:
+        - test:kubectl -n prod get deploy api -o jsonpath='{.spec.replicas}' prints 1
+      challenge:
+        id: 20261025T140455Z-0001-codex-CHALLENGE
+        from: codex
+        new_evidence: []
+    D1:
+      status: open
+      proposer: claude
+      messages: 1
+      challenges: 0
+      supersedes: null
+      superseded_by: null
+      evidence: []
+      challenge: null
+  deadlock_watch: null
+message:
+  protocol_version: 1
+  id: 20261025T141600Z-0001-claude-DECIDE
+  goal: 20261025-rate-limit
+  from: claude
+  to: all
+  type: DECIDE
+  re:
+    - AC1
+  reply_to: 20261025T140455Z-0001-codex-CHALLENGE
+  decision_id: plan
+  basis: authority
+  claim: Use the Redis-backed token bucket.
+  tasks:
+    - Token-bucket middleware in src/middleware/rateLimit.ts
+  phase: BLOCKED
+  ts: 2026-10-25T14:16:00Z
+  body: Ruling by authority.
+expect:
+  ok: false
+  rule: PHASE_GATE
+  message: "DECIDE is not allowed in phase BLOCKED. Allowed now: none."

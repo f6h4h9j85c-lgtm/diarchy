@@ -455,7 +455,8 @@ describe("codex-config: skills", () => {
     const execute = pm.slice(pm.indexOf("## EXECUTE phase"), pm.indexOf("## Delegation"));
     expect(execute).toContain("On `request_changes`: author fixes, posts STATUS with the `commit`; lead ASSIGNs a re-review.");
     const review = readFileSync(at("skills", "diarchy-review", "SKILL.md"), "utf8");
-    expect(review).toContain("After `request_changes`, the author fixes the PR and posts STATUS with the fix `commit`, then the lead ASSIGNs a re-review.");
+    // The brief counts a fix only when the STATUS ties to the PR (its url, or the task that opened it).
+    expect(review).toContain("After `request_changes`, the author fixes the PR and posts STATUS with the fix `commit` and the PR url as `pr` evidence, then the lead ASSIGNs a re-review.");
   });
 
   it("diarchy-review checks out the PR detached and keeps a request_changes STATUS from marking ACs passing", () => {

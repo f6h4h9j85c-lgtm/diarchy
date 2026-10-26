@@ -19,4 +19,4 @@ Input: an ASSIGN `kind: review` naming a PR url and `re` ACs. Below, `.diarchy/w
    Body: at most one sentence per requested change, each naming a file and the AC it fails. An empty body on approve is fine.
 6. Never post `review` evidence on a PR you authored (NO_SELF_REVIEW). If asked to, post nothing and let the lead reassign.
 7. After `approve`, the author merges and posts STATUS with the merge `commit`. Never merge your own PR without the other agent's `approve`.
-8. After `request_changes`, the author fixes the PR and posts STATUS with the fix `commit`, then the lead ASSIGNs a re-review. Run it from step 1 on the new head; only your new `review` evidence closes it.
+8. After `request_changes`, the author fixes the PR and posts STATUS with the fix `commit` and the PR url as `pr` evidence, then the lead ASSIGNs a re-review. Run it from step 1 on the new head; only your new `review` evidence closes it.

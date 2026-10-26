@@ -73,7 +73,7 @@ export interface ChangesRequested {
   author: AgentId;
   /** The agent whose latest review of the PR asked for changes. */
   by: AgentId;
-  /** The author has posted a STATUS with a commit since that review. */
+  /** The author has posted a STATUS with a commit for this PR since that review. */
   fixed: boolean;
 }
 
@@ -87,7 +87,9 @@ export function changesRequested(state: GoalState, messages: Message[]): Changes
     if (latest === undefined || latest.verdict !== "request_changes" || others.some((review) => review.verdict === "approve")) continue;
     let reviewedAt = ordered.length - 1;
     while (reviewedAt >= 0 && !isReviewOf(ordered[reviewedAt], latest.by, url)) reviewedAt -= 1;
-    const fixed = ordered.slice(reviewedAt + 1).some((message) => isFixOf(message, pr.author, url));
+    // The task named by the STATUS that introduced the PR (its first `pr` evidence) is the PR's implement task.
+    const task = ordered.find((message) => message.type === "STATUS" && (message.evidence ?? []).some((item) => item.kind === "pr" && item.url === url))?.task;
+    const fixed = ordered.slice(reviewedAt + 1).some((message) => isFixOf(message, pr.author, url, task));
     found.push({ url, author: pr.author, by: latest.by, fixed });
   }
   return found;
@@ -97,12 +99,23 @@ function isReviewOf(message: Message, by: AgentId, url: string): boolean {
   return message.type === "STATUS" && message.from === by && (message.evidence ?? []).some((item) => item.kind === "review" && item.url === url);
 }
 
-/** A STATUS from the author with a commit, citing this PR or no PR at all. */
-function isFixOf(message: Message, author: AgentId, url: string): boolean {
+function citesUrl(message: Message, url: string): boolean {
+  return (message.evidence ?? []).some((item) => "url" in item && item.url === url);
+}
+
+/** A STATUS from the author with a commit that ties to this PR: it cites the PR's url, or names the PR's implement task. */
+function isFixOf(message: Message, author: AgentId, url: string, task: string | undefined): boolean {
   if (message.type !== "STATUS" || message.from !== author) return false;
-  const evidence = message.evidence ?? [];
-  const prs = evidence.flatMap((item) => (item.kind === "pr" ? [item.url] : []));
-  return evidence.some((item) => item.kind === "commit") && (prs.length === 0 || prs.includes(url));
+  if (!(message.evidence ?? []).some((item) => item.kind === "commit")) return false;
+  return citesUrl(message, url) || (task !== undefined && message.task === task);
+}
+
+/** A thread the lead PROPOSEd itself that no other PM has posted after yet: the challenger's CHALLENGE window is still open. */
+function awaitsChallenger(state: GoalState, ordered: Message[], id: string): boolean {
+  if (state.decisions[id]?.proposer !== state.lead) return false;
+  const proposed = ordered.findIndex((message) => message.type === "PROPOSE" && message.decision_id === id);
+  if (proposed < 0) return false;
+  return !ordered.slice(proposed + 1).some((message) => message.from !== state.lead && state.agents.includes(message.from));
 }
 
 /** Messages after the agent's inbox cursor, excluding its own. Reads the cursor file; never moves it. */
@@ -178,6 +191,23 @@ export function nextStep(state: GoalState, messages: Message[], agent: AgentId, 
   if (state.phase === "BLOCKED") {
     return { text: `waiting on the human (${blockSummary(state, messages)}); call wait_for_reply`, owes: false };
   }
+  const first = threadsBeforePlan(state);
+  // PHASE_GATE decides plan last, so point the lead at the other open threads first.
+  const decideFirst = (id = first[0]): string => `decide ${first.join(", ")} first (call decide with decision_id ${id}), then plan`;
+  // A CHALLENGE outranks the lead's own tasks: every message posted before the DECIDE spends the deadlock watch.
+  if (lead) {
+    const challenged = challengedThreads(state)[0];
+    if (challenged !== undefined) {
+      const watch = state.deadlock_watch;
+      const due = watch?.decision_id !== challenged.id ? "" : ` (deadlock in ${watch.remaining} messages or by ${hms(watch.deadline)} UTC)`;
+      const awaiting = `thread ${challenged.id} has a CHALLENGE from ${challenged.from} awaiting your DECIDE`;
+      if (!challenged.open) {
+        return { text: `${awaiting}: call decide with supersedes ${challenged.id}, reply_to ${challenged.challengeId}${due}`, owes: true };
+      }
+      if (challenged.id === "plan" && first.length > 0) return { text: `${awaiting}, but plan is decided last: ${decideFirst()}${due}`, owes: true };
+      return { text: `${awaiting}: call decide${due}`, owes: true };
+    }
+  }
   const review = openAssignments(state, agent).find((assignment) => assignment.kind === "review");
   if (review !== undefined && review.pr !== null) {
     return { text: `you hold review of PR ${oneLine(review.pr, FIELD_MAX_CHARS)}: review it, then call status with review evidence`, owes: true };
@@ -190,29 +220,13 @@ export function nextStep(state: GoalState, messages: Message[], agent: AgentId, 
       owes: true,
     };
   }
-  const first = threadsBeforePlan(state);
-  // PHASE_GATE decides plan last, so point the lead at the other open threads first.
-  const decideFirst = `decide ${first.join(", ")} first (call decide with decision_id ${first[0]}), then plan`;
-  if (lead) {
-    const challenged = challengedThreads(state)[0];
-    if (challenged !== undefined) {
-      const watch = state.deadlock_watch;
-      const due = watch?.decision_id !== challenged.id ? "" : ` (deadlock in ${watch.remaining} messages or by ${hms(watch.deadline)} UTC)`;
-      const awaiting = `thread ${challenged.id} has a CHALLENGE from ${challenged.from} awaiting your DECIDE`;
-      if (!challenged.open) {
-        return { text: `${awaiting}: call decide with supersedes ${challenged.id}, reply_to ${challenged.challengeId}${due}`, owes: true };
-      }
-      if (challenged.id === "plan" && first.length > 0) return { text: `${awaiting}, but plan is decided last: ${decideFirst}${due}`, owes: true };
-      return { text: `${awaiting}: call decide${due}`, owes: true };
-    }
-  }
   if (unread.length > 0) {
     return { text: `${unread.length} unread message${unread.length === 1 ? "" : "s"}: call read, then act on them`, owes: true };
   }
   const toFix = changesRequested(state, messages).find((pr) => pr.author === agent && !pr.fixed);
   if (toFix !== undefined) {
     return {
-      text: `PR ${oneLine(toFix.url, FIELD_MAX_CHARS)} has request_changes from ${toFix.by}: fix it, then call status with commit evidence`,
+      text: `PR ${oneLine(toFix.url, FIELD_MAX_CHARS)} has request_changes from ${toFix.by}: fix it, then call status with commit evidence and this PR as pr evidence`,
       owes: true,
     };
   }
@@ -220,12 +234,15 @@ export function nextStep(state: GoalState, messages: Message[], agent: AgentId, 
     const plan = state.decisions.plan;
     if (plan !== undefined && plan.status === "open") {
       if (plan.messages === 0) return { text: "post PROPOSE with decision_id plan (call post)", owes: true };
-      if (first.length > 0) return { text: decideFirst, owes: true };
       // Silence is legal (PROPOSE -> DECIDE, PROTOCOL.md section 7); diarchy-pm bounds the wait the same way.
-      return {
-        text: "wait_for_reply for a CHALLENGE; after two timeouts with none, or once the challenger posts something else, call decide with decision_id plan (basis authority, body: no CHALLENGE came)",
-        owes: false,
-      };
+      const wait = "wait_for_reply for a CHALLENGE; after two timeouts with none, or once the challenger posts something else,";
+      if (first.length > 0) {
+        // A thread the lead opened keeps the challenger's CHALLENGE window, as plan does; one the challenger opened is the lead's to DECIDE now.
+        const ordered = sortMessages(messages);
+        const ready = first.find((id) => !awaitsChallenger(state, ordered, id));
+        return ready === undefined ? { text: `${wait} ${decideFirst()}`, owes: false } : { text: decideFirst(ready), owes: true };
+      }
+      return { text: `${wait} call decide with decision_id plan (basis authority, body: no CHALLENGE came)`, owes: false };
     }
   }
   if (lead && state.phase === "EXECUTE") {

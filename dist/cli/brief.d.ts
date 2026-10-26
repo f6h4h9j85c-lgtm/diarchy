@@ -25,7 +25,7 @@ export interface ChangesRequested {
     author: AgentId;
     /** The agent whose latest review of the PR asked for changes. */
     by: AgentId;
-    /** The author has posted a STATUS with a commit since that review. */
+    /** The author has posted a STATUS with a commit for this PR since that review. */
     fixed: boolean;
 }
 /** PRs no other agent has approved whose latest review by another agent is request_changes (the fix and re-review loop). */

@@ -970,6 +970,121 @@ describe("brief and Stop gate guidance", () => {
     });
   }, RUN_TIMEOUT);
 
+  /** codex CHALLENGEs the decided plan with a failing test; returns the CHALLENGE id. */
+  async function challengePlan(codex: VaultStore, decideId: string): Promise<string> {
+    return posted(
+      await codex.post({
+        type: "CHALLENGE",
+        to: "claude",
+        re: ["AC1"],
+        reply_to: decideId,
+        decision_id: "plan",
+        claim: "One task misses that the API runs three replicas.",
+        evidence: [{ kind: "test", test: "kubectl get deploy api prints replicas 3", result: "fail" }],
+      }),
+    );
+  }
+
+  it("an EXECUTE CHALLENGE outranks the lead's own implement task, so finishing the task first does not spend the deadlock watch", async () => {
+    const { dir, claude, codex, decideId } = await inExecute("exec-challenge-busy", ["Over-limit requests get 429.", "The limit is configurable."]);
+    posted(await claude.post({ type: "ASSIGN", to: "codex", re: ["AC1"], task: "T1", kind: "implement", worktree: ".diarchy/worktrees/codex", branch: "diarchy/rl/codex" }));
+    posted(await claude.post({ type: "ASSIGN", to: "claude", re: ["AC2"], task: "T2", kind: "implement", worktree: ".diarchy/worktrees/claude", branch: "diarchy/rl/claude" }));
+    const challengeId = await challengePlan(codex, decideId);
+    const answer = `thread plan has a CHALLENGE from codex awaiting your DECIDE: call decide with supersedes plan, reply_to ${challengeId} (deadlock in 2 messages`;
+    expect(step(dir, "claude")).toMatchObject({ owes: true });
+    expect(step(dir, "claude").text).toContain(answer);
+    claude.read();
+    const reason = await gateReason(dir, "claude");
+    expect(reason).toContain(answer);
+    expect(reason).not.toContain("you hold T2");
+  }, RUN_TIMEOUT);
+
+  it("an EXECUTE CHALLENGE outranks the lead's own review assignment", async () => {
+    const { dir, claude, codex, decideId } = await inExecute("exec-challenge-reviewing", ["Over-limit requests get 429.", "The limit is configurable."]);
+    const pr = "https://github.com/acme/api/pull/3";
+    posted(await claude.post({ type: "ASSIGN", to: "codex", re: ["AC1"], task: "T1", kind: "implement", worktree: ".diarchy/worktrees/codex", branch: "diarchy/rl/codex" }));
+    posted(await claude.post({ type: "ASSIGN", to: "claude", re: ["AC2"], task: "T2", kind: "implement", worktree: ".diarchy/worktrees/claude", branch: "diarchy/rl/claude" }));
+    posted(
+      await codex.post({
+        type: "STATUS",
+        to: "all",
+        re: ["AC1"],
+        task: "T1",
+        task_status: "done",
+        evidence: [{ kind: "commit", sha: "1a2b3c4" }, { kind: "pr", url: pr }],
+        body: "Middleware landed.",
+      }),
+    );
+    posted(await claude.post({ type: "ASSIGN", to: "claude", re: ["AC1"], new_task: `Review ${pr}`, kind: "review", pr }));
+    const challengeId = await challengePlan(codex, decideId);
+    const result = step(dir, "claude");
+    expect(result.owes).toBe(true);
+    expect(result.text).toContain(`thread plan has a CHALLENGE from codex awaiting your DECIDE: call decide with supersedes plan, reply_to ${challengeId}`);
+  }, RUN_TIMEOUT);
+
+  it("an author STATUS on another task is not the fix for request_changes; one naming the PR's task is", async () => {
+    const { dir, claude, codex } = await inExecute("fix-tie", ["Over-limit requests get 429.", "The limit is configurable."]);
+    const pr = "https://github.com/acme/api/pull/4";
+    posted(await claude.post({ type: "ASSIGN", to: "codex", re: ["AC1"], task: "T1", kind: "implement", worktree: ".diarchy/worktrees/codex", branch: "diarchy/rl/codex" }));
+    posted(await claude.post({ type: "ASSIGN", to: "codex", re: ["AC2"], task: "T2", kind: "implement", worktree: ".diarchy/worktrees/codex", branch: "diarchy/rl/codex" }));
+    posted(
+      await codex.post({
+        type: "STATUS",
+        to: "all",
+        re: ["AC1"],
+        task: "T1",
+        task_status: "done",
+        evidence: [{ kind: "commit", sha: "1a2b3c4" }, { kind: "pr", url: pr }],
+        body: "Middleware landed.",
+      }),
+    );
+    posted(await claude.post({ type: "ASSIGN", to: "claude", re: ["AC1"], new_task: `Review ${pr}`, kind: "review", pr }));
+    posted(
+      await claude.post({
+        type: "STATUS",
+        to: "all",
+        re: ["AC1"],
+        evidence: [{ kind: "review", url: pr, verdict: "request_changes" }, { kind: "test", test: "curl -i over the limit shows Retry-After", result: "fail" }],
+        body: "src/middleware/rateLimit.ts sends 429 without Retry-After.",
+      }),
+    );
+    // T2's commit is not a fix for T1's PR: the author still owes the fix and the lead owes no re-review yet.
+    posted(
+      await codex.post({ type: "STATUS", to: "all", re: ["AC2"], task: "T2", task_status: "done", evidence: [{ kind: "commit", sha: "2b3c4d5" }], body: "RATE_LIMIT_PER_MIN is read at startup." }),
+    );
+    expect(step(dir, "codex")).toEqual({ text: `PR ${pr} has request_changes from claude: fix it, then call status with commit evidence and this PR as pr evidence`, owes: true });
+    expect(step(dir, "claude")).toEqual({ text: "nothing owed; call wait_for_reply for the other PM's STATUS", owes: false });
+
+    posted(await codex.post({ type: "STATUS", to: "all", re: ["AC1"], task: "T1", evidence: [{ kind: "commit", sha: "3c4d5e6" }], body: "Retry-After set on every 429." }));
+    expect(step(dir, "codex").owes).toBe(false);
+    expect(step(dir, "claude")).toEqual({ text: `assign a re-review of PR ${pr} to claude: call assign`, owes: true });
+  }, RUN_TIMEOUT);
+
+  it("in PLAN the lead DECIDEs a thread the challenger opened before plan, and gives a thread it opened itself the challenger's window first", async () => {
+    const dir = await initProject("plan-threads", false);
+    const { claude, codex } = agents(dir);
+    expect((await human(dir).kickoff({ goal: "Rate limit the API.", acceptance_criteria: ["Over-limit requests get 429.", "The limit is configurable."], lead: "claude", slug: "plan-threads" })).ok).toBe(true);
+    posted(await claude.post({ type: "PROPOSE", to: "all", re: ["AC1", "AC2"], decision_id: "plan", claim: "A Redis bucket meets both ACs.", body: "Two tasks." }));
+    const window = "wait_for_reply for a CHALLENGE; after two timeouts with none, or once the challenger posts something else,";
+
+    // The challenger's own PROPOSE: nobody else may answer it, so the lead owes its DECIDE now, before plan.
+    expect(posted(await codex.post({ type: "PROPOSE", to: "all", re: ["AC2"], claim: "The default limit should be 100 per minute.", body: "Matches the dashboard poll rate." }))).toMatch(/-codex-PROPOSE$/);
+    expect(step(dir, "claude")).toEqual({ text: "decide D1 first (call decide with decision_id D1), then plan", owes: true });
+    claude.read();
+    expect(await gateReason(dir, "claude")).toContain("decide D1 first (call decide with decision_id D1), then plan");
+    const decide: MessageDraft = { type: "DECIDE", to: "all", re: ["AC2"], basis: "authority", body: "No CHALLENGE came." };
+    posted(await claude.post({ ...decide, decision_id: "D1", claim: "The default limit is 100 per minute." }));
+    expect(step(dir, "claude")).toEqual({ text: `${window} call decide with decision_id plan (basis authority, body: no CHALLENGE came)`, owes: false });
+
+    // The lead's own PROPOSE: the challenger may still CHALLENGE it, so the lead waits instead of deciding at once.
+    posted(await claude.post({ type: "PROPOSE", to: "all", re: ["AC2"], claim: "RATE_LIMIT_PER_MIN is read once at startup.", body: "No hot reload." }));
+    expect(step(dir, "claude")).toEqual({ text: `${window} decide D2 first (call decide with decision_id D2), then plan`, owes: false });
+    claude.read();
+    expect(await gateReason(dir, "claude")).toBe("");
+    posted(await codex.post({ type: "STATUS", to: "all", re: ["AC2"], evidence: [{ kind: "file", path: "notes/config.md" }], body: "Config notes in notes/config.md." }));
+    expect(step(dir, "claude")).toEqual({ text: "decide D2 first (call decide with decision_id D2), then plan", owes: true });
+  }, RUN_TIMEOUT);
+
   it("after request_changes the author owes a fix, then the lead owes a re-review, and the re-review is in the reviewer's brief", async () => {
     const { dir, claude, codex } = await inExecute("review-loop", ["Over-limit requests get 429."]);
     const pr = "https://github.com/acme/api/pull/7";
@@ -996,18 +1111,22 @@ describe("brief and Stop gate guidance", () => {
         body: "src/middleware/rateLimit.ts sends 429 without Retry-After.",
       }),
     );
-    const fix = `PR ${pr} has request_changes from claude: fix it, then call status with commit evidence`;
+    const fix = `PR ${pr} has request_changes from claude: fix it, then call status with commit evidence and this PR as pr evidence`;
     expect(step(dir, "codex")).toEqual({ text: fix, owes: true });
     expect(step(dir, "claude")).toEqual({ text: "nothing owed; call wait_for_reply for the other PM's STATUS", owes: false });
     codex.read();
     expect(await gateReason(dir, "codex")).toContain(fix);
 
+    // A commit that names neither the PR nor its task is not the fix.
+    posted(await codex.post({ type: "STATUS", to: "all", re: ["AC1"], evidence: [{ kind: "commit", sha: "4c5d6e7" }], body: "Refactored the request logger." }));
+    expect(step(dir, "codex")).toEqual({ text: fix, owes: true });
+    expect(step(dir, "claude").owes).toBe(false);
     posted(
       await codex.post({
         type: "STATUS",
         to: "all",
         re: ["AC1"],
-        evidence: [{ kind: "commit", sha: "5d6e7f8" }, { kind: "test", test: "curl -i over the limit shows Retry-After", result: "pass" }],
+        evidence: [{ kind: "commit", sha: "5d6e7f8" }, { kind: "pr", url: pr }, { kind: "test", test: "curl -i over the limit shows Retry-After", result: "pass" }],
         body: "Retry-After set on every 429.",
       }),
     );

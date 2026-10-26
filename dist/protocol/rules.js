@@ -4,7 +4,7 @@
  * passes. `RULES_IN_ORDER` is the doc's evaluation order.
  */
 import { checkMessageShape, compactTs, isMessageType, parseMessageId, schemaMessage, typedOnlyMessage, } from "./schema.js";
-import { allowedTypes, authoredPr, challengeCount, challengers, isKnownSender, isPm, limitHit, messageRef, newEvidenceKeys, openThreads, pendingReviewUrl, phaseAllows, planBudgetSpent, prAuthor, repliesToOpenChallenge, roleOf, talkRatioReached, targetDecisionId, threadsBeforePlan, totalBudgetReached, } from "./state.js";
+import { allowedTypes, authoredPr, challengeCount, challengers, isKnownSender, isPm, limitHit, messageRef, newEvidenceKeys, openThreads, pendingReviewUrl, phaseAllows, planBudgetSpent, prAuthor, repliesToOpenChallenge, roleAllows, roleOf, talkRatioReached, targetDecisionId, threadsBeforePlan, totalBudgetReached, } from "./state.js";
 import { BODY_MAX_WORDS, isAck, isOneClaim, wordCount } from "./text.js";
 import { AGENT_HUMAN, AGENT_SYSTEM, ASSIGN_REASONS, RULE_IDS, } from "./types.js";
 export const RULES_IN_ORDER = [...RULE_IDS];
@@ -223,16 +223,17 @@ const wallClock = ({ message, state, now }) => {
 };
 const phaseGate = ({ message, state, callerAgent }) => {
     const inPhase = phaseAllows(state, message.type);
-    // `plan` is decided last; DECIDE (the type) stays allowed, so name the threads to decide first.
+    // `plan` is decided last. DECIDE (the type) stays allowed, so a sender who may DECIDE is told which threads go first;
+    // PHASE_GATE runs before ROLE_GATE, so any other sender gets the types it may post.
     const waiting = message.type === "DECIDE" && message.decision_id === "plan" ? threadsBeforePlan(state) : [];
-    if (inPhase && waiting.length > 0) {
+    if (inPhase && waiting.length > 0 && roleAllows(state, roleOf(state, callerAgent), "DECIDE")) {
         return reject("PHASE_GATE", `DECIDE plan waits for open thread(s) ${waiting.join(", ")}: DECIDE those first, then plan.`);
     }
     // One watch at a time: a second CHALLENGE would replace it and leave the first one unenforced.
     const challengeWhileWatched = message.type === "CHALLENGE" &&
         state.deadlock_watch !== null &&
         message.decision_id !== state.deadlock_watch.decision_id;
-    if (inPhase && !challengeWhileWatched)
+    if (inPhase && waiting.length === 0 && !challengeWhileWatched)
         return null;
     const allowed = allowedTypes(state, callerAgent);
     return reject("PHASE_GATE", `${message.type} is not allowed in phase ${state.phase}. Allowed now: ${allowed.length > 0 ? allowed.join(", ") : "none"}.`);

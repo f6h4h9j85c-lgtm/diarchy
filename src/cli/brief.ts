@@ -139,8 +139,10 @@ export function nextStep(state: GoalState, messages: Message[], agent: AgentId, 
   const implement = openAssignments(state, agent).find((assignment) => assignment.kind === "implement");
   if (implement !== undefined) {
     const where = implement.branch === null ? "" : ` on branch ${oneLine(implement.branch, FIELD_MAX_CHARS)}`;
+    // DONE 9.2(f) needs pr evidence from every implementer unless review.required is false.
+    const evidence = state.review_required ? "commit, pr, and test" : "commit and test";
     return {
-      text: `you hold ${implement.task} (${oneLine(implement.text)})${where}: finish it, then call status with commit and test evidence`,
+      text: `you hold ${implement.task} (${oneLine(implement.text)})${where}: finish it, then call status with ${evidence} evidence`,
       owes: true,
     };
   }

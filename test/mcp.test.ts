@@ -687,6 +687,26 @@ describe("malformed arguments", () => {
     expect(section).toContain('is rejected the same way as a rule: `{ ok: false, rule: "SCHEMA", message }` naming the field');
     expect(section).not.toMatch(/plain-text/);
   });
+
+  it("an arguments value that is not an object never reaches a tool: the SDK answers -32603, as PROTOCOL.md section 10 says", async () => {
+    const protocol = readFileSync(join(ROOT, "docs", "PROTOCOL.md"), "utf8");
+    const section = protocol.slice(protocol.indexOf("## 10. MCP tools"), protocol.indexOf("## 11."));
+    const listed = /`arguments` is not a JSON object \(([^)]+)\) never reaches a tool: the MCP SDK rejects it with JSON-RPC error (-\d+)/.exec(section);
+    expect(listed, "PROTOCOL.md section 10 names the non-object arguments the SDK rejects").not.toBeNull();
+    const samples: Record<string, unknown> = { "`null`": null, "a string": "AC1", "an array": [], "a number": 42, "a boolean": true };
+    expect(listed?.[1].replace(/, or /, ", ").split(", ")).toEqual(Object.keys(samples));
+    expect(section).toContain("An omitted `arguments` is treated as `{}`.");
+    expect(section).toContain("No tool answers a bad field in an object `arguments` with an MCP protocol error.");
+
+    const h = await harness();
+    for (const [label, args] of Object.entries(samples)) {
+      const request = { method: "tools/call", params: { name: "read", arguments: args } } as unknown as Parameters<Client["request"]>[0];
+      await expect(h.codex.request(request, CallToolResultSchema), label).rejects.toMatchObject({ code: Number(listed?.[2]) });
+    }
+    const omitted = { method: "tools/call", params: { name: "read" } } as unknown as Parameters<Client["request"]>[0];
+    const result = await h.codex.request(omitted, CallToolResultSchema);
+    expect(result.structuredContent).toEqual(NO_GOAL);
+  });
 });
 
 // ---------------------------------------------------------------------------

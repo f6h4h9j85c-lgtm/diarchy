@@ -1,5 +1,6 @@
 import { spawn, spawnSync } from "node:child_process";
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
+import { createRequire, syncBuiltinESMExports } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -36,7 +37,7 @@ import {
   type MessageDraft,
   type PostResult,
 } from "../src/vault/index.js";
-import { LOCK_HOST, inspectLock, isStale, lockOwner, reapIfSame, releaseLock, touchLock, tryLock } from "../src/vault/lock.js";
+import { LOCK_HOST, inspectLock, isStale, lockOwner, reapIfSame, releaseLock, touchLock, tryLock, type LockSnapshot } from "../src/vault/lock.js";
 import { budgetLine, cellCode, code, escapePunctuation, hostTimeZone, italic, link, linkText, localHint, plainBlock, plainInline, visible } from "../src/vault/render/shared.js";
 import type { KickoffInput, ReplyOptions, WaitOptions } from "../src/vault/types.js";
 
@@ -958,7 +959,7 @@ describe("lock", () => {
     rmSync(lock, { recursive: true });
   });
 
-  it("stale-lock takeover is exclusive: a reaper never removes a lock that replaced the one it judged stale", () => {
+  it("a reaper with an old snapshot leaves the lock that replaced the stale one alone, and only the owner refreshes or releases it", () => {
     const root = mkdtempSync(join(tmpdir(), "diarchy-lock-"));
     temps.push(root);
     const lock = join(root, ".lock");
@@ -984,6 +985,77 @@ describe("lock", () => {
     expect(touchLock(lock, tokenA ?? "")).toBe(true);
     expect(releaseLock(lock, tokenA ?? "")).toBe(true);
     expect(readdirSync(root)).toEqual([]);
+  });
+
+  /** A lock directory whose mtime is a minute old: stale to every writer. */
+  function staleLock(): { root: string; lock: string; seen: LockSnapshot } {
+    const root = mkdtempSync(join(tmpdir(), "diarchy-lock-"));
+    temps.push(root);
+    const lock = join(root, ".lock");
+    mkdirSync(lock);
+    const old = (Date.now() - 60_000) / 1000;
+    utimesSync(lock, old, old);
+    const seen = inspectLock(lock);
+    if (seen === null || !isStale(seen)) throw new Error("no stale lock");
+    return { root, lock, seen };
+  }
+
+  it("stale-lock takeover is exclusive: no reap while another reaper holds <lock>.reap, and a dead reaper's mutex is cleared", () => {
+    const { root, lock, seen } = staleLock();
+    const mutex = `${lock}.reap`;
+    mkdirSync(mutex);
+    expect(reapIfSame(lock, seen)).toBe(false);
+    expect(inspectLock(lock)).toEqual(seen);
+    expect(tryLock(lock)).toBeNull();
+    expect(existsSync(mutex)).toBe(true);
+    // A mutex older than the stale limit belongs to a reaper that died mid-reap: it is removed, and the next attempt reaps.
+    const old = (Date.now() - 60_000) / 1000;
+    utimesSync(mutex, old, old);
+    expect(reapIfSame(lock, seen)).toBe(false);
+    expect(existsSync(mutex)).toBe(false);
+    expect(reapIfSame(lock, seen)).toBe(true);
+    expect(readdirSync(root)).toEqual([]);
+  });
+
+  it("stale-lock takeover is exclusive: a reaper that runs between another's check and its rename never gets a lock that is then taken away", () => {
+    const { root, lock, seen } = staleLock();
+    // Both reapers judged the same lock stale. B runs reapIfSame; inside it, A takes over just before B renames the lock
+    // aside, and C locks just before B would put back a lock it moved by mistake. Without the shared <lock>.reap, A
+    // reaps and relocks, B moves A's lock aside, C takes the empty slot, and B's failed put-back deletes A's lock.
+    const fs = createRequire(import.meta.url)("node:fs") as { renameSync: (from: string, to: string) => void };
+    const rename = fs.renameSync;
+    const holders: { who: string; token: string }[] = [];
+    const take = (who: string) => {
+      const token = tryLock(lock);
+      if (token !== null) holders.push({ who, token });
+    };
+    let aRan = false;
+    let cRan = false;
+    fs.renameSync = (from, to) => {
+      if (from === lock && !aRan) {
+        aRan = true;
+        take("A");
+      } else if (to === lock && !cRan) {
+        cRan = true;
+        take("C");
+      }
+      rename(from, to);
+    };
+    syncBuiltinESMExports();
+    let reaped: boolean;
+    try {
+      reaped = reapIfSame(lock, seen);
+    } finally {
+      fs.renameSync = rename;
+      syncBuiltinESMExports();
+    }
+    expect(aRan).toBe(true);
+    expect(holders).toEqual([]);
+    expect(reaped).toBe(true);
+    expect(readdirSync(root)).toEqual([]);
+    const tokenB = tryLock(lock);
+    expect(tokenB).not.toBeNull();
+    expect(lockOwner(lock)?.token).toBe(tokenB);
   });
 
   it("waits on a fresh lock instead of failing", async () => {

@@ -254,6 +254,18 @@ describe("codex-config: JSON manifests", () => {
     expect(typeof (m.author as { name?: string }).name).toBe("string");
   });
 
+  it(".claude-plugin/plugin.json icon is a square PNG of 512 to 2048 px under 2 MB, the plugin directory's limits", () => {
+    const icon = readJson(at(".claude-plugin", "plugin.json")).icon as string;
+    expect(icon.startsWith("./")).toBe(true);
+    const png = readFileSync(at(icon));
+    expect(png.subarray(0, 8).toString("hex")).toBe("89504e470d0a1a0a");
+    const [width, height] = [png.readUInt32BE(16), png.readUInt32BE(20)];
+    expect(width).toBe(height);
+    expect(width).toBeGreaterThanOrEqual(512);
+    expect(width).toBeLessThanOrEqual(2048);
+    expect(png.length).toBeLessThan(2 * 1024 * 1024);
+  });
+
   it(".codex-plugin/plugin.json (Codex) has name, version, description, skills, mcpServers", () => {
     const m = readJson(at(".codex-plugin", "plugin.json"));
     expect(m.name).toBe("diarchy");

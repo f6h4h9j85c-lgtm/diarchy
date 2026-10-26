@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <title>diarchy</title>
+  <!--
+    The diarchy mark: a geometric "d" that is identical after a half-turn, so
+    it reads as "d" from either seat at the table. It is the union of two
+    congruent hooks (an arch with one long leg); neither closes the bowl alone.
+
+    Construction on a 1024 grid, centre (512, 512), point-symmetric about it:
+      bowl      outer circle r 230; counter is an ellipse rx 122, ry 130, so
+                the sides are 108 thick and the top and bottom 100 (horizontal
+                strokes look heavier than vertical ones at the same width)
+      stems     108 wide, flush with the bowl's outer edge, each running from
+                the bowl's horizontal axis 122 past the bowl (y 160 and 864)
+      crotch    where a stem's inner edge meets the bowl: 512 -/+ sqrt(230^2 - 122^2)
+
+    Palette, one hue (OKLCH h 165), two values:
+      ground    oklch(0.215 0.022 165)  #0f1d17
+      mark      oklch(0.935 0.012 165)  #e3ece7
+
+    .claude-plugin/icon.png is rendered from this file: node scripts/render-icon.mjs
+  -->
+  <rect width="1024" height="1024" fill="#0f1d17"/>
+  <path fill="#e3ece7" fill-rule="evenodd" d="M 634 160 H 742 V 512 A 230 230 0 0 1 390 706.98 V 864 H 282 V 512 A 230 230 0 0 1 634 317.02 Z M 634 512 A 122 130 0 0 0 390 512 A 122 130 0 0 0 634 512 Z"/>
+</svg>

@@ -1,4 +1,4 @@
-description: "BUSY_REVIEWING: claude marks its review task for PR 412 done with a STATUS that carries no review evidence; it still owes the review, so it cannot be assigned implementation."
+description: "BUSY_REVIEWING: claude marks its review task for PR 412 done with a STATUS that carries no review evidence; task_status done does not close a review task, so T4 stays assigned and claude cannot be assigned implementation."
 state:
   base: execute-review-assigned
 prior:
@@ -42,4 +42,4 @@ expect:
   state:
     tasks:
       T4:
-        status: done
+        status: assigned

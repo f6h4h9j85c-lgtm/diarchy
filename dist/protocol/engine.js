@@ -259,7 +259,9 @@ function applyWork(state, message, effects) {
     }
     if (message.task !== undefined && message.task_status !== undefined) {
         const task = state.tasks[message.task];
-        if (task !== undefined && task.status !== message.task_status) {
+        // A review task closes only when its assignee's review evidence lands (applyReview), never by task_status done.
+        const closesReview = task?.kind === "review" && message.task_status === "done";
+        if (task !== undefined && !closesReview && task.status !== message.task_status) {
             task.status = message.task_status;
             effects.push(taskEffect(task));
         }

@@ -1,0 +1,64 @@
+description: "BUSY_REVIEWING: a goal stored by diarchy 0.2.0 holds review task T4 that a STATUS marked done before claude posted any review evidence on PR 412; the done status is kept, and claude still owes the review, so it cannot be assigned implementation."
+state:
+  base: execute-review-assigned
+  tasks:
+    T1:
+      id: T1
+      task: Token-bucket middleware in src/middleware/rateLimit.ts
+      kind: implement
+      assignee: codex
+      branch: diarchy/20261025-rate-limit/codex
+      worktree: .diarchy/worktrees/codex
+      pr: null
+      status: done
+    T2:
+      id: T2
+      task: RATE_LIMIT_PER_MIN config, default 100
+      kind: null
+      assignee: null
+      branch: null
+      worktree: null
+      pr: null
+      status: todo
+    T3:
+      id: T3
+      task: Tests for 429 and config override; full suite green
+      kind: null
+      assignee: null
+      branch: null
+      worktree: null
+      pr: null
+      status: todo
+    T4:
+      id: T4
+      task: Review PR 412
+      kind: review
+      assignee: claude
+      branch: null
+      worktree: null
+      pr: https://github.com/acme/api/pull/412
+      status: done
+message:
+  protocol_version: 1
+  id: 20261025T151400Z-0004-claude-ASSIGN
+  goal: 20261025-rate-limit
+  from: claude
+  to: claude
+  type: ASSIGN
+  re:
+    - AC2
+  task: T2
+  kind: implement
+  worktree: .diarchy/worktrees/claude
+  branch: diarchy/20261025-rate-limit/claude
+  phase: EXECUTE
+  ts: 2026-10-25T15:14:00Z
+  body: ""
+expect:
+  ok: false
+  rule: BUSY_REVIEWING
+  message: claude is reviewing https://github.com/acme/api/pull/412. Assign implementation to another agent or wait for the review evidence.
+  state:
+    tasks:
+      T4:
+        status: done

@@ -177,10 +177,11 @@ export function authoredPr(state: GoalState, agent: AgentId | null): boolean {
 
 /**
  * Does this review task still owe its review? The engine closes a review task
- * when its assignee's `review` evidence on the PR lands, so one that is not done
- * is owed, a re-review ASSIGNed after an earlier review included. A STATUS
- * marking it done settles it only if the assignee has reviewed that PR at all
- * (budget.json keeps no record of which review closed which task).
+ * only when its assignee's `review` evidence on the PR lands (a STATUS with
+ * task_status done leaves it as it was), so one that is not done is owed, a
+ * re-review ASSIGNed after an earlier review included. A done task with no
+ * review from its assignee is still owed: diarchy 0.2.0 and older let a STATUS
+ * mark a review task done, and goals they stored keep that status.
  */
 export function reviewOwed(state: GoalState, task: TaskState): boolean {
   if (task.kind !== "review" || task.assignee === null || task.pr === null) return false;

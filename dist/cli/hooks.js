@@ -10,8 +10,9 @@
  * GATE_CAP consecutive blocks with no new message (counted per session, in
  * `.diarchy/gate-<agent>/<session_id>.json`, or `.diarchy/gate-<agent>.json`
  * when the Stop event names no session) it stops blocking so a stuck agent can
- * end its turn. It never blocks a session while another session's MCP server
- * holds the agent's lease: every diarchy tool would answer it AGENT_BUSY.
+ * end its turn. It does not block a session while another session's MCP
+ * server holds the agent's lease, since every diarchy tool would answer it
+ * AGENT_BUSY; when it cannot tell whose server holds the lease, it blocks.
  *
  * `guard --agent <id>` (PreToolUse): a deny decision when the shell command
  * on stdin runs `diarchy reply` or `diarchy stop`, the human's commands.
@@ -96,6 +97,8 @@ function saveGateRecord(path, record) {
 }
 /** The parent of `pid`: /proc on Linux, `ps` elsewhere; null when it cannot be read. */
 function parentPid(pid) {
+    if (pid === process.pid)
+        return process.ppid;
     if (existsSync("/proc/self/stat")) {
         try {
             const stat = readFileSync(`/proc/${pid}/stat`, "utf8");
@@ -113,33 +116,53 @@ function parentPid(pid) {
     const ppid = ps.status === 0 ? Number((ps.stdout ?? "").trim()) : Number.NaN;
     return Number.isInteger(ppid) ? ppid : null;
 }
-/** True when `pid` is this process or one of its ancestors. */
-function isOwnAncestor(pid) {
-    let current = process.pid;
-    for (let depth = 0; current !== null && current > 1 && depth < 64; depth += 1) {
-        if (current === pid)
-            return true;
-        current = depth === 0 ? process.ppid : parentPid(current);
-    }
-    return false;
+const THIS_PROCESS = { host: LOCK_HOST, pid: process.pid, parentOf: parentPid };
+/** The machine part of a lock host: LOCK_HOST adds the pid namespace on Linux. */
+function machineOf(host) {
+    return host.replace(/ pid:\[\d+\]$/, "");
 }
 /**
- * True when another session's MCP server holds `agent`'s lease, so this
- * session's tools only get AGENT_BUSY. The hook and the session's own server
- * are both children of the same CLI process, so a holder whose parent is one
- * of this hook's ancestors is this session's server. Limit: a server the CLI
- * starts through a wrapper process (a shell, npx) has the wrapper as its
- * parent and is taken for another session; where the parent cannot be read
- * (Windows), or the owner file is not written yet, the gate blocks as before.
+ * Whether `pid` is this process or one of its ancestors: null when a parent
+ * on the way up cannot be read, so the chain is not known to its root.
  */
-function heldByAnotherSession(paths, agent) {
-    const holder = leaseHolder(paths, agent);
+function isOwnAncestor(pid, probe) {
+    let current = probe.pid;
+    for (let depth = 0; depth < 64; depth += 1) {
+        if (current === pid)
+            return true;
+        if (current <= 1)
+            return false;
+        const parent = probe.parentOf(current);
+        if (parent === null)
+            return null;
+        current = parent;
+    }
+    return null;
+}
+/**
+ * True only when the lease `holder` is surely another session's MCP server,
+ * so this session's tools only get AGENT_BUSY. The hook and the session's own
+ * server are both children of the same CLI process, so a holder whose parent
+ * is one of this hook's ancestors is this session's server, and one whose
+ * parent is not on the hook's chain, read up to pid 1, is another session's.
+ * When it cannot tell, it answers false and the gate blocks as it would with
+ * no lease: the owner file is not readable or not written yet; the holder's
+ * parent is pid 1 (a CLI that is itself pid 1 in a container, or an orphaned
+ * server); a parent cannot be read (Windows); or the holder is on this
+ * machine but in another pid namespace, where its pids mean nothing here. A
+ * holder on another machine is another session. Limit: a server the CLI
+ * starts through a wrapper process (a shell, npx) has the wrapper as its
+ * parent and is taken for another session.
+ */
+export function heldByAnotherSession(holder, probe = THIS_PROCESS) {
     if (holder === null || holder.pid <= 0)
         return false;
-    if (holder.host !== LOCK_HOST)
-        return true;
-    const parent = parentPid(holder.pid);
-    return parent !== null && !isOwnAncestor(parent);
+    if (holder.host !== probe.host)
+        return machineOf(holder.host) !== machineOf(probe.host);
+    const parent = probe.parentOf(holder.pid);
+    if (parent === null || parent <= 1)
+        return false;
+    return isOwnAncestor(parent, probe) === false;
 }
 /**
  * The block decision, or null to let the turn end. `hookJson` is the Stop
@@ -150,7 +173,7 @@ export function runGate(projectDir, agent, hookJson = "") {
     const goal = store.activeGoal();
     if (goal === null || (goal.phase !== "PLAN" && goal.phase !== "EXECUTE"))
         return null;
-    if (heldByAnotherSession(goal.paths, agent))
+    if (heldByAnotherSession(leaseHolder(goal.paths, agent)))
         return null;
     const state = store.state();
     if (state === null || state.goal !== goal.goalId)

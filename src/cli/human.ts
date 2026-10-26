@@ -5,6 +5,8 @@ import { reapLeftovers, runningSupervisor } from "./run-record.js";
 
 export interface ReplyCliOptions {
   decision?: string;
+  /** `--task`, repeatable: the tasks a ruling on an open plan opens EXECUTE with. */
+  task?: string[];
   budget: string[];
   body?: string;
   json?: boolean;
@@ -14,6 +16,7 @@ export async function runReply(projectDir: string, text: string, options: ReplyC
   const store = humanStore(projectDir);
   const reply: ReplyOptions = {};
   if (options.decision !== undefined) reply.decision = options.decision;
+  if (options.task !== undefined && options.task.length > 0) reply.tasks = options.task;
   if (options.body !== undefined) reply.body = options.body;
   if (options.budget.length > 0) reply.budgets = parseBudgets(options.budget);
   const result = await store.reply(text, reply);

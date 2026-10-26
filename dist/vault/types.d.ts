@@ -89,6 +89,8 @@ export type WaitResult = ReadResult | {
 };
 export interface ReplyOptions {
     decision?: string;
+    /** The tasks EXECUTE begins with, as todo; only on a ruling that closes an open `plan` (`decision: "plan"`), else SCHEMA. */
+    tasks?: string[];
     budgets?: Partial<BudgetLimits>;
     /** Free text under the one-sentence ruling (`text` is the DECIDE claim). */
     body?: string;

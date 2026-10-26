@@ -681,7 +681,10 @@ export class VaultStore {
    * DECIDE `basis: human` answering the latest ASK_HUMAN; `decision` names the
    * thread to close (an open thread by `decision_id`, a decided one by
    * `supersedes`). A ruling without terminal punctuation gets a period so
-   * `diarchy reply "continue"` is one claim.
+   * `diarchy reply "continue"` is one claim. `tasks` go only on a ruling that
+   * closes an open `plan`, which opens EXECUTE with them as todo; anywhere
+   * else they are SCHEMA before anything is posted, since once plan is decided
+   * the lead ASSIGNs new tasks.
    */
   async reply(text: string, options: ReplyOptions = {}): Promise<PostResult> {
     this.requireHuman("reply");
@@ -702,6 +705,12 @@ export class VaultStore {
     if (options.decision !== undefined) {
       if (state.decisions[options.decision]?.status === "open") draft.decision_id = options.decision;
       else draft.supersedes = options.decision;
+    }
+    if (options.tasks !== undefined && options.tasks.length > 0) {
+      if (draft.decision_id !== "plan") {
+        return reject("SCHEMA", schemaText("tasks", "--task needs --decision plan while plan is open; once plan is decided the lead ASSIGNs new tasks"));
+      }
+      draft.tasks = [...options.tasks];
     }
     return this.postWith(draft, (paths, current) => this.kickoffOrRebuilt(paths, current));
   }

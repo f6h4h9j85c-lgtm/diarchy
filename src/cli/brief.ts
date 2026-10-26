@@ -137,8 +137,13 @@ export function replyHint(state: GoalState, messages: Message[]): string | null 
   const replyTo = ask.reply_to === undefined ? undefined : ordered.find((message) => message.id === ask.reply_to);
   if (replyTo?.type === "CHALLENGE") {
     const decision = ask.decision_id ?? replyTo.decision_id ?? "plan";
-    // A human ruling on `plan` is rejected by PHASE_GATE while another thread is open; a plain reply opens a new decided thread and unblocks.
-    return decision === "plan" && threadsBeforePlan(state).length > 0 ? 'diarchy reply "<ruling>"' : `diarchy reply "<ruling>" --decision ${decision}`;
+    if (decision === "plan" && state.decisions.plan?.status === "open") {
+      // A human ruling on `plan` is rejected by PHASE_GATE while another thread is open; a plain reply opens a new decided thread and unblocks.
+      if (threadsBeforePlan(state).length > 0) return 'diarchy reply "<ruling>"';
+      // Otherwise it closes PLAN, and EXECUTE begins with the tasks its --task options carry.
+      return 'diarchy reply "<ruling>" --decision plan [--task "<task>"]...';
+    }
+    return `diarchy reply "<ruling>" --decision ${decision}`;
   }
   if (replyTo !== undefined || ask.reply_to !== undefined) return 'diarchy reply "<your answer>"';
   const hit = budgetTrigger(ask, state);
@@ -247,7 +252,7 @@ export function nextStep(state: GoalState, messages: Message[], agent: AgentId, 
     const tasks = Object.values(state.tasks);
     const todo = tasks.find((task) => task.status === "todo");
     if (todo !== undefined) return { text: `assign ${todo.id} (${oneLine(todo.task)}): call assign`, owes: true };
-    // A human ruling on an open plan (`diarchy reply --decision plan`) opens EXECUTE with no tasks.
+    // A human ruling on an open plan without --task (`diarchy reply --decision plan`) opens EXECUTE with no tasks.
     if (!tasks.some((task) => task.kind === "implement")) return { text: "EXECUTE has no tasks: ASSIGN each with new_task (call assign)", owes: true };
     const reviewing = new Set(tasks.filter((task) => reviewOwed(state, task)).map((task) => task.pr));
     const rereview = changesRequested(state, messages).find((pr) => pr.fixed && !reviewing.has(pr.url));

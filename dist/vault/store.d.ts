@@ -131,7 +131,10 @@ export declare class VaultStore {
      * DECIDE `basis: human` answering the latest ASK_HUMAN; `decision` names the
      * thread to close (an open thread by `decision_id`, a decided one by
      * `supersedes`). A ruling without terminal punctuation gets a period so
-     * `diarchy reply "continue"` is one claim.
+     * `diarchy reply "continue"` is one claim. `tasks` go only on a ruling that
+     * closes an open `plan`, which opens EXECUTE with them as todo; anywhere
+     * else they are SCHEMA before anything is posted, since once plan is decided
+     * the lead ASSIGNs new tasks.
      */
     reply(text: string, options?: ReplyOptions): Promise<PostResult>;
     /** Leave the goal BLOCKED with a human BLOCKED (external) message saying why. */

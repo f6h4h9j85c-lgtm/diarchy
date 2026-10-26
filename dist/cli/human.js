@@ -7,6 +7,8 @@ export async function runReply(projectDir, text, options) {
     const reply = {};
     if (options.decision !== undefined)
         reply.decision = options.decision;
+    if (options.task !== undefined && options.task.length > 0)
+        reply.tasks = options.task;
     if (options.body !== undefined)
         reply.body = options.body;
     if (options.budget.length > 0)

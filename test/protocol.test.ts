@@ -957,7 +957,7 @@ describe("one-line field caps", () => {
     expect(protocol).toContain(
       `\`worktrees.branch_prefix\` follows the section 3 \`branch\` rules, ${BRANCH_PREFIX_MAX_CHARS} characters max, and \`worktrees.root\` is one line of ${WORKTREE_ROOT_MAX_CHARS} characters max`,
     );
-    expect(protocol).toContain("`tasks` (list; `plan` only; each one line, 40 words max)");
+    expect(protocol).toContain("`tasks` (list; `plan` only, on the lead's DECIDE or on the human DECIDE that closes an open `plan`; each one line, 40 words max)");
     expect(protocol).toContain("`new_task` (string; one line, 40 words max)");
     expect(protocol).toContain(`\`worktree\` (one line, ${FIELD_MAX_CHARS} characters max)`);
     expect(protocol).toContain(

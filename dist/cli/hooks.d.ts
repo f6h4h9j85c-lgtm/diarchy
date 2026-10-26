@@ -9,14 +9,24 @@ export interface GateDecision {
 export declare function runGate(projectDir: string, agent: string): GateDecision | null;
 /**
  * The human subcommand a shell command would run (`reply` or `stop`), else
- * null. Each simple command is read as `[VAR=x ...] [sudo|env|node|npx ...]
+ * null. Each simple command is read as `[VAR=x ...] [sudo|env|timeout 60|npx ...]
  * <program> [--project <dir>] <subcommand>` after quote removal, so the words
  * inside an argument (`grep "diarchy reply" docs/`), single-quoted text, and a
  * quoted-delimiter heredoc body (`<<'EOF'`) do not count, while a `$(...)` or
- * backtick substitution does, even inside double quotes. The string of
- * `bash|sh|zsh -c` is read as a command line of its own. Best effort by
- * design: an alias, a function, `eval`, or a wrapper script is not unpacked
- * (ANTI-SLOP.md, What this does NOT prevent).
+ * backtick substitution does, even inside double quotes. Three things are read
+ * as command lines of their own: the string of `bash|sh|zsh|dash|ksh -c`
+ * wherever the shell stands in the command (`timeout 60 bash -c`, `xargs sh
+ * -c`); the arguments of `eval`; and a heredoc or here-string that a shell,
+ * `eval`, or `source` runs, from its stdin (`bash <<'EOF'`, `sh -s <<EOF`,
+ * `cat <<'EOF' | bash`, `source /dev/stdin <<EOF`, `xargs sh -c '{}' <<EOF`)
+ * or through a substitution in its arguments (`bash -c "$(cat <<'EOF' ...)"`,
+ * `bash <(cat <<'EOF' ...)`). Best effort by design: an alias, a function, a
+ * wrapper script, a script in a file or a variable (`bash x.sh`,
+ * `while read l; do eval "$l"; done <<EOF`), text a shell gets from a
+ * command's arguments (`echo 'diarchy stop' | bash`, `eval "$(echo ...)"`),
+ * and a heredoc read by a shell that an unknown wrapper starts without `-c`
+ * (`ssh host bash <<'EOF'`) are not unpacked (ANTI-SLOP.md, What this does NOT
+ * prevent).
  */
 export declare function humanCommand(command: string): "reply" | "stop" | null;
 export interface GuardDecision {

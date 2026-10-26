@@ -108,38 +108,56 @@ const OPERATORS = ";&|()\n";
 /** Characters a backslash escapes inside double quotes. */
 const DQ_ESCAPABLE = '$`"\\\n';
 /** Words that may precede the program without being it. */
-const PRELUDE = new Set(["sudo", "env", "exec", "command", "nohup", "time", "node", "npx", "npm", "pnpm", "yarn", "bun", "tsx"]);
+const PRELUDE = new Set(["sudo", "env", "exec", "command", "nohup", "time", "timeout", "nice", "node", "npx", "npm", "pnpm", "yarn", "bun", "tsx"]);
 const ENV_ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*=/;
+/** A count or duration a prelude word takes (`timeout 60`, `nice -n 5`): never the program. */
+const PRELUDE_NUMBER = /^[+-]?\d+(?:\.\d+)?[smhd]?$/;
 /** `diarchy`, `bin/diarchy.js`, `/abs/path/diarchy.js`, `./node_modules/.bin/diarchy`. */
 const PROGRAM = /^(?:[\w.~/-]*\/)?diarchy(?:\.js)?$/;
-/** A shell whose `-c` string is a command line of its own. */
+/** A shell whose `-c` string, or whose script on stdin, is a command line of its own. */
 const SHELL = /^(?:[\w.~/-]*\/)?(?:bash|sh|zsh|dash|ksh)$/;
+/** Reserved words that may precede the program (`if`, `then`, `{`); `((` after them opens an arithmetic command. */
+const RESERVED = new Set(["for", "if", "elif", "while", "until", "then", "do", "else", "!", "{", "time"]);
+/** Files that are a command's stdin (`source /dev/stdin <<EOF`, `bash /dev/stdin`). */
+const STDIN_FILES = new Set(["/dev/stdin", "/dev/fd/0", "/proc/self/fd/0"]);
 /**
- * The simple commands a shell would run from `source`, each as its words after
- * quote removal. Single-quoted text, comments, and the bodies of
- * quoted-delimiter heredocs are inert; a `$(...)` or backtick substitution,
- * bare, inside double quotes, or inside an unquoted-delimiter heredoc body,
- * adds its own commands. `heredocBody` reads `source` as such a body.
+ * The simple commands a shell would run from `source`, in the order they end,
+ * each with its words after quote removal and the text on its stdin.
+ * Single-quoted text, comments, and the bodies of quoted-delimiter heredocs
+ * are inert; a `$(...)`, backtick, or `<(...)` substitution, bare, inside
+ * double quotes, or inside an unquoted-delimiter heredoc body, adds its own
+ * commands. `heredocBody` reads `source` as such a body.
  */
 function simpleCommands(source, heredocBody = false) {
     const commands = [];
     let i = 0;
-    /** Commands up to `close` (consumed) or the end. `arith`: inside `$((...))`, where `<<` is a shift. */
+    /** Commands up to `close` (consumed) or the end. `arith`: inside `$((...))` or `((...))`, where `<<` is a shift. */
     function list(close, arith = false) {
-        let words = [];
+        let current = { words: [], input: [], pipeline: {}, inner: [] };
+        /** Where the commands of `current`'s substitutions start in `commands`. */
+        let start = commands.length;
         let word = null;
+        /** The next word is a here-string (`<<< word`), not an argument. */
+        let hereString = false;
         const heredocs = [];
         let parens = 0;
         const endWord = () => {
-            if (word !== null)
-                words.push(word);
+            if (word === null)
+                return;
+            (hereString ? current.input : current.words).push(word);
             word = null;
+            hereString = false;
         };
-        const endCommand = () => {
+        /** `piped`: the next command reads this one's output (`|`), or shares its pipeline (`(`, `)`). */
+        const endCommand = (piped) => {
             endWord();
-            if (words.length > 0)
-                commands.push(words);
-            words = [];
+            hereString = false;
+            if (current.words.length > 0) {
+                current.inner = commands.slice(start);
+                commands.push(current);
+            }
+            current = { words: [], input: [], pipeline: piped ? current.pipeline : {}, inner: [] };
+            start = commands.length;
         };
         while (i < source.length) {
             const c = source[i];
@@ -168,18 +186,26 @@ function simpleCommands(source, heredocBody = false) {
                 i += 1;
                 word = (word ?? "") + text('"');
             }
-            else if (c === "`" || source.startsWith("$(", i)) {
+            else if (c === "`" || source.startsWith("$(", i) || source.startsWith("<(", i) || source.startsWith(">(", i)) {
                 substitution();
                 word = word ?? "";
             }
+            else if (source.startsWith("((", i) && [...current.words, ...(word === null ? [] : [word])].every((lead) => RESERVED.has(lead))) {
+                endWord();
+                i += 2;
+                list(")", true);
+                if (source[i] === ")")
+                    i += 1;
+            }
             else if (source.startsWith("<<<", i)) {
-                word = `${word ?? ""}<<<`;
+                endWord();
                 i += 3;
+                hereString = true;
             }
             else if (!arith && source.startsWith("<<", i)) {
                 endWord();
                 i += 2;
-                const doc = heredocOperator();
+                const doc = heredocOperator(current);
                 if (doc !== null)
                     heredocs.push(doc);
             }
@@ -192,12 +218,13 @@ function simpleCommands(source, heredocBody = false) {
                 i += 1;
             }
             else if (OPERATORS.includes(c)) {
-                endCommand();
+                const operator = ["||", "&&", "|&"].includes(source.slice(i, i + 2)) ? source.slice(i, i + 2) : c;
+                endCommand(operator === "|" || operator === "|&" || c === "(" || c === ")");
                 if (c === "(")
                     parens += 1;
                 if (c === ")" && parens > 0)
                     parens -= 1;
-                i += 1;
+                i += operator.length;
                 if (c === "\n")
                     for (const doc of heredocs.splice(0))
                         skipHeredoc(doc, close);
@@ -207,9 +234,9 @@ function simpleCommands(source, heredocBody = false) {
                 i += 1;
             }
         }
-        endCommand();
+        endCommand(false);
     }
-    /** A `$(...)`, `$((...))`, or backtick substitution starting at `i`: its commands are added. */
+    /** A `$(...)`, `$((...))`, backtick, `<(...)`, or `>(...)` substitution starting at `i`: its commands are added. */
     function substitution() {
         if (source[i] === "`") {
             i += 1;
@@ -251,7 +278,7 @@ function simpleCommands(source, heredocBody = false) {
         return out;
     }
     /** The delimiter word after `<<` (and an optional `-`); any quoting in it makes the body literal. */
-    function heredocOperator() {
+    function heredocOperator(owner) {
         const stripTabs = source[i] === "-";
         if (stripTabs)
             i += 1;
@@ -277,12 +304,13 @@ function simpleCommands(source, heredocBody = false) {
                 i += 1;
             }
         }
-        return delimiter === "" && !quoted ? null : { delimiter, quoted, stripTabs };
+        return delimiter === "" && !quoted ? null : { delimiter, quoted, stripTabs, owner };
     }
     /**
-     * Skips the heredoc body that starts at `i`, through its delimiter line or
-     * the end. Inside a substitution, `EOF)` also ends it, as bash allows. An
-     * unquoted delimiter's body still runs its substitutions.
+     * Reads the heredoc body that starts at `i`, through its delimiter line or
+     * the end, onto its command's stdin. Inside a substitution, `EOF)` also ends
+     * it, as bash allows. An unquoted delimiter's body still runs its
+     * substitutions.
      */
     function skipHeredoc(doc, close) {
         const start = i;
@@ -305,8 +333,11 @@ function simpleCommands(source, heredocBody = false) {
             i = lineEnd + 1;
         }
         i = Math.min(i, source.length);
+        const body = source.slice(start, bodyEnd);
+        doc.owner.input.push(body);
         if (!doc.quoted)
-            commands.push(...simpleCommands(source.slice(start, bodyEnd), true));
+            for (const substituted of simpleCommands(body, true))
+                commands.push(substituted);
     }
     if (heredocBody)
         text(null);
@@ -329,38 +360,97 @@ function shellCommandString(args) {
     return null;
 }
 /**
+ * Whether `program` given `args` runs the script on its stdin: a shell without
+ * `-c` that has `-s`, no script file, or /dev/stdin as its script file; or
+ * `source /dev/stdin`.
+ */
+function readsStdin(program, args) {
+    if (program === "source" || program === ".")
+        return STDIN_FILES.has(args.at(0) ?? "");
+    if (!SHELL.test(program))
+        return false;
+    let dashS = false;
+    for (let j = 0; j < args.length; j += 1) {
+        const arg = args[j];
+        if (arg === "--")
+            return dashS || j + 1 === args.length;
+        if (/^[-+][oO]$/.test(arg) || arg === "--rcfile" || arg === "--init-file")
+            j += 1;
+        else if (/^-[A-Za-z]+$/.test(arg) && arg.includes("c"))
+            return false;
+        else if (/^-[A-Za-z]+$/.test(arg))
+            dashS ||= arg.includes("s");
+        else if (!arg.startsWith("-") && !arg.startsWith("+"))
+            return dashS || STDIN_FILES.has(arg);
+    }
+    return true;
+}
+/**
  * The human subcommand a shell command would run (`reply` or `stop`), else
- * null. Each simple command is read as `[VAR=x ...] [sudo|env|node|npx ...]
+ * null. Each simple command is read as `[VAR=x ...] [sudo|env|timeout 60|npx ...]
  * <program> [--project <dir>] <subcommand>` after quote removal, so the words
  * inside an argument (`grep "diarchy reply" docs/`), single-quoted text, and a
  * quoted-delimiter heredoc body (`<<'EOF'`) do not count, while a `$(...)` or
- * backtick substitution does, even inside double quotes. The string of
- * `bash|sh|zsh -c` is read as a command line of its own. Best effort by
- * design: an alias, a function, `eval`, or a wrapper script is not unpacked
- * (ANTI-SLOP.md, What this does NOT prevent).
+ * backtick substitution does, even inside double quotes. Three things are read
+ * as command lines of their own: the string of `bash|sh|zsh|dash|ksh -c`
+ * wherever the shell stands in the command (`timeout 60 bash -c`, `xargs sh
+ * -c`); the arguments of `eval`; and a heredoc or here-string that a shell,
+ * `eval`, or `source` runs, from its stdin (`bash <<'EOF'`, `sh -s <<EOF`,
+ * `cat <<'EOF' | bash`, `source /dev/stdin <<EOF`, `xargs sh -c '{}' <<EOF`)
+ * or through a substitution in its arguments (`bash -c "$(cat <<'EOF' ...)"`,
+ * `bash <(cat <<'EOF' ...)`). Best effort by design: an alias, a function, a
+ * wrapper script, a script in a file or a variable (`bash x.sh`,
+ * `while read l; do eval "$l"; done <<EOF`), text a shell gets from a
+ * command's arguments (`echo 'diarchy stop' | bash`, `eval "$(echo ...)"`),
+ * and a heredoc read by a shell that an unknown wrapper starts without `-c`
+ * (`ssh host bash <<'EOF'`) are not unpacked (ANTI-SLOP.md, What this does NOT
+ * prevent).
  */
 export function humanCommand(command) {
-    for (const words of simpleCommands(command)) {
+    const commands = simpleCommands(command);
+    for (const [index, { words, pipeline, inner }] of commands.entries()) {
         let i = 0;
-        while (i < words.length && (ENV_ASSIGNMENT.test(words[i]) || PRELUDE.has(words[i]) || words[i].startsWith("-")))
+        while (i < words.length && (ENV_ASSIGNMENT.test(words[i]) || PRELUDE.has(words[i]) || RESERVED.has(words[i]) || PRELUDE_NUMBER.test(words[i]) || words[i].startsWith("-")))
             i += 1;
-        if (i >= words.length)
-            continue;
-        if (SHELL.test(words[i])) {
-            const nested = shellCommandString(words.slice(i + 1));
-            const subcommand = nested === null ? null : humanCommand(nested);
+        const program = words.at(i) ?? "";
+        const args = words.slice(i + 1);
+        if (PROGRAM.test(program)) {
+            let k = 0;
+            while (k < args.length && args[k].startsWith("-"))
+                k += /^--?project$/.test(args[k]) ? 2 : 1;
+            const subcommand = args.at(k);
+            if (subcommand === "reply" || subcommand === "stop")
+                return subcommand;
+        }
+        const scripts = [];
+        let runsStdin = readsStdin(program, args);
+        for (let j = i; j < words.length; j += 1) {
+            const script = SHELL.test(words[j]) ? shellCommandString(words.slice(j + 1)) : null;
+            if (script === null)
+                continue;
+            scripts.push(script);
+            // Behind a wrapper (`xargs sh -c '{}'`), the shell may be handed the command's stdin.
+            if (j > i)
+                runsStdin = true;
+        }
+        if (program === "eval")
+            scripts.push(args.join(" "));
+        if (scripts.length > 0 || SHELL.test(program) || program === "source" || program === ".") {
+            // What a substitution in its arguments prints: `bash -c "$(cat <<'EOF' ...)"`, `bash <(cat <<'EOF' ...)`.
+            for (const substituted of inner)
+                scripts.push(...substituted.input);
+        }
+        if (runsStdin) {
+            // Its own heredoc or here-string, or one an earlier command of the pipeline passes on.
+            for (const earlier of commands.slice(0, index + 1))
+                if (earlier.pipeline === pipeline)
+                    scripts.push(...earlier.input);
+        }
+        for (const script of scripts) {
+            const subcommand = humanCommand(script);
             if (subcommand !== null)
                 return subcommand;
-            continue;
         }
-        if (!PROGRAM.test(words[i]))
-            continue;
-        i += 1;
-        while (i < words.length && words[i].startsWith("-"))
-            i += /^--?project$/.test(words[i]) ? 2 : 1;
-        const subcommand = words[i];
-        if (subcommand === "reply" || subcommand === "stop")
-            return subcommand;
     }
     return null;
 }

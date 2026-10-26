@@ -664,6 +664,33 @@ describe("guard", () => {
     expect(humanCommand('"diarchy" reply ok')).toBe("reply");
   });
 
+  it("finds the human's commands in a script a shell reads from a heredoc, behind a wrapper, or through eval", () => {
+    expect(humanCommand("bash <<'EOF'\ndiarchy reply ok\nEOF")).toBe("reply");
+    expect(humanCommand("bash <<EOF\ndiarchy reply ok\nEOF")).toBe("reply");
+    expect(humanCommand("sh -s <<EOF\ndiarchy stop\nEOF")).toBe("stop");
+    expect(humanCommand("cat <<'EOF' | bash\ndiarchy reply ok\nEOF")).toBe("reply");
+    expect(humanCommand("timeout 60 bash <<'EOF'\ncd /p\ndiarchy stop\nEOF")).toBe("stop");
+    expect(humanCommand('bash <<< "diarchy stop"')).toBe("stop");
+    expect(humanCommand("eval 'true; diarchy reply ok'")).toBe("reply");
+    expect(humanCommand("timeout 60 bash -c 'cd /p; diarchy reply ok'")).toBe("reply");
+    expect(humanCommand("nice -n 5 sh -c 'true; diarchy stop'")).toBe("stop");
+    expect(humanCommand("sudo -u pm bash -c 'cd /p; diarchy reply ok'")).toBe("reply");
+    expect(humanCommand("(( x = 1 << 2 ))\ndiarchy stop")).toBe("stop");
+    expect(humanCommand("for ((i = 1 << 2; i < 0; i++)); do :; done\ndiarchy reply ok")).toBe("reply");
+    expect(humanCommand("if (( 1 << 2 )); then diarchy stop; fi")).toBe("stop");
+    expect(humanCommand("{ diarchy stop; }")).toBe("stop");
+    expect(humanCommand("source /dev/stdin <<'EOF'\ndiarchy stop\nEOF")).toBe("stop");
+    expect(humanCommand("bash -c \"$(cat <<'EOF'\ndiarchy stop\nEOF\n)\"")).toBe("stop");
+    expect(humanCommand("eval \"$(cat <<'EOF'\ndiarchy reply ok\nEOF\n)\"")).toBe("reply");
+    expect(humanCommand("bash <(cat <<'EOF'\ndiarchy stop\nEOF\n)")).toBe("stop");
+    expect(humanCommand("xargs -I{} sh -c '{}' <<'EOF'\ndiarchy stop\nEOF")).toBe("stop");
+    // Not a script: a -c string, a script file, or a reader that is not a shell gets the heredoc as data.
+    expect(humanCommand("bash -c 'cat > notes.md' <<'EOF'\ndiarchy reply ok\nEOF")).toBeNull();
+    expect(humanCommand("bash scripts/x.sh <<'EOF'\ndiarchy stop\nEOF")).toBeNull();
+    expect(humanCommand("cat <<'EOF' | grep -c bash\ndiarchy reply ok\nEOF")).toBeNull();
+    expect(humanCommand("cat <<'EOF' && bash\ndiarchy stop\nEOF")).toBeNull();
+  });
+
   it("denies a Bash call to diarchy reply with a PreToolUse decision and lets everything else through", async () => {
     const denied = await cli(["guard", "--agent", "claude"], { input: event('diarchy reply "continue" --budget messages_total=200') });
     expect(denied.code).toBe(0);
@@ -676,6 +703,8 @@ describe("guard", () => {
     expect(JSON.parse(stop.stdout)).toMatchObject({ hookSpecificOutput: { permissionDecision: "deny" } });
     expect(await cli(["guard", "--agent", "codex"], { input: event("npm test") })).toEqual({ code: 0, stdout: "", stderr: "" });
     expect(await cli(["guard", "--agent", "claude"], { input: event(commitHeredoc) })).toEqual({ code: 0, stdout: "", stderr: "" });
+    const script = await cli(["guard", "--agent", "claude"], { input: event("bash <<'EOF'\ndiarchy reply ok\nEOF") });
+    expect(JSON.parse(script.stdout)).toMatchObject({ hookSpecificOutput: { permissionDecision: "deny" } });
     expect(await cli(["guard", "--agent", "codex"], { input: "not json {{{" })).toEqual({ code: 0, stdout: "", stderr: "" });
     expect(await cli(["guard", "--agent", "codex"], { input: "" })).toEqual({ code: 0, stdout: "", stderr: "" });
   });

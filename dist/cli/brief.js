@@ -3,8 +3,8 @@
  * `inbox-skim`, and `gate`; pure over GoalState plus the message list, except
  * for reading an inbox cursor file (never writing it).
  */
-import { existsSync, readFileSync } from "node:fs";
 import { FIELD_MAX_CHARS, oneLine, openThreads, } from "../protocol/index.js";
+import { readInbox } from "../vault/index.js";
 import { budgetTrigger, hms, lastOfType, sortMessages } from "../vault/render/shared.js";
 /** Tasks still owed: implement tasks not done, review tasks with no review evidence from the assignee yet. */
 export function openAssignments(state, agent) {
@@ -38,14 +38,12 @@ export function challengedThreads(state) {
         .filter((entry) => entry.challenge !== null)
         .map(({ id, challenge }) => ({ id, from: challenge.from, challengeId: challenge.id }));
 }
-/** Messages after the agent's inbox cursor, excluding its own. Reads the cursor file; never moves it. */
+/**
+ * Messages after the agent's inbox cursor, excluding its own. Reads the cursor
+ * file, never moves it; one that will not parse counts as no cursor, as in the store.
+ */
 export function unreadFor(goal, messages, agent) {
-    const path = goal.paths.inbox(agent);
-    let cursor = null;
-    if (existsSync(path)) {
-        const inbox = JSON.parse(readFileSync(path, "utf8"));
-        cursor = inbox.cursor ?? null;
-    }
+    const { cursor } = readInbox(goal.paths.inbox(agent), agent);
     return sortMessages(messages).filter((message) => (cursor === null || message.id > cursor) && message.from !== agent);
 }
 /**

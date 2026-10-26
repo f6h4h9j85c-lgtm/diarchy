@@ -462,6 +462,32 @@ describe("kickoff and read", () => {
     expect(blocked.phase).toBe("BLOCKED");
   });
 
+  it("a budget.json that will not parse on the current goal surfaces on every tool as SCHEMA naming the file, not NO_GOAL, and kickoff is refused", async () => {
+    const h = await harness();
+    const kick = await h.kickoff();
+    const budget = resolveVaultPaths(h.projectDir, loadConfig(h.projectDir), kick.goal_id).budget;
+    writeFileSync(budget, "");
+    const log = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      const corrupt = {
+        ok: false,
+        rule: "SCHEMA",
+        message: `Vault file ${budget} is corrupt: Unexpected end of JSON input. The vault is damaged, not your draft, so do not retry. No tool can reach that goal until the human repairs the file or moves its goal directory out of the vault: stop and tell the human, naming the file.`,
+      };
+      expect(await rejected(h.codex, "read")).toEqual(corrupt);
+      expect(await rejected(h.claude, "post", { type: "BLOCKED", re: ["AC1"], kind: "external", body: "Paging the human." })).toEqual(corrupt);
+      expect(await rejected(h.codex, "wait_for_reply", { timeout_ms: 100 })).toEqual(corrupt);
+      expect(await rejected(h.codex, "status", { re: ["AC1"], evidence: [{ kind: "commit", sha: "abcdef1" }], body: "Work." })).toEqual(corrupt);
+      expect(await rejected(h.claude, "kickoff", { ...KICKOFF_ARGS, slug: "second" })).toEqual({
+        ok: false,
+        rule: "SINGLE_KICKOFF",
+        message: `Goal ${kick.goal_id} cannot be read: Vault file ${budget} is corrupt: Unexpected end of JSON input. It may still be active, so kickoff waits until that file is repaired or its goal directory is moved out of the vault.`,
+      });
+    } finally {
+      log.mockRestore();
+    }
+  });
+
   it("an unexpected exception becomes INTERNAL and is logged to stderr", async () => {
     const projectDir = tempProject(["claude"]);
     const claude = await connect(projectDir, "claude", null);

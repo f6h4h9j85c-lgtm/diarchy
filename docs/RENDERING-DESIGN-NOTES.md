@@ -19,7 +19,7 @@ The reader is a human on a phone, in Obsidian, who did not watch the run. In the
 ```
 # Chat: 20261025-rate-limit
 > **DONE** · no action needed · lead claude · challenger codex
-> 18 of 80 messages (PLAN 5 of 12) · 150 of 240 min
+> 20 of 80 messages (PLAN 5 of 12) · 150 of 240 min
 > 2026-10-25 · last 16:30:00 UTC (12:30 local) · claude DONE: PRs 412 and 413 merged to main.
 > [goal](goal.md) · [decisions (4)](decisions.md)
 ```

@@ -1,5 +1,5 @@
 /** User-facing docs and plugin prose that must agree with the normative specs and the installed layout. */
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -94,6 +94,32 @@ describe("implement brief", () => {
   });
 });
 
+describe("docs: README status", () => {
+  const readme = read("README.md");
+  const { version } = JSON.parse(read("package.json")) as { version: string };
+
+  it("names the package version on the Status line and its minor in the roadmap", () => {
+    const minor = version.split(".").slice(0, 2).join(".");
+    expect(readme.split("\n").find((line) => line.startsWith("Status:"))).toContain(`pre-alpha, v${version}.`);
+    expect(section(readme, "## Status and roadmap")).toContain(`v${minor} ships`);
+  });
+
+  it("does not deny the Codex checks INSTALL-CODEX.md reports", () => {
+    expect(read("docs", "INSTALL-CODEX.md")).toContain("verified on Codex 0.164.0");
+    const roadmap = section(readme, "## Status and roadmap");
+    expect(roadmap).not.toContain("not been exercised against a real Codex binary");
+    expect(roadmap).toContain("checked against Codex 0.164.0");
+  });
+
+  it("the project layout names every document under docs/", () => {
+    const layout = readme.split("\n").find((line) => line.startsWith("docs/ ")) ?? "";
+    for (const entry of readdirSync(join(ROOT, "docs"), { withFileTypes: true })) {
+      const name = entry.isDirectory() ? `${entry.name}/` : entry.name.replace(/\.md$/, "").replace(/^INSTALL-.*/, "INSTALL-*");
+      expect(layout.split(/, | {2,}/), name).toContain(name);
+    }
+  });
+});
+
 describe("docs: install paths", () => {
   it("INSTALL-CLAUDE.md gives the shell form's own minimum version and a form for older versions", () => {
     const doc = read("docs", "INSTALL-CLAUDE.md");
@@ -133,6 +159,19 @@ describe("docs: install paths", () => {
     }
   });
 
+  it("INSTALL-CODEX.md prose wraps at 80 columns", () => {
+    // The file is hard-wrapped; code blocks are exempt. INSTALL-CLAUDE.md and AGENTS.md wrap more loosely and are not checked.
+    let fenced = false;
+    const long: string[] = [];
+    read("docs", "INSTALL-CODEX.md")
+      .split("\n")
+      .forEach((line, index) => {
+        if (line.startsWith("```")) fenced = !fenced;
+        else if (!fenced && line.length > 80) long.push(`${index + 1}: ${line}`);
+      });
+    expect(long).toEqual([]);
+  });
+
   it("templates/AGENTS.md names skills, not repository paths that exist only in the diarchy checkout", () => {
     const template = read("templates", "AGENTS.md");
     expect(template).not.toMatch(/\.agents\/skills|skills\/diarchy-\w+\/SKILL\.md/);
@@ -148,7 +187,7 @@ describe("docs: the sandboxed Codex PM's PR stays its own (PROTOCOL.md 9.1, 9.2(
     expect(execute).toContain("Post your own PR's `pr` evidence (first citer = author); a PM committing or opening a PR for a sandboxed PM cites only `commit`, url in body.");
   });
 
-  it("diarchy-review, AGENTS.md, INSTALL-CODEX.md 5, and QUICKSTART.md say the same", () => {
+  it("diarchy-review, AGENTS.md, INSTALL-CODEX.md 5, QUICKSTART.md, and ARCHITECTURE.md say the same", () => {
     expect(flat("skills", "diarchy-review", "SKILL.md")).toContain(
       "a PM that commits or opens the PR for a sandboxed implementer cites only `commit` and passes the url in its STATUS body",
     );
@@ -161,6 +200,16 @@ describe("docs: the sandboxed Codex PM's PR stays its own (PROTOCOL.md 9.1, 9.2(
     const quick = flat("docs", "QUICKSTART.md");
     expect(quick).toContain("citing only the commit and passing the url in its STATUS body. The Codex PM then posts the `pr` evidence itself");
     expect(quick).toContain("each implementer has introduced a PR with its own `pr` evidence");
+    const architecture = flat("docs", "ARCHITECTURE.md");
+    expect(architecture).toContain("citing only `commit` with the url in its STATUS body, and the Codex PM posts the `pr` evidence itself");
+    // The Claude PM commits for the sandboxed Codex PM; a human commit would leave the Codex PM no url to cite.
+    for (const [name, text] of [["ARCHITECTURE.md", architecture], ["INSTALL-CODEX.md 5", install]]) {
+      expect(text, name).not.toMatch(/committed by the Claude PM or (by you|the human)/);
+    }
+    expect(install).toContain("the Claude PM commits and pushes `.diarchy/worktrees/codex` from outside the sandbox and opens its PR");
+    // Who merges: the sample run shows the Claude PM merging the sandboxed Codex PM's PR.
+    expect(flat("skills", "diarchy-review", "SKILL.md")).toContain("(for a sandboxed author, the PM that opened the PR merges it)");
+    expect(section(read("docs", "PROTOCOL.md"), "### 9.1 Worktrees, branches, PRs")).toContain("(a sandboxed author's PR is merged by the PM that opened it)");
   });
 
   it("the review skill and INSTALL-CODEX.md 5 give a sandboxed reviewer a read-only way to test the PR head", () => {
@@ -170,6 +219,20 @@ describe("docs: the sandboxed Codex PM's PR stays its own (PROTOCOL.md 9.1, 9.2(
     const install = section(read("docs", "INSTALL-CODEX.md"), "## 5. Headless runs").replace(/\s+/g, " ");
     expect(install).toContain(archive);
     expect(install).toContain("git diff main...<branch>");
+  });
+});
+
+describe("docs: PROTOCOL.md promises only what the tools and commands do", () => {
+  const protocol = read("docs", "PROTOCOL.md");
+
+  it("kickoff takes no goal_id, and a wedged goal is stopped or moved, not retired", () => {
+    // The kickoff tool declares goal, acceptance_criteria, budgets, and slug; there is no retire command.
+    expect(section(protocol, "## 2. Vault layout")).not.toContain("goal_id");
+    expect(protocol).not.toMatch(/retire the goal/);
+    expect(read("src", "vault", "store.ts")).not.toMatch(/retire a wedged goal/);
+    expect(section(protocol, "## 10. MCP tools").replace(/\s+/g, " ")).toContain(
+      "so the human can always fix the file, stop the run with `diarchy stop`, or move the goal directory out of the vault.",
+    );
   });
 });
 

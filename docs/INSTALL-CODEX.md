@@ -166,18 +166,18 @@ so trust the project first (step 3).
 ### The sandbox stays on: the Codex PM cannot commit
 
 With the default the Codex PM edits files and runs tests in its worktree under
-`.diarchy/worktrees/codex`, but it cannot commit, push, or open a PR, so its
-work is committed by the Claude PM or by you. `codex exec` runs with approvals
-set to `never`, so a sandbox denial goes back to the model with nobody to
-escalate to, and `--sandbox workspace-write` keeps the worktree's `.git` file
-and the git directory it points at (`.git/worktrees/codex` in the main
-checkout) read-only and the network off. `git commit` fails with a read-only
-file system error on the index lock, and `git push` and `gh pr create` never
-reach the network (verified on Codex 0.164.0; turning on `network_access` alone
-does not help, the git directory stays read-only). When the Codex PM reports a
-finished task, commit and push `.diarchy/worktrees/codex` from outside the
-sandbox and open its PR. `diarchy start` prints a one-line notice whenever the
-codex args contain `workspace-write`.
+`.diarchy/worktrees/codex`, but it cannot commit, push, or open a PR, so the
+Claude PM commits its work. `codex exec` runs with approvals set to `never`, so
+a sandbox denial goes back to the model with nobody to escalate to, and
+`--sandbox workspace-write` keeps the worktree's `.git` file and the git
+directory it points at (`.git/worktrees/codex` in the main checkout) read-only
+and the network off. `git commit` fails with a read-only file system error on
+the index lock, and `git push` and `gh pr create` never reach the network
+(verified on Codex 0.164.0; turning on `network_access` alone does not help, the
+git directory stays read-only). When the Codex PM reports a finished task, the
+Claude PM commits and pushes `.diarchy/worktrees/codex` from outside the sandbox
+and opens its PR. `diarchy start` prints a one-line notice whenever the codex
+args contain `workspace-write`.
 
 The Codex PM still posts that PR's `pr` evidence itself (PROTOCOL.md 9.1). The
 first agent to cite a PR as `pr` evidence is its author, the review goes to the
@@ -192,9 +192,10 @@ only with `diarchy reply` while the goal is BLOCKED.
 
 A sandboxed Codex PM cannot check out a PR head to review it either: the
 checkout and the fetch both write to the read-only git directory, and the
-fetch needs the network too. The `diarchy-review` skill then has it extract the branch into a
-temporary directory (`d=$(mktemp -d) && git archive <branch> | tar -x -C "$d"`),
-run the tests there, and read the change with `git diff main...<branch>`.
+fetch needs the network too. The `diarchy-review` skill then has it extract
+the branch into a temporary directory
+(`d=$(mktemp -d) && git archive <branch> | tar -x -C "$d"`), run the tests
+there, and read the change with `git diff main...<branch>`.
 
 ### Opt in to full access
 

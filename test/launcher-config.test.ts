@@ -108,7 +108,7 @@ describe("docs: codex sandbox default and the full-access opt-in", () => {
     const text = read("docs/INSTALL-CODEX.md");
     const section = text.slice(text.indexOf("## 5. Headless runs"), text.indexOf("## 6."));
     expect(section).toContain(`codex exec ${DEFAULT_AGENT_LAUNCH.codex.args.slice(1).join(" ")}`);
-    expect(section).toContain("cannot commit, push, or open a PR, so its work is committed by the Claude PM or by you");
+    expect(section).toContain("cannot commit, push, or open a PR, so the Claude PM commits its work");
     expect(section).toContain("diarchy init --codex-full-access");
     expect(section).toContain(CODEX_FULL_ACCESS_ARGS.map((arg) => `"${arg}"`).join(", "));
     expect(section).toContain("full OS permissions");

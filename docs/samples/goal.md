@@ -11,7 +11,7 @@ Add per\-API\-key rate limiting to the public API\.
 |---|---|---|---|
 | DONE | claude | codex | 2026-10-25 16:30:00 UTC |
 
-18 of 80 messages (PLAN 5 of 12) · 150 of 240 min · no action needed
+20 of 80 messages (PLAN 5 of 12) · 150 of 240 min · no action needed
 
 ## Acceptance Criteria
 

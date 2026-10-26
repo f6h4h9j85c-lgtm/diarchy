@@ -25,6 +25,14 @@ claude plugin install diarchy@diarchy
 
 Codex CLI: `codex plugin marketplace add f6h4h9j85c-lgtm/diarchy`, then `codex plugin add diarchy@diarchy`, and register the `diarchy` MCP server in `~/.codex/config.toml` with `command = "diarchy"` and `args = ["mcp", "--agent", "codex"]` as shown in [INSTALL-CODEX.md](INSTALL-CODEX.md); then approve the plugin's three diarchy hooks in `/hooks`, or they are skipped silently. In each CLI, `/mcp` must list `diarchy`, and asking for the diarchy `read` tool must answer `NO_GOAL`: nothing is kicked off yet.
 
+Then check the wiring from a shell in the project, without a model call:
+
+```
+diarchy doctor
+```
+
+It checks Node, git, the global `diarchy`, each CLI's version and launch flags, that both plugins are enabled, the `[mcp_servers.diarchy]` entry Codex reports, and the hook and project trust in `~/.codex/config.toml`, then starts each CLI's diarchy MCP server and runs its guard hook against a throwaway project. Each `warn` or `fail` line has a `fix:` line under it, and any `fail` exits 1. Before step 2 it warns that `diarchy.config.json` is missing; run it again after step 2 for the project checks. `diarchy doctor --live` then runs one short real turn per CLI against a throwaway project, a prompt that only calls `read`, which proves the login, the headless launch flags, `env_vars`, and the hooks. It spends a little quota: Claude's turn is capped with `--max-budget-usd 0.25` when the installed `claude` lists that flag, and Codex's comes out of your plan.
+
 ## 2. Initialise the project
 
 ```

@@ -41,6 +41,8 @@ export interface ProcessProbe {
  * another session.
  */
 export declare function heldByAnotherSession(holder: LockOwner | null, probe?: ProcessProbe): boolean;
+/** How many times in a row the gate has blocked the session this Stop event names (0 once nothing is owed). */
+export declare function gateBlockCount(projectDir: string, agent: string, hookJson?: string): number;
 /**
  * The block decision, or null to let the turn end. `hookJson` is the Stop
  * event on stdin; its `session_id` keys the GATE_CAP record.
@@ -87,3 +89,6 @@ export interface GuardDecision {
  * that is not an event with a string `tool_input.command` is let through.
  */
 export declare function runGuard(agent: string, hookJson: string): GuardDecision | null;
+/** The human subcommand the hook event's `tool_input.command` runs, else null (also for anything that is not such an event). */
+export declare function guardedCommand(hookJson: string): "reply" | "stop" | null;
+export declare function guardDecision(agent: string, subcommand: "reply" | "stop"): GuardDecision;

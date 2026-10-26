@@ -74,6 +74,16 @@ after editing `src/`, run `npm run build` (see CONTRIBUTING.md).
 4. On the next session start, with a goal active, the first lines of context are
    the inbox brief from `diarchy inbox-skim`. With no goal active nothing is
    printed; that is expected.
+5. From a shell in the project, run `diarchy doctor` (or
+   `node <plugin root>/bin/diarchy.js doctor` without a global install). Its
+   `claude` checks confirm the version, every launch flag in
+   `agents.claude.args`, the login, that `diarchy@diarchy` is enabled, that
+   `claude mcp list` shows `plugin:diarchy:diarchy` connected, that the
+   plugin's server answers `read` for a throwaway goal, that its guard hook
+   denies `diarchy reply`, and that `disableAllHooks` is off, with no model
+   call; each problem gets a `fix:` line. `diarchy doctor --live` adds one real
+   `claude -p` turn that only calls `read`, capped with `--max-budget-usd 0.25`
+   when the installed `claude` lists that flag.
 
 One session per agent: while a goal is active, only one session acts as
 `claude`. The first session whose diarchy tools touch the goal holds it until

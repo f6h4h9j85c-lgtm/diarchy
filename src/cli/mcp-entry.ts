@@ -9,6 +9,8 @@
 export interface McpServerOptions {
   projectDir: string;
   agent: string;
+  /** Called after every tool call (src/mcp/server.ts ToolOutcome); the CLI logs it to the diagnostics trail. */
+  onResult?: (result: { tool: string; ok: boolean; rule?: string }) => void;
 }
 
 /** What `src/mcp/index.ts` is expected to export. */

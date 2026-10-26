@@ -261,6 +261,15 @@ instead.
    live: nothing was posted, because `/nonexistent` holds no goal (the command
    exits 1 with "No goal in this vault"), so go back to section 3 and check
    the global install in section 1.
+7. From a shell in the project, run `diarchy doctor`. Its `codex` checks read
+   `codex mcp get diarchy --json` (`env_vars` must name `DIARCHY_PROJECT`,
+   `tool_timeout_sec` must be above 110), start that server with only the
+   environment Codex gives it, run the guard hook of the plugin copy in
+   `~/.codex/plugins/cache` (which hands the call to the global `diarchy`),
+   and look for hook and project trust in `config.toml`, with no model call;
+   each problem gets a `fix:` line. `diarchy doctor --live` adds one real
+   `codex exec` turn with the launcher's flags that only calls `read`, which
+   proves `DIARCHY_PROJECT` reaches the server and the hooks run headless.
 
 One session per agent: while a goal is active, only one session acts as
 `codex`. The first session whose diarchy tools touch the goal holds it until

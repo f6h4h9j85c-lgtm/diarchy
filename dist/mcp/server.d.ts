@@ -7,6 +7,15 @@ export interface McpServerOptions {
     /** Defaults to a VaultStore on `projectDir` for `agent`; tests inject one with a fake clock. */
     store?: VaultStore;
     now?: () => Date;
+    /** Called after every tool call with the outcome; the CLI logs it to the diagnostics trail. A throw here is ignored. */
+    onResult?: (result: ToolOutcome) => void;
+}
+/** What onResult reports about one tool call: never its arguments or its answer. */
+export interface ToolOutcome {
+    tool: (typeof TOOL_NAMES)[number];
+    ok: boolean;
+    /** The rejection's rule when ok is false. */
+    rule?: string;
 }
 /** Error codes the server adds to the protocol's RuleId set (PROTOCOL.md section 10). */
 export declare const SERVER_ERRORS: readonly ["NO_GOAL", "WRONG_TOOL", "AGENT_BUSY", "INTERNAL"];

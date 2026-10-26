@@ -89,7 +89,7 @@ function currentGoal(store) {
     return store.activeGoal() ?? store.listGoals().at(-1) ?? null;
 }
 function agentBusyText(agent, holder) {
-    return `Another diarchy server already acts as ${agent} on this goal (pid ${holder.pid}). One session per agent: end that session, or stop here; this server takes over once that one exits.`;
+    return `Another diarchy server already acts as ${agent} on this goal (pid ${holder.pid}). One session per agent: end that session, or stop here; once it exits, the next call as ${agent} takes over.`;
 }
 // ---------------------------------------------------------------------------
 // Input fields shared by several tools

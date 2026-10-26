@@ -149,7 +149,7 @@ function currentGoal(store: VaultStore): GoalRef | null {
 }
 
 function agentBusyText(agent: AgentId, holder: LockOwner): string {
-  return `Another diarchy server already acts as ${agent} on this goal (pid ${holder.pid}). One session per agent: end that session, or stop here; this server takes over once that one exits.`;
+  return `Another diarchy server already acts as ${agent} on this goal (pid ${holder.pid}). One session per agent: end that session, or stop here; once it exits, the next call as ${agent} takes over.`;
 }
 
 // ---------------------------------------------------------------------------

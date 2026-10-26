@@ -214,6 +214,9 @@ instead.
 
 One session per agent: while a goal is active, only one session acts as
 `codex`. The first session whose diarchy tools touch the goal holds it until
-it exits; a second one, such as an interactive session next to the headless PM
-that `diarchy start` runs, gets `AGENT_BUSY` from the diarchy tools (PROTOCOL.md
-section 10). Close the other session, or let it be the PM.
+it exits; a second one gets `AGENT_BUSY` from the diarchy tools (PROTOCOL.md
+section 10). Next to `diarchy start`, an interactive session that comes second
+is refused. One that came first holds the goal instead: `diarchy start` logs
+`codex waiting: another session (pid <pid>) acts as codex on this goal`,
+spawns no `codex` PM and uses up no restart meanwhile, and starts the PM once
+that session exits. Close the other session, or let it be the PM.

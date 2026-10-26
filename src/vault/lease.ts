@@ -5,13 +5,22 @@
  * The first server to act on a goal holds `inbox/<agent>.lock/` until it
  * exits, refreshing it every LOCK_HEARTBEAT_MS; another live server for that
  * agent is refused. A holder that died, or stopped refreshing for
- * LOCK_STALE_MS, is taken over.
+ * LOCK_STALE_MS, is taken over. `leaseHolder` lets the launcher see who holds
+ * a lease without claiming it.
  */
 import { mkdirSync } from "node:fs";
 
 import type { AgentId } from "../protocol/index.js";
 import type { GoalPaths } from "./config.js";
-import { LOCK_HEARTBEAT_MS, lockOwner, releaseLock, touchLock, tryLock, type LockOwner } from "./lock.js";
+import { LOCK_HEARTBEAT_MS, inspectLock, isStale, lockOwner, releaseLock, touchLock, tryLock, type LockOwner } from "./lock.js";
+
+/** The live server that holds `agent`'s lease on the goal, or null when the lease is free or stale; never claims it. */
+export function leaseHolder(paths: GoalPaths, agent: AgentId): LockOwner | null {
+  const seen = inspectLock(paths.lease(agent));
+  if (seen === null || isStale(seen)) return null;
+  // As in claim(): a fresh lock whose owner file cannot be read still counts as held.
+  return seen.owner ?? { pid: 0, host: "unknown", token: "" };
+}
 
 export class AgentLease {
   private readonly agent: AgentId;

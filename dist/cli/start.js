@@ -4,11 +4,16 @@
  *
  * Exit codes: 0 DONE, 2 BLOCKED, 1 error (every agent dead, bad input, signal).
  * On SIGINT, SIGTERM, or SIGHUP it stops both PMs and removes `.diarchy/start.pid` first.
+ *
+ * While another live session holds an agent's lease (`inbox/<agent>.lock/`,
+ * PROTOCOL.md 10), that agent's PM would only get AGENT_BUSY, so the
+ * supervisor does not spawn it: it logs the holder's pid once, waits without
+ * using up a restart, and spawns the PM once the lease is free or stale.
  */
 import { spawn } from "node:child_process";
 import { createInterface } from "node:readline";
 import { AGENT_HUMAN } from "../protocol/index.js";
-import { VaultStore, loadConfig } from "../vault/index.js";
+import { VaultStore, leaseHolder, loadConfig } from "../vault/index.js";
 import { blockReason, blockSummary, replyHint } from "./brief.js";
 import { CliError, EXIT_BLOCKED, EXIT_ERROR, EXIT_OK, nowHms, onBrokenPipe, sleep } from "./common.js";
 import { clearSession, defaultFakeScript, detectSessionId, fakePlan, loadSession, realPlan, saveSession, sandboxNotice, } from "./drivers.js";
@@ -19,6 +24,8 @@ import { claimRunRecord, identify, reapLeftovers, releaseRunRecord, runningSuper
 import { ensureWorktrees, hasCommits, isGitRepo, missingFromWorktrees } from "./worktrees.js";
 /** A resumed child that dies this fast is treated as a failed resume, not a crash. */
 const FAST_FAIL_MS = 5_000;
+/** How long after a PM exits its own MCP server may still hold the agent's lease; only a holder seen after this is another session. */
+const OWN_SERVER_EXIT_MS = 2_000;
 /** The signals on which the supervisor stops its PMs and removes its run record before exiting. */
 const STOP_SIGNALS = ["SIGINT", "SIGTERM", "SIGHUP"];
 /** The kickoff inputs given on the command line; they only mean something when no goal is active. */
@@ -181,7 +188,7 @@ class Supervisor {
         onBrokenPipe(() => interrupt("output closed"));
         try {
             for (const agent of this.input.agents)
-                this.spawnChild(this.child(agent));
+                this.launch(this.child(agent));
             void this.loop();
             return await finished;
         }
@@ -198,7 +205,7 @@ class Supervisor {
             const exited = new Promise((resolve) => {
                 markExited = resolve;
             });
-            child = { agent, proc: null, plan: null, spawnedAt: 0, restarts: 0, timer: null, dead: false, exited, markExited };
+            child = { agent, proc: null, plan: null, spawnedAt: 0, exitedAt: 0, restarts: 0, timer: null, dead: false, waitingOn: null, exited, markExited };
             this.children.set(agent, child);
         }
         return child;
@@ -223,7 +230,32 @@ class Supervisor {
             saveSession(projectDir, plan.minted);
         return plan;
     }
+    /** Spawn `child`, or wait while another session holds its agent's lease; watchLeases() spawns it once the lease frees. */
+    launch(child) {
+        const holder = this.holder(child.agent);
+        if (holder === null)
+            this.spawnChild(child);
+        else
+            this.waitFor(child, holder);
+    }
+    /**
+     * The live session acting as `agent` on the goal. Asked only while this
+     * supervisor's PM for `agent` is not running, so any holder is another
+     * session, except this PM's own MCP server for a moment after the PM exits.
+     */
+    holder(agent) {
+        return leaseHolder(this.input.goal.paths, agent);
+    }
+    /** Hold `child` back until `holder` lets go of the lease; logged once per holder. */
+    waitFor(child, holder) {
+        child.dead = false;
+        if (child.waitingOn === holder.pid)
+            return;
+        child.waitingOn = holder.pid;
+        this.log(`${child.agent} waiting: another session (pid ${holder.pid}) acts as ${child.agent} on this goal; ${child.agent} starts once it exits`);
+    }
     spawnChild(child) {
+        child.waitingOn = null;
         const plan = this.planFor(child.agent);
         let exitedResolve = () => undefined;
         child.exited = new Promise((resolve) => {
@@ -299,6 +331,7 @@ class Supervisor {
         // Node's "exit" always carries a code or a signal; neither means the spawn itself failed.
         const started = code !== null || signal !== null;
         const how = signal !== null ? `signal ${signal}` : code !== null ? `code ${code}` : "never started";
+        child.exitedAt = Date.now();
         this.log(`${child.agent} exited (${how})`);
         // A CLI that never ran says nothing about its saved session, so only a started one can fail a resume.
         if (started && child.plan?.resumed === true && code !== 0 && Date.now() - child.spawnedAt < FAST_FAIL_MS) {
@@ -316,19 +349,47 @@ class Supervisor {
         const { max_restarts, restart_backoff_ms } = this.input.launcher.launcher;
         if (child.restarts >= max_restarts) {
             child.dead = true;
-            this.log(`${child.agent} will not be restarted (${max_restarts} restarts used)`);
-            if ([...this.children.values()].every((entry) => entry.dead)) {
-                void this.finish(EXIT_ERROR, `every agent exited while the goal is still ${this.lastPhase ?? "in progress"}`);
+            if (this.holder(child.agent) === null) {
+                this.giveUp(child);
+                return;
             }
+            // Out of restarts with the lease held: an AGENT_BUSY exit, or this PM's own server not yet gone. Judge it after the backoff.
+            child.timer = setTimeout(() => this.afterBackoff(child, false), restart_backoff_ms);
             return;
         }
         child.restarts += 1;
         this.log(`${child.agent} restarting in ${restart_backoff_ms / 1000} s (restart ${child.restarts} of ${max_restarts})`);
-        child.timer = setTimeout(() => {
-            child.timer = null;
-            if (!this.stopping)
+        child.timer = setTimeout(() => this.afterBackoff(child, true), restart_backoff_ms);
+    }
+    /** After an exit's backoff: spawn the PM again (`restart`) or give it up, unless another session holds its agent's lease. */
+    afterBackoff(child, restart) {
+        child.timer = null;
+        if (this.stopping || (!restart && !child.dead))
+            return;
+        const holder = this.holder(child.agent);
+        if (holder === null) {
+            if (restart)
                 this.spawnChild(child);
-        }, restart_backoff_ms);
+            else
+                this.giveUp(child);
+            return;
+        }
+        const settle = OWN_SERVER_EXIT_MS - (Date.now() - child.exitedAt);
+        if (settle > 0) {
+            child.timer = setTimeout(() => this.afterBackoff(child, restart), settle);
+            return;
+        }
+        // Another session holds the agent: this exit was AGENT_BUSY or the session took over in the gap. Neither uses up a restart.
+        if (restart)
+            child.restarts = Math.max(0, child.restarts - 1);
+        this.waitFor(child, holder);
+    }
+    /** Leave `child` dead until a message lands, and end the run once no agent is left. */
+    giveUp(child) {
+        this.log(`${child.agent} will not be restarted (${this.input.launcher.launcher.max_restarts} restarts used)`);
+        if ([...this.children.values()].every((entry) => entry.dead && entry.timer === null)) {
+            void this.finish(EXIT_ERROR, `every agent exited while the goal is still ${this.lastPhase ?? "in progress"}`);
+        }
     }
     // -------------------------------------------------------------------------
     // Watching the goal
@@ -341,6 +402,7 @@ class Supervisor {
                 this.observe();
                 if (this.stopping)
                     return;
+                this.watchLeases();
                 // Doubles as the store tick so WALL_CLOCK and the deadlock deadline fire even when both PMs are idle.
                 await this.input.human.waitForReply({ timeoutMs: pollMs });
             }
@@ -348,6 +410,22 @@ class Supervisor {
                 this.warn(error);
                 await sleep(pollMs);
             }
+        }
+    }
+    /** Spawn each PM held back by another session's lease once that session exits or stops refreshing the lease. */
+    watchLeases() {
+        for (const child of this.children.values()) {
+            if (this.stopping)
+                return;
+            if (child.waitingOn === null || child.proc !== null || child.timer !== null)
+                continue;
+            const holder = this.holder(child.agent);
+            if (holder !== null) {
+                this.waitFor(child, holder);
+                continue;
+            }
+            this.log(`${child.agent} starting: pid ${child.waitingOn} no longer holds the goal`);
+            this.spawnChild(child);
         }
     }
     warn(error) {
@@ -393,8 +471,11 @@ class Supervisor {
                 if (!child.dead)
                     continue;
                 child.dead = false;
+                if (child.timer !== null)
+                    clearTimeout(child.timer);
+                child.timer = null;
                 this.log(`${child.agent} respawning: a message landed`);
-                this.spawnChild(child);
+                this.launch(child);
             }
         }
     }

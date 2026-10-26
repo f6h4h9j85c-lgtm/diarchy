@@ -14,7 +14,7 @@ export { renderDecisions } from "./render/decisions.js";
 export { renderGoal } from "./render/goal.js";
 export { GENERATED, GLYPHS, type RenderOptions } from "./render/shared.js";
 export { serializeKickoff, slugify, suffixSlug } from "./kickoff.js";
-export { AgentLease } from "./lease.js";
+export { AgentLease, leaseHolder } from "./lease.js";
 export { type LockOwner } from "./lock.js";
 export { DEFAULT_POLL_MS, LOCK_STALE_MS, MAX_WAIT_MS, PROGRESS_MS, VaultStore } from "./store.js";
 export {

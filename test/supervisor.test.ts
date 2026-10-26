@@ -1,17 +1,19 @@
 /**
  * `diarchy start` supervision and portability: the run record in
  * `.diarchy/start.pid`, PMs left behind by a supervisor that died, a hangup,
- * children that cannot be spawned, revival of a PM left dead, a corrupt chat
- * file, a stop during the wall-clock grace, the Codex git check, and the
- * supported-platform statement. The CLI runs from source as in e2e.test.ts,
+ * children that cannot be spawned, revival of a PM left dead, another session
+ * holding an agent's lease, a corrupt chat file, a stop during the wall-clock
+ * grace, the Codex git check, and the supported-platform statement. The CLI runs from source as in e2e.test.ts,
  * with small stand-in PM scripts instead of model calls.
  */
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
 
 import { fakePlan, loadSession, realPlan, saveSession, SKIP_GIT_REPO_CHECK } from "../src/cli/drivers.js";
@@ -19,6 +21,7 @@ import { DEFAULT_AGENT_LAUNCH } from "../src/cli/launcher-config.js";
 import { findExecutable, platformProblem } from "../src/cli/preflight.js";
 import { claimRunRecord, identify, pidPath, psStartTime, readRunRecord, reapLeftovers, runningSupervisor } from "../src/cli/run-record.js";
 import { worktreePath } from "../src/cli/worktrees.js";
+import { createMcpServer } from "../src/mcp/index.js";
 import { VaultStore, loadConfig } from "../src/vault/index.js";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
@@ -39,8 +42,10 @@ interface Background {
 const temps: string[] = [];
 const spawned: ChildProcess[] = [];
 const strays: number[] = [];
+const sessions: Client[] = [];
 
-afterEach(() => {
+afterEach(async () => {
+  for (const session of sessions.splice(0)) await session.close();
   for (const proc of spawned.splice(0)) if (proc.exitCode === null && proc.signalCode === null) proc.kill("SIGKILL");
   for (const pid of strays.splice(0)) {
     try {
@@ -137,6 +142,55 @@ function sleeperScript(): string {
     ].join("\n"),
   );
   return path;
+}
+
+/**
+ * A stand-in for `claude -p` or `codex exec`: it runs its own `diarchy mcp`
+ * server, calls `read`, and posts the plan PROPOSE once it holds the goal,
+ * then works silently. Refused with AGENT_BUSY, it prints the rejection and
+ * ends its turn. With STANDIN_GATE=1 it waits for $STANDIN_DIR/go first.
+ */
+function mcpPmScript(): string {
+  const path = join(tempDir(), "mcp-pm.mjs");
+  const sdk = (file: string): string => JSON.stringify(pathToFileURL(join(ROOT, "node_modules", "@modelcontextprotocol", "sdk", "dist", "esm", "client", file)).href);
+  const propose = { type: "PROPOSE", to: "all", re: ["AC1"], decision_id: "plan", claim: "Waiting for the other session keeps the PM reachable.", body: "Two tasks: wait and test." };
+  writeFileSync(
+    path,
+    [
+      'import { appendFileSync, existsSync } from "node:fs";',
+      `import { Client } from ${sdk("index.js")};`,
+      `import { StdioClientTransport } from ${sdk("stdio.js")};`,
+      "const agent = process.env.DIARCHY_AGENT;",
+      "appendFileSync(`${process.env.STANDIN_DIR}/${agent}.pid`, `${process.pid}\\n`);",
+      'while (process.env.STANDIN_GATE === "1" && !existsSync(`${process.env.STANDIN_DIR}/go`)) await new Promise((done) => setTimeout(done, 50));',
+      `const transport = new StdioClientTransport({ command: process.execPath, args: ["--import", "tsx", ${JSON.stringify(CLI)}, "mcp", "--agent", agent], cwd: ${JSON.stringify(ROOT)}, env: { ...process.env }, stderr: "inherit" });`,
+      'const client = new Client({ name: "stand-in", version: "0.0.0" });',
+      "await client.connect(transport);",
+      'const read = await client.callTool({ name: "read", arguments: {} });',
+      "const body = JSON.parse(read.content[0].text);",
+      "if (read.isError) {",
+      "  console.log(`${body.rule}: ${body.message}`);",
+      "  await client.close();",
+      "  process.exit(0);",
+      "}",
+      `const post = await client.callTool({ name: "post", arguments: ${JSON.stringify(propose)} });`,
+      'console.log(post.isError ? `post rejected: ${post.content[0].text}` : "posted the plan");',
+      "setInterval(() => undefined, 1000);",
+      "",
+    ].join("\n"),
+  );
+  return path;
+}
+
+/** An interactive Claude Code or Codex session in the project: an MCP server for `agent` and its client, in this process. */
+async function interactiveSession(projectDir: string, agent: string): Promise<Client> {
+  const server = createMcpServer({ projectDir, agent });
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  await server.connect(serverTransport);
+  const client = new Client({ name: `interactive-${agent}`, version: "0.0.0" });
+  await client.connect(clientTransport);
+  sessions.push(client);
+  return client;
 }
 
 function pids(dir: string, agent: string): number[] {
@@ -459,6 +513,89 @@ describe("a PM out of restarts", () => {
     await cli(["stop", "--project", dir]);
     expect((await run.done).code).toBe(2);
   }, 40_000);
+});
+
+// ---------------------------------------------------------------------------
+// Another session holding an agent's lease (F149)
+// ---------------------------------------------------------------------------
+
+describe("another session holding an agent's lease", () => {
+  const waiting = `claude waiting: another session (pid ${process.pid}) acts as claude on this goal`;
+  const planPosted = "PLAN · 2 messages · last claude PROPOSE plan";
+
+  async function leaseProject(name: string, maxRestarts = 3): Promise<string> {
+    const pm = mcpPmScript();
+    const sleeper = sleeperScript();
+    return initProject(name, (config) => {
+      config.agents.claude = { command: process.execPath, args: [pm] };
+      config.agents.codex = { command: process.execPath, args: [sleeper] };
+      config.launcher.max_restarts = maxRestarts;
+    });
+  }
+
+  it("waits for an interactive session that holds the agent, uses no restart, and starts the PM once that session exits", async () => {
+    const dir = await leaseProject("lease-held");
+    const session = await interactiveSession(dir, "claude");
+    const kickoff = await session.callTool({ name: "kickoff", arguments: { goal: "Wait for the other session.", acceptance_criteria: ["The PM starts once the lease frees."] } });
+    expect(kickoff.isError, JSON.stringify(kickoff.content)).toBeFalsy();
+
+    const standin = tempDir();
+    const run = launch(["start", "--driver", "real", "--no-worktrees", "--project", dir], { STANDIN_DIR: standin });
+    await until("the supervisor waiting on the session", () => run.out().includes(waiting) && pids(standin, "codex").length === 1, 20_000);
+    strays.push(...pids(standin, "codex"));
+    // Several poll ticks: the PM is neither spawned nor restarted, and the wait is logged once.
+    await new Promise((done) => setTimeout(done, 1_000));
+    expect(pids(standin, "claude")).toEqual([]);
+    expect(run.out()).not.toContain("claude started");
+    expect(run.out().split(waiting).length - 1).toBe(1);
+
+    await session.close();
+    await until("the PM's plan", () => run.out().includes(planPosted), 20_000);
+    strays.push(...pids(standin, "claude"));
+    expect(run.out()).toContain(`claude starting: pid ${process.pid} no longer holds the goal`);
+    expect(pids(standin, "claude")).toHaveLength(1);
+    expect(run.out()).not.toContain("AGENT_BUSY");
+    expect(run.out()).not.toContain("will not be restarted");
+
+    await cli(["stop", "--project", dir]);
+    await run.done;
+  }, 60_000);
+
+  it("both install guides quote the line the supervisor logs while it waits", () => {
+    for (const [agent, doc] of [["claude", "docs/INSTALL-CLAUDE.md"], ["codex", "docs/INSTALL-CODEX.md"]]) {
+      const text = readFileSync(join(ROOT, doc), "utf8").replace(/\s+/g, " ");
+      expect(text, doc).toContain(`\`${agent} waiting: another session (pid <pid>) acts as ${agent} on this goal\``);
+      expect(text, doc).toContain("uses up no restart");
+    }
+  });
+
+  it("puts a PM refused with AGENT_BUSY on its last restart back to waiting instead of leaving it dead", async () => {
+    const dir = await leaseProject("lease-taken", 0);
+    expect((await cli(["kickoff", "Wait for the other session.", "--ac", "The PM starts once the lease frees.", "--lead", "claude", "--project", dir])).code).toBe(0);
+    const standin = tempDir();
+    const run = launch(["start", "--driver", "real", "--no-worktrees", "--project", dir], { STANDIN_DIR: standin, STANDIN_GATE: "1" });
+    await until("both PMs spawned", () => pids(standin, "claude").length === 1 && pids(standin, "codex").length === 1, 20_000);
+    strays.push(...pids(standin, "codex"));
+
+    // An interactive session touches the goal before the headless PM's first call does.
+    const session = await interactiveSession(dir, "claude");
+    const read = await session.callTool({ name: "read", arguments: {} });
+    expect(read.isError, JSON.stringify(read.content)).toBeFalsy();
+    writeFileSync(join(standin, "go"), "");
+    await until("the supervisor waiting on the session", () => run.out().includes(waiting), 20_000);
+    expect(run.out()).toContain("[claude] AGENT_BUSY");
+    expect(run.out()).not.toContain("claude will not be restarted");
+
+    await session.close();
+    await until("the PM's plan", () => run.out().includes(planPosted), 20_000);
+    strays.push(...pids(standin, "claude"));
+    expect(pids(standin, "claude")).toHaveLength(2);
+    expect(run.out()).not.toContain("will not be restarted");
+    expect(run.out()).not.toContain("every agent exited");
+
+    await cli(["stop", "--project", dir]);
+    await run.done;
+  }, 60_000);
 });
 
 // ---------------------------------------------------------------------------

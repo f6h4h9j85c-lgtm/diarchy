@@ -368,11 +368,13 @@ describe("kickoff and read", () => {
     expect(busy).toEqual({
       ok: false,
       rule: "AGENT_BUSY",
-      message: `Another diarchy server already acts as codex on this goal (pid ${process.pid}). One session per agent: end that session, or stop here; this server takes over once that one exits.`,
+      message: `Another diarchy server already acts as codex on this goal (pid ${process.pid}). One session per agent: end that session, or stop here; once it exits, the next call as codex takes over.`,
     });
-    // PROTOCOL.md section 10 quotes the same message.
+    // PROTOCOL.md section 10 quotes the same message, in its prose and in the server code table.
     const spec = /rule: "AGENT_BUSY", message: "([^"]+)"/.exec(readFileSync(join(ROOT, "docs", "PROTOCOL.md"), "utf8"))?.[1];
-    expect(spec?.replace("<agent>", "codex").replace("<pid>", String(process.pid))).toBe(busy.message);
+    expect(spec?.replaceAll("<agent>", "codex").replace("<pid>", String(process.pid))).toBe(busy.message);
+    const row = CODE_ROWS.find(([code]) => code === "AGENT_BUSY")?.[2];
+    expect(row?.replaceAll("{agent}", "codex").replace("{pid}", String(process.pid))).toBe(busy.message);
     expect((await rejected(second, "status", { re: ["AC1"], evidence: [{ kind: "commit", sha: "abcdef1" }] })).rule).toBe("AGENT_BUSY");
     expect((await rejected(second, "wait_for_reply", { timeout_ms: 100 })).rule).toBe("AGENT_BUSY");
 

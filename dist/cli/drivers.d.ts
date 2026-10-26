@@ -61,4 +61,6 @@ export interface FakePlanInput {
 }
 /** `src/cli/fake-pm.ts` when running from source (needs tsx), `dist/cli/fake-pm.js` from the build. */
 export declare function defaultFakeScript(): string;
+/** The tsx loader as a file URL: `--import` takes a URL or specifier, and a Windows path is neither. */
+export declare function tsxLoader(): string;
 export declare function fakePlan(input: FakePlanInput): SpawnPlan;

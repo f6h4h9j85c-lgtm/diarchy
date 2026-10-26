@@ -165,7 +165,7 @@ export function defaultFakeScript() {
     return join(dirname(here), `fake-pm${ext}`);
 }
 /** The tsx loader as a file URL: `--import` takes a URL or specifier, and a Windows path is neither. */
-function tsxLoader() {
+export function tsxLoader() {
     const require = createRequire(import.meta.url);
     return pathToFileURL(join(dirname(require.resolve("tsx/package.json")), "dist", "loader.mjs")).href;
 }

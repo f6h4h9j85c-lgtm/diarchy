@@ -398,7 +398,7 @@ The `allowed_types` a tool returns (section 10) apply these gates: at the `talk_
 }
 ```
 
-This is the file `diarchy init` writes, with `<project>` standing for the project directory's name.
+This is the file `diarchy init` writes, with `<project>` standing for the project directory's name. `diarchy start` and `diarchy kickoff` refuse a project without it (`no diarchy.config.json in <dir>; run diarchy init first, or pass --project <dir>`), so a command run from the wrong directory kicks off no goal in a default vault there.
 
 `worktrees.branch_prefix` follows the section 3 `branch` rules, 133 characters max, and `worktrees.root` is one line of 183 characters max, so the default ASSIGN `branch` (`<branch_prefix>/<goal-id>/<agent>`) and `worktree` (`<worktrees.root>/<agent>`) the `assign` tool fills in always pass section 3, and git accepts the branch. Loading a config that breaks either fails with an error naming the file and the key, and `diarchy start` loads the config before kickoff, so a bad key starts no goal. It also refuses before kickoff when an existing branch is named like a leading path of `branch_prefix` (a branch `diarchy` blocks every `diarchy/<goal-id>/<agent>`, since git cannot create a branch below another), and notes a `worktrees.root` inside the repository that git does not ignore.
 
@@ -434,10 +434,12 @@ A posting tool (`kickoff`, `post`, `decide`, `assign`, `status`) answers `{ ok: 
 
 | Code | When | Message |
 |---|---|---|
-| NO_GOAL | any tool but `kickoff` before the first goal in this vault is kicked off | No goal in this vault. Call kickoff first. |
+| NO_GOAL | any tool but `kickoff` before the first goal in this vault is kicked off | No goal in {vault}. Call kickoff first. |
 | WRONG_TOOL | `post` with type KICKOFF, DECIDE, or ASSIGN | {type} goes through the {tool} tool, not post. Call {tool} with the same fields. |
 | AGENT_BUSY | any tool but `kickoff` while another live server acts as the same agent on the goal (below) | Another diarchy server already acts as {agent} on this goal (pid {pid}). One session per agent: end that session, or stop here; once it exits, the next call as {agent} takes over. |
 | INTERNAL | an unexpected exception, also logged to stderr | {error} |
+
+In NO_GOAL, `{vault}` is the absolute path of the vault the server checked. A project with no diarchy.config.json resolves to the default vault, and then the server appends `No diarchy.config.json in {project}, so this is the default vault: if a goal should be running, this server started outside its project; tell the human instead of calling kickoff.`, `{project}` being the absolute project directory.
 
 A stored vault file that will not parse (kickoff.md, a `chat/` message file) surfaces as a rejection too, not as INTERNAL: rule SCHEMA, or TYPED_ONLY for a message file whose `type` is unknown, with a message that names the file as corrupt instead of the rule's usual text. The PM then posts BLOCKED `kind: external`, which goes through even when kickoff.md is corrupt. `diarchy stop` and `diarchy reply` still work from budget.json, and the rendered views leave out a message file that will not parse, so the human can always fix the file, stop the run with `diarchy stop`, or move the goal directory out of the vault. The plugins' hooks leave such a file out too and name it, on stderr and in their output. In PLAN or EXECUTE the SessionStart brief's next step and the Stop hook's reason are that BLOCKED, and the Stop hook keeps the PM's turn open (up to its 12-block cap) until one is posted. A `budget.json` that will not parse surfaces the same way (SCHEMA naming the file, 2.3), but nothing can post to that goal, so the message tells the PM to stop and tell the human, who repairs the file or moves the goal directory out of the vault; the SessionStart brief says the same in one line, and the Stop hook lets the turn end.
 

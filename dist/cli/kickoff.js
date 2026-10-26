@@ -1,4 +1,4 @@
-import { CliError, EXIT_ERROR, EXIT_OK, humanStore, parseBudgets, printJson } from "./common.js";
+import { CliError, EXIT_ERROR, EXIT_OK, humanStore, parseBudgets, printJson, requireConfig } from "./common.js";
 /** Validate the positional goal plus flags into the store's KickoffInput. */
 export function kickoffInput(goal, options) {
     if (goal === undefined || goal.trim() === "")
@@ -15,6 +15,7 @@ export function kickoffInput(goal, options) {
     return input;
 }
 export async function runKickoff(projectDir, goal, options) {
+    requireConfig(projectDir);
     const input = kickoffInput(goal, options);
     const store = humanStore(projectDir);
     const result = await store.kickoff(input);

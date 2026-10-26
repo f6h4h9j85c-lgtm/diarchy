@@ -135,6 +135,17 @@ export function noGoalText(projectDir: string): string {
   return `no goal in ${vault}${config}`;
 }
 
+/**
+ * `start` and `kickoff` write a goal, so they refuse a project with no
+ * diarchy.config.json: run from the wrong directory, they would kick off into
+ * a default vault there.
+ */
+export function requireConfig(projectDir: string): void {
+  if (!existsSync(join(projectDir, CONFIG_FILENAME))) {
+    throw new CliError(`no ${CONFIG_FILENAME} in ${projectDir}; run diarchy init first, or pass --project <dir>`);
+  }
+}
+
 /** A store posting as the human; `reply` and `stop` require it, every read works. */
 export function humanStore(projectDir: string, pollIntervalMs?: number): VaultStore {
   const config = loadConfig(projectDir);

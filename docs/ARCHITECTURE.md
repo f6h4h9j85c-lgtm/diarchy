@@ -62,4 +62,4 @@ Each CLI talks to its own server over stdio. Each server has its own store and a
 
 **A worktree per agent.** Each PM commits on its own branch in its own checkout, so the two never edit the same working tree, every change arrives as a PR, and the other model reviews it before merge.
 
-**Why the fake PM exists.** `diarchy start --driver fake` runs the whole path, launcher to rendered files, with a scripted agent and no model calls. `good` mode reaches DONE; `slop` mode posts the classic failures, the protocol rejects them, and the run deadlocks and pages the human. It is the end-to-end test in CI and the way to watch a run before spending tokens.
+**Why the fake PM exists.** `diarchy start --driver fake` runs the whole path, launcher to rendered files, with a scripted agent and no model calls. `good` mode reaches DONE; `slop` mode posts the classic failures, the protocol rejects them, and the run deadlocks and pages the human; `silent` mode keeps the challenger quiet in PLAN, so the lead decides plan by authority after two `wait_for_reply` timeouts and the run still reaches DONE. It is the end-to-end test in CI and the way to watch a run before spending tokens.

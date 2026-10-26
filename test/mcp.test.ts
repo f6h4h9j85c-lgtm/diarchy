@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -44,7 +44,8 @@ const ACS = ["Requests over the limit get 429.", "The limit is configurable by e
 const KICKOFF_ARGS = { goal: GOAL, acceptance_criteria: ACS, slug: "rate-limit" };
 const PR = "https://github.com/acme/api/pull/412";
 const SORTED_TOOLS = [...TOOL_NAMES].sort();
-const NO_GOAL = { ok: false, rule: "NO_GOAL", message: "No goal in this vault. Call kickoff first." };
+/** NO_GOAL from a server on a tempProject: it names the vault it checked. */
+const noGoal = (projectDir: string): ErrorBody => ({ ok: false, rule: "NO_GOAL", message: `No goal in ${join(projectDir, "api brain", "diarchy")}. Call kickoff first.` });
 const PLAN_PROPOSAL = {
   type: "PROPOSE",
   decision_id: "plan",
@@ -190,6 +191,14 @@ describe("tools/list", () => {
     }
   });
 
+  it("the wait_for_reply description bounds the lead's wait on a silent challenger, deciding the challenger's threads before plan", async () => {
+    const h = await harness();
+    const { tools } = await h.claude.listTools();
+    const wait = tools.find((tool) => tool.name === "wait_for_reply")?.description ?? "";
+    expect(wait).toContain("If you are the lead and your plan PROPOSE has drawn no CHALLENGE after two timeouts, or the challenger has posted something else, stop waiting");
+    expect(wait).toContain("decide any thread the challenger opened first, then plan (basis authority when no CHALLENGE came)");
+  });
+
   it("the read description and the PROTOCOL.md section 10 read row name goal_text and acs", async () => {
     const h = await harness();
     const { tools } = await h.claude.listTools();
@@ -245,6 +254,12 @@ function fields(list: string, separator: string): Shape {
   return shape;
 }
 
+/** A section 10 message with `{placeholder}`s as a regex matching the whole server message. */
+function template(text: string): RegExp {
+  const parts = text.split(/\{[a-z_]+\}/).map((part) => part.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+  return new RegExp(`^${parts.join(".+?")}$`);
+}
+
 function documentedShape(pattern: RegExp): Shape {
   const match = pattern.exec(SECTION_10);
   if (match === null) throw new Error(`PROTOCOL.md section 10 has no shape matching ${pattern.source}`);
@@ -277,13 +292,15 @@ describe("PROTOCOL.md section 10", () => {
   it("lists the server codes with the server's messages, and every typical error is a known code", async () => {
     expect(CODE_ROWS.map(([code]) => code).sort()).toEqual([...SERVER_ERRORS].sort());
     const message = (code: string): string => CODE_ROWS.find(([name]) => name === code)?.[2] ?? "";
-    expect(message("NO_GOAL")).toBe(NO_GOAL.message);
     const h = await harness();
+    const missing = await rejected(h.codex, "read");
+    expect(missing.rule).toBe("NO_GOAL");
+    expect(missing.message).toMatch(template(message("NO_GOAL")));
+    expect(missing.message).toContain(` ${join(h.projectDir, "api brain", "diarchy")}. `);
     await h.kickoff();
     const wrong = await rejected(h.claude, "post", { ...PROPOSE, type: "DECIDE" });
     expect(wrong.rule).toBe("WRONG_TOOL");
-    const template = message("WRONG_TOOL").split(/\{[a-z_]+\}/).map((part) => part.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
-    expect(wrong.message).toMatch(new RegExp(`^${template.join(".+?")}$`));
+    expect(wrong.message).toMatch(template(message("WRONG_TOOL")));
 
     const known = new Set<string>([...RULE_IDS, ...SERVER_ERRORS]);
     for (const [name, , , errors] of TOOL_ROWS.values()) {
@@ -293,6 +310,24 @@ describe("PROTOCOL.md section 10", () => {
     }
     // TWO_ROUNDS gates only PROPOSE and CHALLENGE (rules.ts twoRounds); the happy path decides after both.
     expect(TOOL_ROWS.get("decide")?.[3]).not.toContain("TWO_ROUNDS");
+  });
+
+  it("NO_GOAL from a project with no diarchy.config.json names the default vault and the missing config, and tells the PM to tell the human", async () => {
+    const root = mkdtempSync(join(tmpdir(), "diarchy-mcp-"));
+    temps.push(root);
+    const projectDir = join(root, "stray");
+    mkdirSync(projectDir);
+    const missing = await rejected(await connect(projectDir, "claude", null), "read");
+    expect(missing).toEqual({
+      ok: false,
+      rule: "NO_GOAL",
+      message: `No goal in ${join(projectDir, "stray brain", "diarchy")}. Call kickoff first. No diarchy.config.json in ${projectDir}, so this is the default vault: if a goal should be running, this server started outside its project; tell the human instead of calling kickoff.`,
+    });
+    const row = CODE_ROWS.find(([code]) => code === "NO_GOAL")?.[2] ?? "";
+    const appended = /the server appends `([^`]+)`/.exec(SECTION_10)?.[1] ?? "";
+    expect(appended, "PROTOCOL.md section 10 gives the default-vault sentence").not.toBe("");
+    expect(missing.message).toMatch(template(`${row} ${appended}`));
+    expect(existsSync(join(projectDir, "stray brain"))).toBe(false);
   });
 
   it("posting and read results carry exactly the documented keys", async () => {
@@ -401,9 +436,9 @@ describe("kickoff and read", () => {
 
   it("read, wait_for_reply, and post before any kickoff return NO_GOAL instead of throwing", async () => {
     const h = await harness();
-    expect(await rejected(h.codex, "read")).toEqual(NO_GOAL);
-    expect(await rejected(h.codex, "wait_for_reply", { timeout_ms: 100 })).toEqual(NO_GOAL);
-    expect(await rejected(h.claude, "post", PROPOSE)).toEqual(NO_GOAL);
+    expect(await rejected(h.codex, "read")).toEqual(noGoal(h.projectDir));
+    expect(await rejected(h.codex, "wait_for_reply", { timeout_ms: 100 })).toEqual(noGoal(h.projectDir));
+    expect(await rejected(h.claude, "post", PROPOSE)).toEqual(noGoal(h.projectDir));
   });
 
   it("a kickoff that would not round-trip through kickoff.md is SCHEMA, and a vault file that will not parse surfaces as SCHEMA naming the file, not INTERNAL", async () => {
@@ -412,7 +447,7 @@ describe("kickoff and read", () => {
     expect(multiLine).toMatchObject({ rule: "SCHEMA", message: expect.stringMatching(/^Field "goal": must be a single line/) });
     const multiLineAc = await rejected(h.claude, "kickoff", { ...KICKOFF_ARGS, acceptance_criteria: ["First line\nsecond line."] });
     expect(multiLineAc).toMatchObject({ rule: "SCHEMA", message: expect.stringContaining('Field "acceptance_criteria.0": must be a single line') });
-    expect(await rejected(h.codex, "read")).toEqual(NO_GOAL);
+    expect(await rejected(h.codex, "read")).toEqual(noGoal(h.projectDir));
     const kick = await h.kickoff();
     const path = resolveVaultPaths(h.projectDir, loadConfig(h.projectDir), kick.goal_id).kickoff;
     writeFileSync(path, readFileSync(path, "utf8").replace("- AC1:", "- AC1: injected criterion\n- AC1:"));
@@ -443,7 +478,7 @@ describe("kickoff and read", () => {
       const criterion = await rejected(h.claude, "kickoff", { ...KICKOFF_ARGS, acceptance_criteria: [ACS[0], `First half${terminator}second half.`] });
       expect(criterion, name).toMatchObject({ rule: "SCHEMA", message: expect.stringMatching(/^Field "acceptance_criteria.1": must be a single line/) });
     }
-    expect(await rejected(h.codex, "read")).toEqual(NO_GOAL);
+    expect(await rejected(h.codex, "read")).toEqual(noGoal(h.projectDir));
     const { tools } = await h.claude.listTools();
     const properties = tools.find((tool) => tool.name === "kickoff")?.inputSchema.properties as Record<string, { description?: string }> | undefined;
     for (const field of ["goal", "acceptance_criteria"]) {
@@ -741,7 +776,7 @@ describe("malformed arguments", () => {
     }
     const omitted = { method: "tools/call", params: { name: "read" } } as unknown as Parameters<Client["request"]>[0];
     const result = await h.codex.request(omitted, CallToolResultSchema);
-    expect(result.structuredContent).toEqual(NO_GOAL);
+    expect(result.structuredContent).toEqual(noGoal(h.projectDir));
   });
 });
 
@@ -852,7 +887,8 @@ describe("resources", () => {
     const h = await harness();
     const { resources } = await h.claude.listResources();
     expect(resources.map((resource) => resource.uri).sort()).toEqual(["diarchy://chat", "diarchy://goal"]);
-    expect(resourceText(await h.claude.readResource({ uri: "diarchy://goal" }))).toBe("No goal in this vault. Call kickoff first.\n");
+    expect(resourceText(await h.claude.readResource({ uri: "diarchy://goal" }))).toBe(`${noGoal(h.projectDir).message}\n`);
+    expect(resourceText(await h.claude.readResource({ uri: "diarchy://chat" }))).toBe(`${noGoal(h.projectDir).message}\n`);
 
     await h.kickoff();
     const goal = await h.codex.readResource({ uri: "diarchy://goal" });
@@ -890,7 +926,7 @@ describe("runMcpServer over stdio", () => {
     try {
       const { tools } = await client.listTools();
       expect(tools.map((tool) => tool.name).sort()).toEqual(SORTED_TOOLS);
-      expect(await rejected(client, "read")).toEqual(NO_GOAL);
+      expect(await rejected(client, "read")).toEqual(noGoal(projectDir));
     } finally {
       await client.close();
     }

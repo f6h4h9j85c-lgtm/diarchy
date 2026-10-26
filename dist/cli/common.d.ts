@@ -47,6 +47,12 @@ export declare function findConfigDir(start: string): string | null;
  * command run from the wrong directory does not look like an empty vault.
  */
 export declare function noGoalText(projectDir: string): string;
+/**
+ * `start` and `kickoff` write a goal, so they refuse a project with no
+ * diarchy.config.json: run from the wrong directory, they would kick off into
+ * a default vault there.
+ */
+export declare function requireConfig(projectDir: string): void;
 /** A store posting as the human; `reply` and `stop` require it, every read works. */
 export declare function humanStore(projectDir: string, pollIntervalMs?: number): VaultStore;
 /** The active goal, else the newest one (so status and watch keep working after DONE). */

@@ -1,6 +1,6 @@
 /** `diarchy kickoff`: the human starts a goal through the store. `start` reuses the option parsing. */
 import type { KickoffInput } from "../vault/index.js";
-import { CliError, EXIT_ERROR, EXIT_OK, humanStore, parseBudgets, printJson } from "./common.js";
+import { CliError, EXIT_ERROR, EXIT_OK, humanStore, parseBudgets, printJson, requireConfig } from "./common.js";
 
 export interface KickoffCliOptions {
   ac: string[];
@@ -22,6 +22,7 @@ export function kickoffInput(goal: string | undefined, options: KickoffCliOption
 }
 
 export async function runKickoff(projectDir: string, goal: string | undefined, options: KickoffCliOptions): Promise<number> {
+  requireConfig(projectDir);
   const input = kickoffInput(goal, options);
   const store = humanStore(projectDir);
   const result = await store.kickoff(input);

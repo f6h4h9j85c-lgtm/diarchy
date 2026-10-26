@@ -3,7 +3,7 @@
  * through the store library with no model calls, so launcher, store, and engine
  * are exercised end to end.
  *
- *   node --import tsx src/cli/fake-pm.ts [good|slop]
+ *   node --import tsx src/cli/fake-pm.ts [good|slop|silent]
  *
  * Env from the launcher: DIARCHY_AGENT, DIARCHY_PROJECT, DIARCHY_GOAL,
  * DIARCHY_WORKTREE (when the launcher made one), DIARCHY_FAKE_MODE (overrides
@@ -28,6 +28,11 @@
  * and instead opens another thread (D1) and tries a second PROPOSE on it
  * (TWO_ROUNDS); the challenger's STATUS is the second accepted message after
  * the CHALLENGE, the deadlock watch trips, and the store posts ASK_HUMAN.
+ *
+ * silent: as good, except the challenger posts nothing in PLAN. The lead counts
+ * its `waitForReply` timeouts and, after two in a row with no CHALLENGE on its
+ * plan PROPOSE, DECIDEs plan by authority (PROPOSE -> DECIDE, PROTOCOL.md
+ * section 7), as diarchy-pm and the wait_for_reply description tell it to.
  */
 import { spawnSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
@@ -35,6 +40,7 @@ import { existsSync, writeFileSync } from "node:fs";
 import { join, posix } from "node:path";
 import { openThreads, reviewOwed } from "../protocol/index.js";
 import { VaultStore, loadConfig } from "../vault/index.js";
+import { uncoveredAcs } from "./brief.js";
 import { branchName } from "./worktrees.js";
 const agent = process.env.DIARCHY_AGENT ?? "";
 const projectDir = process.env.DIARCHY_PROJECT ?? process.cwd();
@@ -47,8 +53,8 @@ if (agent === "") {
     console.error("fake-pm: DIARCHY_AGENT is not set");
     process.exit(2);
 }
-if (mode !== "good" && mode !== "slop") {
-    console.error(`fake-pm: unknown mode "${mode}" (good | slop)`);
+if (mode !== "good" && mode !== "slop" && mode !== "silent") {
+    console.error(`fake-pm: unknown mode "${mode}" (good | slop | silent)`);
     process.exit(2);
 }
 class UnexpectedRejection extends Error {
@@ -213,11 +219,11 @@ function goodAction(ctx) {
             reason: "availability",
         }));
     }
-    // EXECUTE opened by a human ruling carries no tasks: one new_task per AC, in AC order so T<n> is AC<n>'s task.
-    const uncovered = acs.findIndex((ac) => !tasks.some((task) => acOfTask(task) === ac));
-    if (uncovered >= 0 && tasks.every((task) => task.kind === "implement")) {
-        const ac = acs[uncovered];
-        const assignee = uncovered % 2 === 0 ? other : agent;
+    // EXECUTE opened by a human ruling carries no tasks: one new_task per AC the brief counts as uncovered,
+    // in AC order and ahead of any review, so T<n> is AC<n>'s task.
+    const ac = uncoveredAcs(state, messages)[0];
+    if (ac !== undefined) {
+        const assignee = acs.indexOf(ac) % 2 === 0 ? other : agent;
         return async () => void (await post(store, {
             type: "ASSIGN",
             to: assignee,
@@ -264,6 +270,33 @@ function goodAction(ctx) {
         }));
     }
     return null;
+}
+// ---------------------------------------------------------------------------
+// silent
+// ---------------------------------------------------------------------------
+/** Two timeouts bound the lead's wait for a CHALLENGE that never comes. */
+const SILENT_TIMEOUTS = 2;
+function silentAction(ctx) {
+    const { store, state, lead, acs, timeouts } = ctx;
+    if (state.phase !== "PLAN")
+        return goodAction(ctx);
+    if (!lead)
+        return null;
+    const plan = state.decisions.plan;
+    if (plan === undefined || plan.status !== "open" || plan.messages !== 1 || plan.challenge !== null)
+        return goodAction(ctx);
+    if (timeouts < SILENT_TIMEOUTS)
+        return null;
+    return async () => void (await post(store, {
+        type: "DECIDE",
+        to: "all",
+        re: acs,
+        decision_id: "plan",
+        basis: "authority",
+        claim: "One task per criterion stands as proposed.",
+        tasks: acs.map((ac) => `${ac}: ${state.acs[ac].criterion}`),
+        body: "No CHALLENGE came after two wait_for_reply timeouts, so there is no test to run.",
+    }));
 }
 // ---------------------------------------------------------------------------
 // slop
@@ -362,6 +395,7 @@ async function main() {
     const store = new VaultStore({ projectDir, config, agent, pollIntervalMs: 50 });
     const started = Date.now();
     const memory = new Set();
+    let timeouts = 0;
     log(`fake PM in ${mode} mode for ${projectDir}`);
     for (;;) {
         if (interrupted !== null) {
@@ -386,9 +420,11 @@ async function main() {
             other: state.agents.find((id) => id !== agent) ?? state.challenger,
             acs: Object.keys(state.acs),
             memory,
+            timeouts,
         };
-        const action = mode === "slop" ? slopAction(ctx) : goodAction(ctx);
+        const action = mode === "slop" ? slopAction(ctx) : mode === "silent" ? silentAction(ctx) : goodAction(ctx);
         if (action !== null) {
+            timeouts = 0;
             try {
                 await action();
             }
@@ -404,7 +440,8 @@ async function main() {
             console.error(`fake-pm: nothing to do for ${deadlineMs} ms in phase ${state.phase}; giving up`);
             return 1;
         }
-        await store.waitForReply({ timeoutMs: WAIT_MS });
+        const reply = await store.waitForReply({ timeoutMs: WAIT_MS });
+        timeouts = "timeout" in reply ? timeouts + 1 : 0;
     }
 }
 main().then((code) => process.exit(code), (error) => {

@@ -245,6 +245,11 @@ instead.
    as pending review.
 4. Ask Codex to call the diarchy `read` tool. With no goal in the vault it
    answers `{ ok: false, rule: "NO_GOAL", ... }`; that is the server working.
+   Its message names the vault it checked, which must be this project's
+   (`<project> brain/diarchy` unless `vault` in diarchy.config.json says
+   otherwise). Another path, or a message saying no diarchy.config.json was
+   found, means the server started outside the project: check section 2 and
+   section 4.
    Once a goal exists it returns the goal text (`goal_text`), every acceptance
    criterion with its status (`acs`), the phase, your role, and unread messages.
 5. With a goal active, the session starts with the inbox brief from

@@ -115,6 +115,24 @@ describe("docs: install paths", () => {
     expect(quick).toContain(`\`\`\`\n${blocks[1]}\n\`\`\``);
   });
 
+  it("README, INSTALL-CODEX.md, and QUICKSTART.md install the CLI before the Codex plugin and register the server as that global diarchy", () => {
+    // Codex copies a plugin without node_modules, so the plugin's bin/diarchy.js hands every call to the diarchy on PATH.
+    const install = "npm install -g github:f6h4h9j85c-lgtm/diarchy";
+    const toml = 'command = "diarchy"\nargs = ["mcp", "--agent", "codex"]\n';
+    const docs: [string, string, string][] = [
+      ["README.md", section(read("README.md"), "### Codex CLI"), toml],
+      ["docs/INSTALL-CODEX.md", read("docs", "INSTALL-CODEX.md"), toml],
+      ["docs/QUICKSTART.md", read("docs", "QUICKSTART.md"), '`command = "diarchy"` and `args = ["mcp", "--agent", "codex"]`'],
+    ];
+    for (const [file, text, server] of docs) {
+      expect(text.indexOf(install), file).toBeGreaterThanOrEqual(0);
+      expect(text.indexOf(install), file).toBeLessThan(text.indexOf("codex plugin marketplace add"));
+      expect(text, file).toContain(server);
+      expect(text, file).not.toContain("installed plugin directory");
+      expect(text, file).not.toContain("/abs/path/to/diarchy/bin/diarchy.js");
+    }
+  });
+
   it("templates/AGENTS.md names skills, not repository paths that exist only in the diarchy checkout", () => {
     const template = read("templates", "AGENTS.md");
     expect(template).not.toMatch(/\.agents\/skills|skills\/diarchy-\w+\/SKILL\.md/);

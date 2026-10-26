@@ -6,6 +6,7 @@
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -98,5 +99,17 @@ describe("init: codex launch args", () => {
     expect(() => runInit(dir, { agents: "claude,cursor", codexFullAccess: true })).toThrow(CliError);
     expect(() => runInit(dir, { agents: "claude,cursor", codexFullAccess: true })).toThrow(/needs an agent named codex/);
     expect(() => readFileSync(join(dir, "diarchy.config.json"))).toThrow();
+  });
+});
+
+describe("PROTOCOL.md section 8", () => {
+  it("the example diarchy.config.json is what diarchy init writes", () => {
+    // A config copied from the spec must launch the PMs as init's does, the Codex hook-trust flag included.
+    const protocol = readFileSync(fileURLToPath(new URL("../docs/PROTOCOL.md", import.meta.url)), "utf8");
+    const section = protocol.slice(protocol.indexOf("\n## 8. "), protocol.indexOf("\n## 9. "));
+    const block = /```json\n([\s\S]*?)\n```/.exec(section)?.[1];
+    expect(block).toBeDefined();
+    const vault = "<project> brain/diarchy";
+    expect(JSON.parse(block ?? "")).toEqual(buildConfig(project(), ["claude", "codex"], vault));
   });
 });

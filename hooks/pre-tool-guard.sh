@@ -12,7 +12,11 @@
 # Resolves bin/diarchy.js relative to this file, or uses $DIARCHY_BIN when set.
 # Never breaks a session: exits 0 and prints nothing when node or the binary is
 # missing. Commands that do not mention diarchy skip the node start-up. Only a
-# JSON object from the CLI is forwarded.
+# JSON object from the CLI is forwarded. `diarchy guard` always exits 0, so any
+# other code means the CLI could not start (a Codex plugin copy has no
+# node_modules and no `diarchy` is on PATH): its error goes to stderr and the
+# script exits 1 with nothing on stdout, which Claude Code and Codex both report
+# as a non-blocking hook error. Never exit 2: both read that as a deny.
 set -euo pipefail
 
 agent="${1:-claude}"
@@ -28,7 +32,8 @@ esac
 [ -f "$bin" ] || exit 0
 command -v node >/dev/null 2>&1 || exit 0
 
-out="$(printf '%s' "$input" | node "$bin" guard --agent "$agent" 2>/dev/null || true)"
+# pipefail off inside: the status is node's, not a printf cut short by SIGPIPE.
+out="$(set +o pipefail; printf '%s' "$input" | node "$bin" guard --agent "$agent")" || exit 1
 case "$out" in
   '{'*) printf '%s\n' "$out" ;;
 esac

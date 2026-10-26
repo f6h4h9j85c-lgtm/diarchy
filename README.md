@@ -63,18 +63,19 @@ Or, inside Claude Code, `/plugin marketplace add f6h4h9j85c-lgtm/diarchy` then `
 ### Codex CLI
 
 ```
+npm install -g github:f6h4h9j85c-lgtm/diarchy
 codex plugin marketplace add f6h4h9j85c-lgtm/diarchy
 ```
 
-Then add to `~/.codex/config.toml`:
+Install the CLI first: Codex copies the plugin without its dependencies, so the plugin's MCP server and hooks run the `diarchy` on `PATH`. Then add to `~/.codex/config.toml`:
 
 ```toml
 [plugins."diarchy@diarchy"]
 enabled = true
 
 [mcp_servers.diarchy]
-command = "node"
-args = ["/abs/path/to/diarchy/bin/diarchy.js", "mcp", "--agent", "codex"]
+command = "diarchy"
+args = ["mcp", "--agent", "codex"]
 env_vars = ["DIARCHY_PROJECT"]
 startup_timeout_sec = 20
 tool_timeout_sec = 1800

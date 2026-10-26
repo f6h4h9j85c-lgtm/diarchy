@@ -133,6 +133,7 @@ function nextSteps(projectDir: string, vaultPath: string, ignored: boolean | nul
     "  1. Claude Code:  claude plugin install diarchy --marketplace f6h4h9j85c-lgtm/diarchy",
     "                   (inside Claude Code: /plugin marketplace add f6h4h9j85c-lgtm/diarchy, then /plugin install diarchy@diarchy)",
     "  2. Codex CLI:    codex plugin marketplace add f6h4h9j85c-lgtm/diarchy",
+    "                   codex plugin add diarchy@diarchy   (or enable diarchy@diarchy in /plugins)",
     "                   then add [mcp_servers.diarchy] to ~/.codex/config.toml, trust the project, and approve the diarchy hooks in /hooks (docs/INSTALL-CODEX.md)",
     ...step,
     "  4. The Claude PM may run git, npm, node, and gh. If your checks use another command, add Bash(<cmd> *) to agents.claude.args in diarchy.config.json.",

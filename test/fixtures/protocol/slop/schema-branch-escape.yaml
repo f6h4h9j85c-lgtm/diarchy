@@ -20,4 +20,4 @@ message:
 expect:
   ok: false
   rule: SCHEMA
-  message: 'Field "branch": must be a branch name of letters, digits, and . _ / - with no ".." and no leading "-". Fix it per PROTOCOL.md section 3 and post again.'
+  message: 'Field "branch": must be a branch name of letters, digits, and . _ / - with no "..", "//", "/." or ".lock/", no leading "-", "/" or ".", no trailing "/", "." or ".lock", and not "HEAD". Fix it per PROTOCOL.md section 3 and post again.'

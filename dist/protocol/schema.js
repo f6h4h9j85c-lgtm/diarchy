@@ -51,13 +51,18 @@ const pathText = z
     .min(1)
     .max(FIELD_MAX_CHARS, `at most ${FIELD_MAX_CHARS} characters`)
     .refine((text) => !hasControlChars(text), ONE_LINE);
-/** Git-ref-safe: letters, digits, `. _ / -`; no `..`; no leading `-`. */
-const BRANCH_PATTERN = /^(?!-)(?!.*\.\.)[A-Za-z0-9._/-]+$/;
-const BRANCH_CHARS = 'letters, digits, and . _ / - with no ".." and no leading "-"';
+/**
+ * A name `git check-ref-format --branch` accepts, from letters, digits, and
+ * `. _ / -`: no `..`, no empty component (`//`, a leading or trailing `/`), no
+ * component that starts with `.` (`/.`) or ends in `.lock`, no leading `-`, no
+ * trailing `.`, and not `HEAD`.
+ */
+const BRANCH_PATTERN = /^(?![-/.]|HEAD$)(?!.*(?:\.\.|\/\/|\/\.|\.lock\/))(?!.*(?:\/|\.|\.lock)$)[A-Za-z0-9._/-]+$/;
+const BRANCH_RULE = 'must be a branch name of letters, digits, and . _ / - with no "..", "//", "/." or ".lock/", no leading "-", "/" or ".", no trailing "/", "." or ".lock", and not "HEAD"';
 const branchName = z
     .string()
     .max(FIELD_MAX_CHARS, `at most ${FIELD_MAX_CHARS} characters`)
-    .regex(BRANCH_PATTERN, `must be a branch name of ${BRANCH_CHARS}`);
+    .regex(BRANCH_PATTERN, BRANCH_RULE);
 const POST_RULES = { task: oneLineWords(40), words: wordsMax, path: pathText, branch: branchName };
 /** v0.1.0: any non-empty string, and word-limited text of at least one character. */
 const STORED_RULES = {
@@ -527,7 +532,11 @@ const BRANCH_SUFFIX_MAX_CHARS = "/".length + 49 + "/".length + 16;
 export const BRANCH_PREFIX_MAX_CHARS = FIELD_MAX_CHARS - BRANCH_SUFFIX_MAX_CHARS;
 /** Longest `worktrees.root`: the default ASSIGN worktree `<worktrees.root>/<agent>` stays within FIELD_MAX_CHARS. */
 export const WORKTREE_ROOT_MAX_CHARS = FIELD_MAX_CHARS - "/".length - 16;
-/** The config keys the assign tool builds the default ASSIGN worktree and branch from must pass PROTOCOL.md 3. */
+/**
+ * The config keys the assign tool builds the default ASSIGN worktree and branch
+ * from must pass PROTOCOL.md 3. A `branch_prefix` that is itself a section 3
+ * branch makes `<branch_prefix>/<goal-id>/<agent>` one too, so git accepts it.
+ */
 const worktreesSchema = z.object({
     root: z
         .string()
@@ -537,7 +546,7 @@ const worktreesSchema = z.object({
     branch_prefix: z
         .string()
         .max(BRANCH_PREFIX_MAX_CHARS, `at most ${BRANCH_PREFIX_MAX_CHARS} characters`)
-        .regex(BRANCH_PATTERN, `must be ${BRANCH_CHARS}`),
+        .regex(BRANCH_PATTERN, BRANCH_RULE),
 });
 export const configSchema = z.object({
     protocol_version: z.literal(1),

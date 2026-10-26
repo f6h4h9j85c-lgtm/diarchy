@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import { readdirSync, readFileSync } from "node:fs";
 import { join, posix } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -835,16 +836,41 @@ describe("one-line field caps", () => {
     expect(badField({ ...fresh, new_task: "Fix\r\nit" })).toBe("new_task");
   });
 
-  it("ASSIGN branch is git-ref-safe and worktree is one line, both 200 characters max", () => {
+  /** Names git rejects as a branch although every character is a letter, digit, or `. _ / -` (F157). */
+  const GIT_REJECTED = ["diarchy/", "diarchy//g/claude", "/feat", "feat.lock", "a/b.lock/c", "feat/.hidden", ".feat", "a/./b", "feat.", "a/b.", "HEAD"];
+  /** Edge cases git accepts. */
+  const GIT_ACCEPTED = ["feat./g/a", "x.lock.x", "a.lockx", "a/-b", "a/HEAD", "a_/b-", "release/v1.2_rc-3"];
+
+  it("ASSIGN branch is one git accepts and worktree is one line, both 200 characters max", () => {
     expect(badField(assign)).toBeNull();
     expect(badField({ ...assign, branch: "b".repeat(FIELD_MAX_CHARS) })).toBeNull();
-    expect(badField({ ...assign, branch: "release/v1.2_rc-3" })).toBeNull();
-    for (const branch of ["diarchy/../main", "-D", "has space", `x${esc}[31m`, "x\ny", "b".repeat(FIELD_MAX_CHARS + 1)]) {
+    for (const branch of GIT_ACCEPTED) expect(badField({ ...assign, branch }), JSON.stringify(branch)).toBeNull();
+    for (const branch of ["diarchy/../main", "-D", "has space", `x${esc}[31m`, "x\ny", "b".repeat(FIELD_MAX_CHARS + 1), ...GIT_REJECTED]) {
       expect(badField({ ...assign, branch }), JSON.stringify(branch)).toBe("branch");
     }
     expect(badField({ ...assign, worktree: "/Users/sam/My Projects/wt/codex" })).toBeNull();
     expect(badField({ ...assign, worktree: "wt\ncodex" })).toBe("worktree");
     expect(badField({ ...assign, worktree: "w".repeat(FIELD_MAX_CHARS + 1) })).toBe("worktree");
+  });
+
+  it("ASSIGN branch accepts exactly what git check-ref-format --branch accepts among names of letters, digits, and . _ / -", () => {
+    const tokens = ["a", "-", ".", "/", ".lock"];
+    const names = new Set<string>(["a/HEAD", "HEAD/a", "-a", ...GIT_REJECTED, ...GIT_ACCEPTED]);
+    const grow = (name: string, depth: number): void => {
+      if (name !== "") names.add(name);
+      if (depth > 0) for (const token of tokens) grow(name + token, depth - 1);
+    };
+    grow("", 3);
+    // Git releases before 2.43 accept "HEAD" as a branch name; diarchy refuses it either way.
+    names.delete("HEAD");
+    expect(badField({ ...assign, branch: "HEAD" })).toBe("branch");
+    const list = [...names];
+    // One shell for every name keeps this fast: "1" when git accepts the name, "0" when it rejects it.
+    const loop = 'for name do git check-ref-format --branch "$name" >/dev/null 2>&1 && echo 1 || echo 0; done';
+    const verdicts = spawnSync("sh", ["-c", loop, "sh", ...list], { encoding: "utf8" }).stdout.trim().split("\n");
+    expect(verdicts).toHaveLength(list.length);
+    const disagree = list.filter((branch, index) => (verdicts[index] === "1") !== (badField({ ...assign, branch }) === null));
+    expect(disagree).toEqual([]);
   });
 
   it("evidence file path and test log: one line, 200 characters max", () => {
@@ -857,11 +883,16 @@ describe("one-line field caps", () => {
 
   it("diarchy.config.json worktrees keys always build a default ASSIGN worktree and branch that pass these caps", () => {
     const worktrees = (root: string, branch_prefix: string) => ({ ...CONFIG, worktrees: { root, branch_prefix } });
-    for (const prefix of ["team+ai", "équipe", "has space", "-pm", "pm/../main", `pm${esc}`, "", "p".repeat(BRANCH_PREFIX_MAX_CHARS + 1)]) {
+    for (const prefix of ["team+ai", "équipe", "has space", "-pm", "pm/../main", `pm${esc}`, "", "p".repeat(BRANCH_PREFIX_MAX_CHARS + 1), ...GIT_REJECTED]) {
       expect(() => parseConfig(worktrees(".diarchy/worktrees", prefix)), JSON.stringify(prefix)).toThrow(/"branch_prefix"/);
     }
     for (const root of ["", "wt\ncodex", "w".repeat(WORKTREE_ROOT_MAX_CHARS + 1)]) {
       expect(() => parseConfig(worktrees(root, "diarchy")), JSON.stringify(root)).toThrow(/"root"/);
+    }
+    // An accepted prefix makes a default branch git accepts, so `git worktree add` never fails on its name (F157).
+    for (const prefix of GIT_ACCEPTED) {
+      const branch = `${parseConfig(worktrees(".diarchy/worktrees", prefix)).worktrees.branch_prefix}/20261025-rate-limit/claude`;
+      expect(spawnSync("git", ["check-ref-format", "--branch", branch]).status, branch).toBe(0);
     }
     // The longest accepted values, with the longest goal id and agent id, still make a valid ASSIGN, as the assign tool builds it.
     const config = parseConfig(worktrees("w".repeat(WORKTREE_ROOT_MAX_CHARS), `release/v1.2_rc-3${"p".repeat(BRANCH_PREFIX_MAX_CHARS - 17)}`));
@@ -878,12 +909,14 @@ describe("one-line field caps", () => {
   it("PROTOCOL.md states the same caps", () => {
     const protocol = readFileSync(join(DOCS, "PROTOCOL.md"), "utf8");
     expect(protocol).toContain(
-      `\`worktrees.branch_prefix\` takes letters, digits, \`.\` \`_\` \`/\` \`-\`, with no \`..\` and no leading \`-\`, ${BRANCH_PREFIX_MAX_CHARS} characters max, and \`worktrees.root\` is one line of ${WORKTREE_ROOT_MAX_CHARS} characters max`,
+      `\`worktrees.branch_prefix\` follows the section 3 \`branch\` rules, ${BRANCH_PREFIX_MAX_CHARS} characters max, and \`worktrees.root\` is one line of ${WORKTREE_ROOT_MAX_CHARS} characters max`,
     );
     expect(protocol).toContain("`tasks` (list; `plan` only; each one line, 40 words max)");
     expect(protocol).toContain("`new_task` (string; one line, 40 words max)");
     expect(protocol).toContain(`\`worktree\` (one line, ${FIELD_MAX_CHARS} characters max)`);
-    expect(protocol).toContain(`\`branch\` (letters, digits, \`.\` \`_\` \`/\` \`-\`; ${FIELD_MAX_CHARS} characters max; no \`..\`; no leading \`-\`)`);
+    expect(protocol).toContain(
+      `\`branch\` (a name \`git check-ref-format --branch\` accepts: letters, digits, \`.\` \`_\` \`/\` \`-\`; ${FIELD_MAX_CHARS} characters max; no \`..\`, \`//\`, \`/.\`, or \`.lock/\`; no leading \`-\`, \`/\`, or \`.\`; no trailing \`/\`, \`.\`, or \`.lock\`; not \`HEAD\`)`,
+    );
     expect(protocol).toContain(`\`path\` (one line, ${FIELD_MAX_CHARS} characters max)`);
     expect(protocol).toContain(`\`log\` (path; one line, ${FIELD_MAX_CHARS} characters max)`);
     expect(protocol).toContain("One line: no line break and no other control character (C0, DEL, C1, U+2028, U+2029).");

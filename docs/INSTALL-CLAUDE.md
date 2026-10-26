@@ -83,7 +83,10 @@ after editing `src/`, run `npm run build` (see CONTRIBUTING.md).
    denies `diarchy reply`, and that `disableAllHooks` is off, with no model
    call; each problem gets a `fix:` line. `diarchy doctor --live` adds one real
    `claude -p` turn that only calls `read`, capped with `--max-budget-usd 0.25`
-   when the installed `claude` lists that flag.
+   when the installed `claude` lists that flag. With Codex set up too,
+   `diarchy smoke` then runs both PMs on a small goal in a throwaway
+   repository and writes a diagnostics bundle (CONTRIBUTING.md, Live smoke
+   test).
 
 One session per agent: while a goal is active, only one session acts as
 `claude`. The first session whose diarchy tools touch the goal holds it until

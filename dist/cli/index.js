@@ -14,6 +14,7 @@ import { runReply, runStop } from "./human.js";
 import { runInit } from "./init.js";
 import { runKickoff } from "./kickoff.js";
 import { startMcpServer } from "./mcp-entry.js";
+import { runSmoke } from "./smoke.js";
 import { runStart } from "./start.js";
 import { runStatus } from "./status.js";
 import { runWatch } from "./watch.js";
@@ -122,6 +123,18 @@ program
     .option("--live", "then run one short real turn per CLI against a throwaway project (spends a little quota)")
     .option("--out <dir>", "with --live, save each CLI's raw output and the diagnostics trail here")
     .action((options) => exitWith(() => runDoctor(projectDir(), options)));
+program
+    .command("smoke")
+    .description("Run both PMs on a two-criterion goal in a throwaway git repository and write a diagnostics bundle (.tar.gz) to send back; exits 0 on DONE, 2 on BLOCKED once both PMs posted, 1 otherwise")
+    .option("--out <dir>", "where the bundle goes (default: the current directory)")
+    .option("--minutes <n>", "wall clock budget of the goal; a watchdog stops the run 3 min after it", "20")
+    .option("--max-usd <usd>", "--max-budget-usd for each Claude process, when claude lists that flag", "3")
+    .option("--github <owner/repo>", "a new, empty repository you created: push main to it so the PMs open and cross-review real PRs (needs gh logged in)")
+    .option("--no-transcripts", "leave both CLIs' transcripts out of the bundle")
+    .option("--no-ping", "skip the doctor --live turn before the run")
+    .option("--clean", "delete the throwaway project after writing the bundle (default: keep it)")
+    .addOption(new Option("--driver <driver>", "real spawns the CLIs; fake runs the scripted PM with no model calls").choices(["real", "fake"]).default("real"))
+    .action((options) => exitWith(() => runSmoke(options)));
 program
     .command("status")
     .description("Phase, roles, budgets, open assignments, last message, and the diarchy reply command if the human is needed")

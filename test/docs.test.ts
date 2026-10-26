@@ -1,7 +1,8 @@
 /** User-facing docs and plugin prose that must agree with the normative specs and the installed layout. */
+import { spawnSync } from "node:child_process";
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { describe, expect, it } from "vitest";
 import { parse as parseYaml } from "yaml";
@@ -10,6 +11,8 @@ import { nextStep } from "../src/cli/brief.js";
 import { parseGoalState, type GoalState } from "../src/protocol/index.js";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
+const CLI = join(ROOT, "src", "cli", "index.ts");
+const TSX = pathToFileURL(join(ROOT, "node_modules", "tsx", "dist", "loader.mjs")).href;
 const read = (...parts: string[]): string => readFileSync(join(ROOT, ...parts), "utf8");
 
 /** The text from `heading` up to the next heading of the same or higher level. */
@@ -241,5 +244,39 @@ describe("docs: answering a deadlock", () => {
     const answer = section(read("docs", "QUICKSTART.md"), "## 6. Answer");
     expect(answer).toContain("unless another thread is still open: then `--decision plan` is refused (PHASE_GATE decides plan last)");
     expect(answer).toContain('answer with the plain `diarchy reply "<ruling>"` that goal.md shows');
+  });
+});
+
+describe("docs: diarchy doctor and diarchy smoke", () => {
+  it("CONTRIBUTING's Live smoke test names every diarchy smoke option, and every other flag it names belongs to another command", () => {
+    const help = spawnSync(process.execPath, ["--import", TSX, CLI, "smoke", "--help"], { encoding: "utf8" });
+    expect(help.status, help.stderr).toBe(0);
+    const options = new Set([...help.stdout.matchAll(/^\s+(?:-\w, )?(--[a-z][a-z-]*)/gm)].map((match) => match[1]).filter((flag) => flag !== "--help"));
+    expect(options.size).toBeGreaterThanOrEqual(8);
+    const text = section(read("CONTRIBUTING.md"), "## Live smoke test");
+    const named = new Set(text.match(/--[a-z][a-z-]*/g) ?? []);
+    // doctor's --live, claude's --max-budget-usd, gh repo create's --private
+    const elsewhere = ["--live", "--max-budget-usd", "--private"];
+    for (const flag of options) expect([...named], `${flag} is not in CONTRIBUTING.md`).toContain(flag);
+    for (const flag of named) if (!elsewhere.includes(flag)) expect([...options], `${flag} is not a diarchy smoke option`).toContain(flag);
+    expect(text).toContain("0 when the goal is DONE, 2 when it is BLOCKED after both PMs posted, 1 otherwise");
+  });
+
+  it("the install steps check with diarchy doctor and point at diarchy smoke, and the README status names it", () => {
+    const readme = read("README.md");
+    for (const heading of ["### Claude Code", "### Codex CLI"]) expect(section(readme, heading), heading).toMatch(/Verify:[^\n]*`diarchy doctor`/);
+    const status = section(readme, "## Status and roadmap");
+    expect(status).not.toContain("v0.1 ships");
+    expect(status).toContain("`diarchy smoke`");
+    const steps = {
+      quickstart: section(read("docs", "QUICKSTART.md"), "## 1. Install the plugin in both CLIs"),
+      claude: section(read("docs", "INSTALL-CLAUDE.md"), "## Confirm it is connected"),
+      codex: section(read("docs", "INSTALL-CODEX.md"), "## 6. Confirm it is connected"),
+    };
+    for (const [name, text] of Object.entries(steps)) {
+      expect(text, name).toContain("diarchy doctor");
+      expect(text.replace(/\s+/g, " "), name).toContain("`diarchy smoke`");
+      expect(text.replace(/\s+/g, " "), name).toContain("Live smoke test");
+    }
   });
 });

@@ -270,6 +270,9 @@ instead.
    each problem gets a `fix:` line. `diarchy doctor --live` adds one real
    `codex exec` turn with the launcher's flags that only calls `read`, which
    proves `DIARCHY_PROJECT` reaches the server and the hooks run headless.
+   With Claude Code set up too, `diarchy smoke` then runs both PMs on a small
+   goal in a throwaway repository and writes a diagnostics bundle
+   (CONTRIBUTING.md, Live smoke test).
 
 One session per agent: while a goal is active, only one session acts as
 `codex`. The first session whose diarchy tools touch the goal holds it until

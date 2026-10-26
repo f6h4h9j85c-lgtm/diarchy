@@ -148,7 +148,7 @@ describe("docs: the sandboxed Codex PM's PR stays its own (PROTOCOL.md 9.1, 9.2(
     expect(execute).toContain("Post your own PR's `pr` evidence (first citer = author); a PM committing or opening a PR for a sandboxed PM cites only `commit`, url in body.");
   });
 
-  it("diarchy-review, AGENTS.md, INSTALL-CODEX.md 5, and QUICKSTART.md say the same", () => {
+  it("diarchy-review, AGENTS.md, INSTALL-CODEX.md 5, QUICKSTART.md, and ARCHITECTURE.md say the same", () => {
     expect(flat("skills", "diarchy-review", "SKILL.md")).toContain(
       "a PM that commits or opens the PR for a sandboxed implementer cites only `commit` and passes the url in its STATUS body",
     );
@@ -161,6 +161,13 @@ describe("docs: the sandboxed Codex PM's PR stays its own (PROTOCOL.md 9.1, 9.2(
     const quick = flat("docs", "QUICKSTART.md");
     expect(quick).toContain("citing only the commit and passing the url in its STATUS body. The Codex PM then posts the `pr` evidence itself");
     expect(quick).toContain("each implementer has introduced a PR with its own `pr` evidence");
+    const architecture = flat("docs", "ARCHITECTURE.md");
+    expect(architecture).toContain("citing only `commit` with the url in its STATUS body, and the Codex PM posts the `pr` evidence itself");
+    // The Claude PM commits for the sandboxed Codex PM; a human commit would leave the Codex PM no url to cite.
+    for (const [name, text] of [["ARCHITECTURE.md", architecture], ["INSTALL-CODEX.md 5", install]]) {
+      expect(text, name).not.toMatch(/committed by the Claude PM or (by you|the human)/);
+    }
+    expect(install).toContain("the Claude PM commits and pushes `.diarchy/worktrees/codex` from outside the sandbox and opens its PR");
   });
 
   it("the review skill and INSTALL-CODEX.md 5 give a sandboxed reviewer a read-only way to test the PR head", () => {

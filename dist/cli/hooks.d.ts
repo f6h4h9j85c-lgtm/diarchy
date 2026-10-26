@@ -9,24 +9,30 @@ export interface GateDecision {
 export declare function runGate(projectDir: string, agent: string): GateDecision | null;
 /**
  * The human subcommand a shell command would run (`reply` or `stop`), else
- * null. Each simple command is read as `[VAR=x ...] [sudo|env|timeout 60|npx ...]
- * <program> [--project <dir>] <subcommand>` after quote removal, so the words
- * inside an argument (`grep "diarchy reply" docs/`), single-quoted text, and a
- * quoted-delimiter heredoc body (`<<'EOF'`) do not count, while a `$(...)` or
- * backtick substitution does, even inside double quotes. Three things are read
- * as command lines of their own: the string of `bash|sh|zsh|dash|ksh -c`
- * wherever the shell stands in the command (`timeout 60 bash -c`, `xargs sh
- * -c`); the arguments of `eval`; and a heredoc or here-string that a shell,
- * `eval`, or `source` runs, from its stdin (`bash <<'EOF'`, `sh -s <<EOF`,
- * `cat <<'EOF' | bash`, `source /dev/stdin <<EOF`, `xargs sh -c '{}' <<EOF`)
- * or through a substitution in its arguments (`bash -c "$(cat <<'EOF' ...)"`,
- * `bash <(cat <<'EOF' ...)`). Best effort by design: an alias, a function, a
- * wrapper script, a script in a file or a variable (`bash x.sh`,
- * `while read l; do eval "$l"; done <<EOF`), text a shell gets from a
- * command's arguments (`echo 'diarchy stop' | bash`, `eval "$(echo ...)"`),
- * and a heredoc read by a shell that an unknown wrapper starts without `-c`
- * (`ssh host bash <<'EOF'`) are not unpacked (ANTI-SLOP.md, What this does NOT
- * prevent).
+ * null. It denies what the original guard denied and lets through only text
+ * that never runs:
+ *
+ * 1. The command is split on shell operators (`;`, `|`, `&`, `(`, `)`,
+ *    backtick, newline, `$(`) with quoting ignored, and each piece is read as
+ *    `[VAR=x ...] [sudo|env|timeout 60|npx|then|{ ...] <program> [--project <dir>]
+ *    <subcommand>`, so `grep "diarchy reply" docs/` does not count while
+ *    `bash -c 'x; diarchy stop now'`, a `bash <<'EOF'` script, and `eval` do.
+ * 2. A hit from 1 is let through only when it lies wholly inside inert text
+ *    (single quotes, double quotes without `$(` or backtick, or a `<<'EOF'`,
+ *    `<<"EOF"`, or `<<\EOF` body) that is an argument or the stdin of a data
+ *    program (echo, cat, tee, printf without -v, git commit|tag|notes, gh
+ *    pr|issue|release|api) whose pipeline is all data programs and whose
+ *    `$(...)`, if any, is an argument of one too: the commit and PR body
+ *    heredocs, `cat >> notes.md <<'EOF'`, `echo "x; diarchy stop now"`.
+ *    Nothing is let through when the line names a shell, eval, or source, or
+ *    uses syntax the reader does not follow (`readShell`).
+ * 3. Quote removal can add a deny: `"diarchy" reply`, a shell's `-c` string
+ *    or here-string wherever the shell stands (`env sh -o pipefail -c "..."`),
+ *    and `eval`'s arguments are read too.
+ *
+ * Best effort by design: an alias, a function, a wrapper script, and a script
+ * written to a file and run by a later Bash call are not unpacked (ANTI-SLOP.md,
+ * What this does NOT prevent).
  */
 export declare function humanCommand(command: string): "reply" | "stop" | null;
 export interface GuardDecision {

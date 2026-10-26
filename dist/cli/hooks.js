@@ -103,356 +103,475 @@ export function runGate(projectDir, agent) {
 // ---------------------------------------------------------------------------
 // guard (PreToolUse): the human's commands are not for a PM
 // ---------------------------------------------------------------------------
-/** Characters that end a simple command outside quotes. */
-const OPERATORS = ";&|()\n";
-/** Characters a backslash escapes inside double quotes. */
-const DQ_ESCAPABLE = '$`"\\\n';
-/** Words that may precede the program without being it. */
-const PRELUDE = new Set(["sudo", "env", "exec", "command", "nohup", "time", "timeout", "nice", "node", "npx", "npm", "pnpm", "yarn", "bun", "tsx"]);
+/** Shell operators that start a new simple command. */
+const COMMAND_SEPARATORS = /\|\||&&|\$\(|[;|&\n()`]/g;
+/** Words that may precede the program without being it: wrappers, and the reserved words that open a command (`then diarchy stop`). */
+const PRELUDE = new Set(["sudo", "env", "exec", "command", "nohup", "time", "timeout", "nice", "node", "npx", "npm", "pnpm", "yarn", "bun", "tsx", "if", "elif", "while", "until", "then", "do", "else", "!", "{"]);
 const ENV_ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*=/;
 /** A count or duration a prelude word takes (`timeout 60`, `nice -n 5`): never the program. */
 const PRELUDE_NUMBER = /^[+-]?\d+(?:\.\d+)?[smhd]?$/;
 /** `diarchy`, `bin/diarchy.js`, `/abs/path/diarchy.js`, `./node_modules/.bin/diarchy`. */
 const PROGRAM = /^(?:[\w.~/-]*\/)?diarchy(?:\.js)?$/;
-/** A shell whose `-c` string, or whose script on stdin, is a command line of its own. */
 const SHELL = /^(?:[\w.~/-]*\/)?(?:bash|sh|zsh|dash|ksh)$/;
-/** Reserved words that may precede the program (`if`, `then`, `{`); `((` after them opens an arithmetic command. */
-const RESERVED = new Set(["for", "if", "elif", "while", "until", "then", "do", "else", "!", "{", "time"]);
-/** Files that are a command's stdin (`source /dev/stdin <<EOF`, `bash /dev/stdin`). */
-const STDIN_FILES = new Set(["/dev/stdin", "/dev/fd/0", "/proc/self/fd/0"]);
-/**
- * The simple commands a shell would run from `source`, in the order they end,
- * each with its words after quote removal and the text on its stdin.
- * Single-quoted text, comments, and the bodies of quoted-delimiter heredocs
- * are inert; a `$(...)`, backtick, or `<(...)` substitution, bare, inside
- * double quotes, or inside an unquoted-delimiter heredoc body, adds its own
- * commands. `heredocBody` reads `source` as such a body.
- */
-function simpleCommands(source, heredocBody = false) {
-    const commands = [];
+/** A word that runs text as code: a line that has one gets no exemption (`cat > x.sh <<'EOF' ... bash x.sh`). */
+const RUNS_CODE = /^(?:(?:[\w.~/-]*\/)?(?:bash|sh|zsh|dash|ksh)|eval|source)$/;
+/** Words that open a compound command or a group; the reader does not follow them. */
+const COMPOUND = new Set(["if", "then", "elif", "else", "fi", "do", "done", "while", "until", "for", "case", "esac", "select", "function", "time", "coproc", "{", "}", "!", "[[", "]]"]);
+/** Characters a backslash escapes inside double quotes. */
+const DQ_ESCAPABLE = '$`"\\\n';
+const GIT_DATA = new Set(["commit", "tag", "notes"]);
+const GH_DATA = new Set(["pr", "issue", "release", "api"]);
+/** The index of the program in `[VAR=x ...] [prelude ...] <program> ...`. */
+function programAt(words) {
     let i = 0;
-    /** Commands up to `close` (consumed) or the end. `arith`: inside `$((...))` or `((...))`, where `<<` is a shift. */
-    function list(close, arith = false) {
-        let current = { words: [], input: [], pipeline: {}, inner: [] };
-        /** Where the commands of `current`'s substitutions start in `commands`. */
-        let start = commands.length;
+    while (i < words.length && (ENV_ASSIGNMENT.test(words[i]) || PRELUDE.has(words[i]) || PRELUDE_NUMBER.test(words[i]) || words[i].startsWith("-")))
+        i += 1;
+    return i;
+}
+/** In `[VAR=x ...] [prelude ...] <program> [--project <dir>] <subcommand>`, the indexes of the program and the human subcommand, else null. */
+function humanWords(words) {
+    const i = programAt(words);
+    if (!PROGRAM.test(words.at(i) ?? ""))
+        return null;
+    let k = i + 1;
+    while (k < words.length && words[k].startsWith("-"))
+        k += /^--?project$/.test(words[k]) ? 2 : 1;
+    return words.at(k) === "reply" || words.at(k) === "stop" ? [i, k] : null;
+}
+/** What the original guard denies, and a few wrappers it missed (`timeout 60`, `then`, `{`): each piece between operators, quoting ignored, read by `humanWords`. */
+function splitHits(command) {
+    const hits = [];
+    const separators = new RegExp(COMMAND_SEPARATORS);
+    let from = 0;
+    for (;;) {
+        const separator = separators.exec(command);
+        const to = separator === null ? command.length : separator.index;
+        const words = [...command.slice(from, to).matchAll(/\S+/g)];
+        const found = humanWords(words.map((word) => word[0]));
+        if (found !== null) {
+            const [program, subcommand] = [words[found[0]], words[found[1]]];
+            hits.push({ subcommand: subcommand[0], start: from + program.index, end: from + subcommand.index + subcommand[0].length });
+        }
+        if (separator === null)
+            return hits;
+        from = separators.lastIndex;
+    }
+}
+class Unsure extends Error {
+}
+/**
+ * The simple commands and inert text of `source`, read the way bash does, or
+ * null for anything this reader does not follow: subshells, groups, compound
+ * commands, arithmetic, `${...}`, process substitution, a backslash inside
+ * backticks, a substitution in an unquoted heredoc body, an unterminated
+ * quote, substitution, or heredoc.
+ */
+function readShell(source) {
+    const commands = [];
+    const inert = [];
+    let runsCode = false;
+    let backticks = 0;
+    let i = 0;
+    const unsure = () => {
+        throw new Unsure();
+    };
+    /** Commands up to `close` (consumed), inside the substitution held by `parent`. */
+    function list(close, parent) {
+        const begin = (pipeline) => {
+            const started = { words: [], hereStrings: [], redirections: 0, pipeline, parent };
+            pipeline.push(started);
+            return started;
+        };
+        let command = begin([]);
         let word = null;
-        /** The next word is a here-string (`<<< word`), not an argument. */
-        let hereString = false;
+        let role = "arg";
         const heredocs = [];
-        let parens = 0;
+        const current = () => (word ??= { text: "", role, owner: command, quoted: false });
         const endWord = () => {
             if (word === null)
                 return;
-            (hereString ? current.input : current.words).push(word);
+            if (word.role === "here")
+                command.hereStrings.push(word.text);
+            if (word.role === "arg") {
+                if (command.words.length === 0 && !word.quoted && COMPOUND.has(word.text))
+                    unsure();
+                if (RUNS_CODE.test(word.text) || (command.words.length === 0 && word.text === "."))
+                    runsCode = true;
+                command.words.push(word);
+            }
             word = null;
-            hereString = false;
+            role = "arg";
         };
-        /** `piped`: the next command reads this one's output (`|`), or shares its pipeline (`(`, `)`). */
+        /** An empty command stays open, so `a |` or `a &&` may go on after a newline. */
         const endCommand = (piped) => {
             endWord();
-            hereString = false;
-            if (current.words.length > 0) {
-                current.inner = commands.slice(start);
-                commands.push(current);
+            if (role !== "arg")
+                unsure();
+            if (command.words.length === 0 && command.hereStrings.length === 0 && command.redirections === 0) {
+                if (piped)
+                    unsure();
+                return;
             }
-            current = { words: [], input: [], pipeline: piped ? current.pipeline : {}, inner: [] };
-            start = commands.length;
+            commands.push(command);
+            command = begin(piped ? command.pipeline : []);
+        };
+        const substitution = (closer) => {
+            const holder = current();
+            holder.quoted = true;
+            i += closer === "`" ? 1 : 2;
+            if (closer === "`")
+                backticks += 1;
+            list(closer, holder);
+            if (closer === "`")
+                backticks -= 1;
+        };
+        const doubleQuoted = () => {
+            const holder = current();
+            holder.quoted = true;
+            const start = i + 1;
+            let substituted = false;
+            i += 1;
+            while (source[i] !== '"') {
+                const c = source[i];
+                const next = source[i + 1];
+                if (c === undefined || (c === "\\" && backticks > 0) || source.startsWith("$((", i) || source.startsWith("${", i) || source.startsWith("$[", i))
+                    unsure();
+                if (c === "\\" && next !== undefined && DQ_ESCAPABLE.includes(next)) {
+                    if (next !== "\n")
+                        holder.text += next;
+                    i += 2;
+                }
+                else if (c === "`" || source.startsWith("$(", i)) {
+                    substituted = true;
+                    substitution(c === "`" ? "`" : ")");
+                }
+                else {
+                    holder.text += c;
+                    i += 1;
+                }
+            }
+            if (!substituted)
+                inert.push({ start, end: i, owner: command, word: holder });
+            i += 1;
+        };
+        const heredocOperator = (stripTabs) => {
+            while (source[i] === " " || source[i] === "\t")
+                i += 1;
+            let delimiter = "";
+            let quoted = false;
+            while (i < source.length && !/[\s;&|()<>]/.test(source[i])) {
+                const c = source[i];
+                if (c === "'" || c === '"') {
+                    const end = source.indexOf(c, i + 1);
+                    if (end === -1)
+                        unsure();
+                    delimiter += source.slice(i + 1, end);
+                    i = end + 1;
+                    quoted = true;
+                }
+                else if (c === "\\" && i + 1 < source.length) {
+                    delimiter += source[i + 1];
+                    i += 2;
+                    quoted = true;
+                }
+                else if (c === "$" || c === "`" || c === "\\") {
+                    unsure();
+                }
+                else {
+                    delimiter += c;
+                    i += 1;
+                }
+            }
+            if (delimiter === "")
+                unsure();
+            command.redirections += 1;
+            return { delimiter, quoted, stripTabs, owner: command };
+        };
+        /** The body starting at `i`, through its delimiter line. */
+        const heredocBody = (doc) => {
+            const start = i;
+            for (;;) {
+                if (i >= source.length)
+                    unsure();
+                const newline = source.indexOf("\n", i);
+                const lineEnd = newline === -1 ? source.length : newline;
+                const line = source.slice(i, lineEnd);
+                if ((doc.stripTabs ? line.replace(/^\t+/, "") : line) === doc.delimiter)
+                    break;
+                i = lineEnd + 1;
+            }
+            if (doc.quoted)
+                inert.push({ start, end: i, owner: doc.owner, word: null });
+            // The commands of a substitution in an unquoted body are not read, so do not guess.
+            else if (/\$\(|`/.test(source.slice(start, i)))
+                unsure();
+            const newline = source.indexOf("\n", i);
+            i = newline === -1 ? source.length : newline + 1;
+        };
+        const redirection = () => {
+            if (source[i + 1] === "(")
+                unsure();
+            // An unquoted number right before the operator is its fd (`2>&1`), not an argument.
+            if (word !== null && word.role === "arg" && !word.quoted && /^\d+$/.test(word.text))
+                word = null;
+            else
+                endWord();
+            const operator = /^(?:<<<|<<-|<<|<>|<&|>&|>>|>\||<|>)/.exec(source.slice(i, i + 3))?.[0] ?? unsure();
+            i += operator.length;
+            if (operator === "<<" || operator === "<<-") {
+                heredocs.push(heredocOperator(operator === "<<-"));
+            }
+            else {
+                role = operator === "<<<" ? "here" : "target";
+                command.redirections += 1;
+            }
         };
         while (i < source.length) {
             const c = source[i];
-            if (c === close && (close === "`" || parens === 0)) {
+            const next = source[i + 1];
+            if (c === close) {
                 i += 1;
-                break;
+                endCommand(false);
+                if (heredocs.length > 0)
+                    unsure();
+                return;
             }
             if (c === "\\") {
-                if (source[i + 1] !== "\n")
-                    word = (word ?? "") + (source[i + 1] ?? "");
+                if (next === undefined || backticks > 0)
+                    unsure();
+                if (next !== "\n") {
+                    current().text += next;
+                    current().quoted = true;
+                }
                 i += 2;
             }
             else if (c === "'") {
                 const end = source.indexOf("'", i + 1);
-                word = (word ?? "") + source.slice(i + 1, end === -1 ? source.length : end);
-                i = end === -1 ? source.length : end + 1;
+                if (end === -1)
+                    unsure();
+                const holder = current();
+                holder.quoted = true;
+                holder.text += source.slice(i + 1, end);
+                inert.push({ start: i + 1, end, owner: command, word: holder });
+                i = end + 1;
             }
-            else if (source.startsWith("$'", i)) {
+            else if (c === "$" && next === "'") {
                 let end = i + 2;
                 while (end < source.length && source[end] !== "'")
                     end += source[end] === "\\" ? 2 : 1;
-                word = (word ?? "") + source.slice(i + 2, end);
+                if (end >= source.length)
+                    unsure();
+                const holder = current();
+                holder.quoted = true;
+                holder.text += source.slice(i + 2, end);
                 i = end + 1;
             }
             else if (c === '"') {
-                i += 1;
-                word = (word ?? "") + text('"');
+                doubleQuoted();
             }
-            else if (c === "`" || source.startsWith("$(", i) || source.startsWith("<(", i) || source.startsWith(">(", i)) {
-                substitution();
-                word = word ?? "";
+            else if (c === "`" || (c === "$" && next === "(")) {
+                if (source.startsWith("$((", i))
+                    unsure();
+                substitution(c === "`" ? "`" : ")");
             }
-            else if (source.startsWith("((", i) && [...current.words, ...(word === null ? [] : [word])].every((lead) => RESERVED.has(lead))) {
-                endWord();
-                i += 2;
-                list(")", true);
-                if (source[i] === ")")
-                    i += 1;
-            }
-            else if (source.startsWith("<<<", i)) {
-                endWord();
-                i += 3;
-                hereString = true;
-            }
-            else if (!arith && source.startsWith("<<", i)) {
-                endWord();
-                i += 2;
-                const doc = heredocOperator(current);
-                if (doc !== null)
-                    heredocs.push(doc);
+            else if (c === "$" && (next === "{" || next === "[")) {
+                unsure();
             }
             else if (c === "#" && word === null) {
-                const end = source.indexOf("\n", i);
-                i = end === -1 ? source.length : end;
+                const newline = source.indexOf("\n", i);
+                i = newline === -1 ? source.length : newline;
             }
             else if (c === " " || c === "\t") {
                 endWord();
                 i += 1;
             }
-            else if (OPERATORS.includes(c)) {
-                const operator = ["||", "&&", "|&"].includes(source.slice(i, i + 2)) ? source.slice(i, i + 2) : c;
-                endCommand(operator === "|" || operator === "|&" || c === "(" || c === ")");
-                if (c === "(")
-                    parens += 1;
-                if (c === ")" && parens > 0)
-                    parens -= 1;
-                i += operator.length;
-                if (c === "\n")
-                    for (const doc of heredocs.splice(0))
-                        skipHeredoc(doc, close);
+            else if (c === "\n") {
+                endCommand(false);
+                i += 1;
+                for (const doc of heredocs.splice(0))
+                    heredocBody(doc);
+            }
+            else if (c === ";") {
+                if (next === ";")
+                    unsure();
+                endCommand(false);
+                i += 1;
+            }
+            else if (c === "|") {
+                endCommand(next !== "|");
+                i += next === "|" || next === "&" ? 2 : 1;
+            }
+            else if (c === "&" && next === ">") {
+                endWord();
+                role = "target";
+                command.redirections += 1;
+                i += source[i + 2] === ">" ? 3 : 2;
+            }
+            else if (c === "&") {
+                endCommand(false);
+                i += next === "&" ? 2 : 1;
+            }
+            else if (c === "<" || c === ">") {
+                redirection();
+            }
+            else if (c === "(" || c === ")") {
+                unsure();
             }
             else {
-                word = (word ?? "") + c;
+                current().text += c;
                 i += 1;
             }
         }
         endCommand(false);
+        if (close !== null || heredocs.length > 0)
+            unsure();
     }
-    /** A `$(...)`, `$((...))`, backtick, `<(...)`, or `>(...)` substitution starting at `i`: its commands are added. */
-    function substitution() {
-        if (source[i] === "`") {
-            i += 1;
-            list("`");
-        }
-        else if (source.startsWith("$((", i)) {
-            i += 3;
-            list(")", true);
-            if (source[i] === ")")
-                i += 1;
-        }
-        else {
-            i += 2;
-            list(")");
-        }
+    try {
+        list(null, null);
     }
-    /** Double-quoted text up to `end` (consumed), or a heredoc body to the end: literal except for substitutions. */
-    function text(end) {
-        let out = "";
-        while (i < source.length) {
-            const c = source[i];
-            if (c === end) {
-                i += 1;
-                break;
-            }
-            if (c === "\\" && i + 1 < source.length && DQ_ESCAPABLE.includes(source[i + 1])) {
-                if (source[i + 1] !== "\n")
-                    out += source[i + 1];
-                i += 2;
-            }
-            else if (c === "`" || source.startsWith("$(", i)) {
-                substitution();
-            }
-            else {
-                out += c;
-                i += 1;
-            }
-        }
-        return out;
+    catch (error) {
+        // Too deep a nesting of substitutions overflows the stack: read as unsure too.
+        if (error instanceof Unsure || error instanceof RangeError)
+            return null;
+        throw error;
     }
-    /** The delimiter word after `<<` (and an optional `-`); any quoting in it makes the body literal. */
-    function heredocOperator(owner) {
-        const stripTabs = source[i] === "-";
-        if (stripTabs)
-            i += 1;
-        while (source[i] === " " || source[i] === "\t")
-            i += 1;
-        let delimiter = "";
-        let quoted = false;
-        while (i < source.length && !/[\s;&|()<>]/.test(source[i])) {
-            const c = source[i];
-            if (c === "'" || c === '"') {
-                const end = source.indexOf(c, i + 1);
-                delimiter += source.slice(i + 1, end === -1 ? source.length : end);
-                i = end === -1 ? source.length : end + 1;
-                quoted = true;
-            }
-            else if (c === "\\") {
-                delimiter += source[i + 1] ?? "";
-                i += 2;
-                quoted = true;
-            }
-            else {
-                delimiter += c;
-                i += 1;
-            }
-        }
-        return delimiter === "" && !quoted ? null : { delimiter, quoted, stripTabs, owner };
-    }
-    /**
-     * Reads the heredoc body that starts at `i`, through its delimiter line or
-     * the end, onto its command's stdin. Inside a substitution, `EOF)` also ends
-     * it, as bash allows. An unquoted delimiter's body still runs its
-     * substitutions.
-     */
-    function skipHeredoc(doc, close) {
-        const start = i;
-        let bodyEnd = source.length;
-        while (i < source.length) {
-            const newline = source.indexOf("\n", i);
-            const lineEnd = newline === -1 ? source.length : newline;
-            const line = source.slice(i, lineEnd);
-            const bare = doc.stripTabs ? line.replace(/^\t+/, "") : line;
-            if (bare === doc.delimiter) {
-                bodyEnd = i;
-                i = Math.min(lineEnd + 1, source.length);
-                break;
-            }
-            if (close !== null && bare.startsWith(doc.delimiter + close)) {
-                bodyEnd = i;
-                i += line.length - bare.length + doc.delimiter.length;
-                break;
-            }
-            i = lineEnd + 1;
-        }
-        i = Math.min(i, source.length);
-        const body = source.slice(start, bodyEnd);
-        doc.owner.input.push(body);
-        if (!doc.quoted)
-            for (const substituted of simpleCommands(body, true))
-                commands.push(substituted);
-    }
-    if (heredocBody)
-        text(null);
-    else
-        list(null);
-    return commands;
+    return { commands, inert: inert.sort((a, b) => a.start - b.start), runsCode };
 }
-/** The command string of `bash -c '...'` (also `-lc`, `-ec`), given the words after the shell, else null. */
-function shellCommandString(args) {
+/** Whether `command` is a program that only passes text along: echo, cat, tee, printf without -v, git commit|tag|notes, gh pr|issue|release|api. */
+function dataProgram(command) {
+    const [program, ...args] = command.words.map((word) => word.text);
+    switch (program) {
+        case "echo":
+        case "cat":
+        case "tee":
+            return true;
+        case "printf":
+            return !args.some((arg) => arg.startsWith("-v"));
+        case "git": {
+            let k = 0;
+            while (args[k] === "-C" || args[k] === "--no-pager")
+                k += args[k] === "-C" ? 2 : 1;
+            return GIT_DATA.has(args.at(k) ?? "");
+        }
+        case "gh":
+            return GH_DATA.has(args.at(0) ?? "");
+        default:
+            return false;
+    }
+}
+/** Whether what `command` reads ends up only as data: every stage of its pipeline is a data program, and a substitution holding it is an argument of one. Memoized per command and per pipeline. */
+function dataOnly(command, memo) {
+    let pipeline = memo.get(command.pipeline);
+    if (pipeline === undefined) {
+        pipeline = command.pipeline.every(dataProgram);
+        memo.set(command.pipeline, pipeline);
+    }
+    let known = memo.get(command);
+    if (known === undefined) {
+        const parent = command.parent;
+        known = pipeline && (parent === null || (parent.role !== "target" && parent.owner.words[0] !== parent && dataOnly(parent.owner, memo)));
+        memo.set(command, known);
+    }
+    return known;
+}
+/** Whether `hit` lies wholly inside inert text that an argument or the stdin of a data-only command holds. */
+function inertData(hit, reading, memo) {
+    const { inert } = reading;
+    let low = 0;
+    let high = inert.length;
+    while (low < high) {
+        const middle = (low + high) >> 1;
+        if (inert[middle].start <= hit.start)
+            low = middle + 1;
+        else
+            high = middle;
+    }
+    const text = inert.at(low - 1);
+    if (text === undefined || hit.end > text.end)
+        return false;
+    if (text.word !== null && (text.word.role === "target" || text.owner.words[0] === text.word))
+        return false;
+    return dataOnly(text.owner, memo);
+}
+/** The script of a shell given the words after it: the first operand once an option cluster has `c` (`-c`, `-lc`), else null. */
+function shellScript(args) {
     let dashC = false;
     for (let j = 0; j < args.length; j += 1) {
-        const arg = args[j];
-        if (/^[-+][oO]$/.test(arg))
+        if (/^[-+][oO]$/.test(args[j]))
             j += 1;
-        else if (/^-[A-Za-z]+$/.test(arg))
-            dashC ||= arg.includes("c");
-        else if (!arg.startsWith("-") && !arg.startsWith("+"))
-            return dashC ? arg : null;
+        else if (/^-[A-Za-z]+$/.test(args[j]))
+            dashC ||= args[j].includes("c");
+        else if (!args[j].startsWith("-") && !args[j].startsWith("+"))
+            return dashC ? args[j] : null;
     }
     return null;
 }
-/**
- * Whether `program` given `args` runs the script on its stdin: a shell without
- * `-c` that has `-s`, no script file, or /dev/stdin as its script file; or
- * `source /dev/stdin`.
- */
-function readsStdin(program, args) {
-    if (program === "source" || program === ".")
-        return STDIN_FILES.has(args.at(0) ?? "");
-    if (!SHELL.test(program))
-        return false;
-    let dashS = false;
-    for (let j = 0; j < args.length; j += 1) {
-        const arg = args[j];
-        if (arg === "--")
-            return dashS || j + 1 === args.length;
-        if (/^[-+][oO]$/.test(arg) || arg === "--rcfile" || arg === "--init-file")
-            j += 1;
-        else if (/^-[A-Za-z]+$/.test(arg) && arg.includes("c"))
-            return false;
-        else if (/^-[A-Za-z]+$/.test(arg))
-            dashS ||= arg.includes("s");
-        else if (!arg.startsWith("-") && !arg.startsWith("+"))
-            return dashS || STDIN_FILES.has(arg);
-    }
-    return true;
-}
-/**
- * The human subcommand a shell command would run (`reply` or `stop`), else
- * null. Each simple command is read as `[VAR=x ...] [sudo|env|timeout 60|npx ...]
- * <program> [--project <dir>] <subcommand>` after quote removal, so the words
- * inside an argument (`grep "diarchy reply" docs/`), single-quoted text, and a
- * quoted-delimiter heredoc body (`<<'EOF'`) do not count, while a `$(...)` or
- * backtick substitution does, even inside double quotes. Three things are read
- * as command lines of their own: the string of `bash|sh|zsh|dash|ksh -c`
- * wherever the shell stands in the command (`timeout 60 bash -c`, `xargs sh
- * -c`); the arguments of `eval`; and a heredoc or here-string that a shell,
- * `eval`, or `source` runs, from its stdin (`bash <<'EOF'`, `sh -s <<EOF`,
- * `cat <<'EOF' | bash`, `source /dev/stdin <<EOF`, `xargs sh -c '{}' <<EOF`)
- * or through a substitution in its arguments (`bash -c "$(cat <<'EOF' ...)"`,
- * `bash <(cat <<'EOF' ...)`). Best effort by design: an alias, a function, a
- * wrapper script, a script in a file or a variable (`bash x.sh`,
- * `while read l; do eval "$l"; done <<EOF`), text a shell gets from a
- * command's arguments (`echo 'diarchy stop' | bash`, `eval "$(echo ...)"`),
- * and a heredoc read by a shell that an unknown wrapper starts without `-c`
- * (`ssh host bash <<'EOF'`) are not unpacked (ANTI-SLOP.md, What this does NOT
- * prevent).
- */
-export function humanCommand(command) {
-    const commands = simpleCommands(command);
-    for (const [index, { words, pipeline, inner }] of commands.entries()) {
-        let i = 0;
-        while (i < words.length && (ENV_ASSIGNMENT.test(words[i]) || PRELUDE.has(words[i]) || RESERVED.has(words[i]) || PRELUDE_NUMBER.test(words[i]) || words[i].startsWith("-")))
-            i += 1;
-        const program = words.at(i) ?? "";
-        const args = words.slice(i + 1);
-        if (PROGRAM.test(program)) {
-            let k = 0;
-            while (k < args.length && args[k].startsWith("-"))
-                k += /^--?project$/.test(args[k]) ? 2 : 1;
-            const subcommand = args.at(k);
-            if (subcommand === "reply" || subcommand === "stop")
-                return subcommand;
-        }
+/** What quote removal shows: `"diarchy" reply`, a shell's `-c` string or here-string (`env sh -o pipefail -c "..."`, `bash <<< "..."`), and `eval`'s arguments. */
+function readHuman(reading, depth) {
+    for (const command of reading.commands) {
+        const words = command.words.map((word) => word.text);
+        const found = humanWords(words);
+        if (found !== null)
+            return words[found[1]];
         const scripts = [];
-        let runsStdin = readsStdin(program, args);
-        for (let j = i; j < words.length; j += 1) {
-            const script = SHELL.test(words[j]) ? shellCommandString(words.slice(j + 1)) : null;
-            if (script === null)
-                continue;
-            scripts.push(script);
-            // Behind a wrapper (`xargs sh -c '{}'`), the shell may be handed the command's stdin.
-            if (j > i)
-                runsStdin = true;
+        const shell = words.findIndex((word) => SHELL.test(word));
+        if (shell !== -1) {
+            const script = shellScript(words.slice(shell + 1));
+            scripts.push(...(script === null ? command.hereStrings : [script]));
         }
-        if (program === "eval")
-            scripts.push(args.join(" "));
-        if (scripts.length > 0 || SHELL.test(program) || program === "source" || program === ".") {
-            // What a substitution in its arguments prints: `bash -c "$(cat <<'EOF' ...)"`, `bash <(cat <<'EOF' ...)`.
-            for (const substituted of inner)
-                scripts.push(...substituted.input);
-        }
-        if (runsStdin) {
-            // Its own heredoc or here-string, or one an earlier command of the pipeline passes on.
-            for (const earlier of commands.slice(0, index + 1))
-                if (earlier.pipeline === pipeline)
-                    scripts.push(...earlier.input);
-        }
+        const program = programAt(words);
+        if (words.at(program) === "eval")
+            scripts.push(words.slice(program + 1).join(" "));
         for (const script of scripts) {
-            const subcommand = humanCommand(script);
+            const subcommand = verdict(script, depth + 1);
             if (subcommand !== null)
                 return subcommand;
         }
     }
     return null;
+}
+/**
+ * The human subcommand a shell command would run (`reply` or `stop`), else
+ * null. It denies what the original guard denied and lets through only text
+ * that never runs:
+ *
+ * 1. The command is split on shell operators (`;`, `|`, `&`, `(`, `)`,
+ *    backtick, newline, `$(`) with quoting ignored, and each piece is read as
+ *    `[VAR=x ...] [sudo|env|timeout 60|npx|then|{ ...] <program> [--project <dir>]
+ *    <subcommand>`, so `grep "diarchy reply" docs/` does not count while
+ *    `bash -c 'x; diarchy stop now'`, a `bash <<'EOF'` script, and `eval` do.
+ * 2. A hit from 1 is let through only when it lies wholly inside inert text
+ *    (single quotes, double quotes without `$(` or backtick, or a `<<'EOF'`,
+ *    `<<"EOF"`, or `<<\EOF` body) that is an argument or the stdin of a data
+ *    program (echo, cat, tee, printf without -v, git commit|tag|notes, gh
+ *    pr|issue|release|api) whose pipeline is all data programs and whose
+ *    `$(...)`, if any, is an argument of one too: the commit and PR body
+ *    heredocs, `cat >> notes.md <<'EOF'`, `echo "x; diarchy stop now"`.
+ *    Nothing is let through when the line names a shell, eval, or source, or
+ *    uses syntax the reader does not follow (`readShell`).
+ * 3. Quote removal can add a deny: `"diarchy" reply`, a shell's `-c` string
+ *    or here-string wherever the shell stands (`env sh -o pipefail -c "..."`),
+ *    and `eval`'s arguments are read too.
+ *
+ * Best effort by design: an alias, a function, a wrapper script, and a script
+ * written to a file and run by a later Bash call are not unpacked (ANTI-SLOP.md,
+ * What this does NOT prevent).
+ */
+export function humanCommand(command) {
+    return verdict(command, 0);
+}
+/** Scripts inside scripts (`eval eval ...`) are read this deep, no deeper. */
+const MAX_DEPTH = 4;
+function verdict(command, depth) {
+    const hits = splitHits(command);
+    const reading = readShell(command);
+    if (reading === null)
+        return hits.at(0)?.subcommand ?? null;
+    const memo = new Map();
+    for (const hit of hits)
+        if (reading.runsCode || !inertData(hit, reading, memo))
+            return hit.subcommand;
+    return depth < MAX_DEPTH ? readHuman(reading, depth) : null;
 }
 /**
  * The PreToolUse deny for a shell call that runs `diarchy reply` or

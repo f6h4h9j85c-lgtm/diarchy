@@ -614,6 +614,87 @@ describe("start with its stdout closed", () => {
 // Hooks: guard (PreToolUse)
 // ---------------------------------------------------------------------------
 
+/** The guard as it shipped before F130 (f21ddf2): split on operators, quoting ignored. The new guard denies all it denies but the exemptions. */
+function splitGuard(command: string): "reply" | "stop" | null {
+  for (const segment of command.split(/\|\||&&|\$\(|[;|&\n()`]/)) {
+    const words = segment.trim().split(/\s+/).filter((word) => word !== "");
+    let i = 0;
+    while (i < words.length && (/^[A-Za-z_][A-Za-z0-9_]*=/.test(words[i]) || ["sudo", "env", "exec", "command", "nohup", "time", "node", "npx", "npm", "pnpm", "yarn", "bun", "tsx"].includes(words[i]) || words[i].startsWith("-"))) i += 1;
+    if (i >= words.length || !/^(?:[\w.~/-]*\/)?diarchy(?:\.js)?$/.test(words[i])) continue;
+    i += 1;
+    while (i < words.length && words[i].startsWith("-")) i += /^--?project$/.test(words[i]) ? 2 : 1;
+    const subcommand = words[i];
+    if (subcommand === "reply" || subcommand === "stop") return subcommand;
+  }
+  return null;
+}
+
+/** The usual Claude Code commit form: a quoted-delimiter heredoc inside "$(...)". */
+const commitHeredoc = "git commit -m \"$(cat <<'EOF'\nFix stop\n\ndiarchy stop now waits for both CLIs.\nEOF\n)\"";
+
+/** Commands the split guard denied that only hand inert text to a data program (F130): the guard lets these through. */
+const EXEMPT = [
+  'echo "x; diarchy stop now"',
+  "echo 'a (diarchy reply x)'",
+  commitHeredoc,
+  "git commit -m \"$(cat <<'EOF'\nDocument `diarchy reply` flags in the README\nEOF\n)\"",
+  "git add -A && git commit -m \"$(cat <<'EOF'\nFix stop\n\ndiarchy stop now waits for both CLIs.\nEOF\n)\" && git push",
+  "gh pr create --title t --body \"$(cat <<'EOF'\n## Summary\n- `diarchy stop` now waits for both CLIs\nEOF\n)\"",
+  "cd /p && gh issue comment 3 --body \"$(cat <<'EOF'\nUse `diarchy reply` here\nEOF\n)\"",
+  "cat >> docs/NOTES.md <<'EOF'\n| `diarchy reply` | posts a DECIDE |\nEOF",
+  "tee -a docs/NOTES.md <<'EOF'\n- run `diarchy stop` to end a goal\nEOF",
+  "cat <<'EOF' | git commit -F -\nFix stop\n\ndiarchy stop now waits for both CLIs.\nEOF",
+  "git commit -F - <<'EOF'\nFix stop\n\ndiarchy stop now waits\nEOF",
+  'cat <<"EOF"\n$(diarchy reply x)\nEOF',
+  "cat <<\\EOF\n; diarchy stop\nEOF",
+  "cat <<-'EOF'\n\tdiarchy stop\n\tEOF\necho done",
+  "cat <<'EOF' 2>&1 >> notes.md\nx; diarchy stop now\nEOF",
+  "echo 'x; diarchy stop now' >&2",
+];
+
+const HEREDOC_PAYLOADS = ["diarchy stop now waits", "x; diarchy reply ok", "see `diarchy stop` here"];
+const ARG_PAYLOADS = ["x; diarchy stop now", "a (diarchy reply ok) b", "x | diarchy stop it", "see `diarchy reply` here"];
+/** Programs that read a heredoc as data, and programs or wrappers that may run it. */
+const DATA_READERS = ["cat", "cat >> notes.md", "tee -a notes.md", "git commit -F -", "git -C . commit -F -", "gh pr create --title t --body-file -"];
+const CODE_READERS = ["bash", "sh -s", "/usr/bin/env bash", "env bash", "timeout -s KILL 60 bash", "timeout 60 bash", "sudo -u x bash", "nice -n 5 bash", "nohup bash", "exec bash", "source /dev/stdin", ". /dev/stdin", "xargs -I{} sh -c '{}'", "bash -c 'cat > notes.md'", "bash scripts/x.sh", "python3", "grep -c x", "git apply"];
+/** What may follow the heredoc operator on its line. */
+const DATA_TAILS = ["", " 2>&1", " >/dev/null 2>&1", " &>/dev/null", " >&2", " 2>/dev/null", " | tee -a notes.md", " | cat", " &"];
+const CODE_TAILS = [" | bash", " | sh -s", " 2>&1 | bash", " |& bash", " | xargs -0 sh -c", " | tee >(bash)", " > >(bash)", " && bash", "; bash notes.md", " | grep x"];
+const QUOTED_DELIMITERS = ["'EOF'", '"EOF"', "\\EOF"];
+/** `$(...)` holders: an argument of a data program, or something that runs what it prints. */
+const DATA_HOLDERS = ['git commit -m "$(X)"', 'gh pr create --title t --body "$(X)"', 'echo "$(X)"', "printf '%s\\n' \"$(X)\" >> notes.md"];
+const CODE_HOLDERS = ['eval "$(X)"', 'bash -c "$(X)"', "$(X)", '"$(X)"', 'x="$(X)"; eval "$x"', 'sh <<< "$(X)"', 'git commit -m "$(X)" | bash'];
+/** Programs given quoted text as an argument (`Q` is the text, quotes included). */
+const DATA_ARGS = ["echo Q", "printf '%s\\n' Q", "git commit -m Q", "gh pr comment 1 --body Q", "echo Q >> notes.md", "echo Q | tee -a notes.md", "cat <<< Q"];
+const CODE_ARGS = ["bash -c Q", "sh -c Q", "eval Q", "printf -v x Q", "GIT_EDITOR=Q git commit", "git -c core.pager=Q log", "git rebase -x Q main", "xargs sh -c Q", "node -e Q", "echo Q | bash", "echo Q > x.sh; bash x.sh", "echo Q | grep x", "echo > Q"];
+
+/** Generated commands the split guard denies, each with whether only inert text reaches only data programs. */
+function guardCorpus(heredocPayloads = HEREDOC_PAYLOADS): [string, boolean][] {
+  const corpus: [string, boolean][] = [];
+  for (const payload of heredocPayloads) {
+    for (const reader of [...DATA_READERS, ...CODE_READERS]) {
+      const dataReader = DATA_READERS.includes(reader);
+      for (const delimiter of [...QUOTED_DELIMITERS, "EOF"]) {
+        const quoted = delimiter !== "EOF";
+        for (const tail of [...DATA_TAILS, ...CODE_TAILS]) corpus.push([`${reader} <<${delimiter}${tail}\n${payload}\nEOF`, dataReader && quoted && DATA_TAILS.includes(tail)]);
+        const inner = `${reader} <<${delimiter}\n${payload}\nEOF\n`;
+        for (const holder of [...DATA_HOLDERS, ...CODE_HOLDERS]) corpus.push([holder.replace("X", () => inner), dataReader && quoted && DATA_HOLDERS.includes(holder)]);
+      }
+      corpus.push([`{ ${reader} <<'EOF'\n${payload}\nEOF\n} | bash`, false]);
+      corpus.push([`(${reader} <<'EOF'\n${payload}\nEOF\n) | bash`, false]);
+      corpus.push([`{ ${reader} <<'EOF'; } > notes.md\n${payload}\nEOF`, false]);
+    }
+  }
+  for (const payload of ARG_PAYLOADS) {
+    for (const quote of ["'", '"']) {
+      // Backticks inside double quotes are a command substitution, not text.
+      const inert = quote === "'" || !payload.includes("`");
+      for (const carrier of [...DATA_ARGS, ...CODE_ARGS]) corpus.push([carrier.replace("Q", () => `${quote}${payload}${quote}`), inert && DATA_ARGS.includes(carrier)]);
+    }
+  }
+  return corpus;
+}
+
 describe("guard", () => {
   const event = (command: string): string => JSON.stringify({ hook_event_name: "PreToolUse", tool_name: "Bash", tool_input: { command } });
 
@@ -632,20 +713,12 @@ describe("guard", () => {
     expect(humanCommand("")).toBeNull();
   });
 
-  // The usual Claude Code commit and PR forms: a quoted-delimiter heredoc inside "$(...)".
-  const commitHeredoc = "git commit -m \"$(cat <<'EOF'\nFix stop\n\ndiarchy stop now waits for both CLIs.\nEOF\n)\"";
-
-  it("reads quoted text, comments, and quoted-delimiter heredoc bodies as text, not as commands", () => {
-    expect(humanCommand('echo "x; diarchy stop now"')).toBeNull();
-    expect(humanCommand("echo 'a (diarchy reply x)'")).toBeNull();
+  it("lets through inert text handed to a data program: commit and PR heredocs, notes, echo (F130)", () => {
+    for (const command of EXEMPT) {
+      expect(splitGuard(command), command).not.toBeNull();
+      expect(humanCommand(command), command).toBeNull();
+    }
     expect(humanCommand("grep -rn 'diarchy reply\\|diarchy stop' docs/")).toBeNull();
-    expect(humanCommand(commitHeredoc)).toBeNull();
-    expect(humanCommand("git commit -m \"$(cat <<'EOF'\nDocument `diarchy reply` flags in the README\nEOF\n)\"")).toBeNull();
-    expect(humanCommand("gh pr create --title t --body \"$(cat <<'EOF'\n## Summary\n- `diarchy stop` now waits for both CLIs\nEOF\n)\"")).toBeNull();
-    expect(humanCommand("cat >> docs/NOTES.md <<'EOF'\n| `diarchy reply` | posts a DECIDE |\nEOF")).toBeNull();
-    expect(humanCommand('cat <<"EOF"\n$(diarchy reply x)\nEOF')).toBeNull();
-    expect(humanCommand("cat <<\\EOF\n; diarchy stop\nEOF")).toBeNull();
-    expect(humanCommand("cat <<-'EOF'\n\tdiarchy stop\n\tEOF\necho done")).toBeNull();
     expect(humanCommand("# don't run diarchy stop here\nnpm test")).toBeNull();
     expect(humanCommand('bash -c "echo \'diarchy stop\'"')).toBeNull();
   });
@@ -684,12 +757,78 @@ describe("guard", () => {
     expect(humanCommand("eval \"$(cat <<'EOF'\ndiarchy reply ok\nEOF\n)\"")).toBe("reply");
     expect(humanCommand("bash <(cat <<'EOF'\ndiarchy stop\nEOF\n)")).toBe("stop");
     expect(humanCommand("xargs -I{} sh -c '{}' <<'EOF'\ndiarchy stop\nEOF")).toBe("stop");
-    // Not a script: a -c string, a script file, or a reader that is not a shell gets the heredoc as data.
-    expect(humanCommand("bash -c 'cat > notes.md' <<'EOF'\ndiarchy reply ok\nEOF")).toBeNull();
-    expect(humanCommand("bash scripts/x.sh <<'EOF'\ndiarchy stop\nEOF")).toBeNull();
-    expect(humanCommand("cat <<'EOF' | grep -c bash\ndiarchy reply ok\nEOF")).toBeNull();
-    expect(humanCommand("cat <<'EOF' && bash\ndiarchy stop\nEOF")).toBeNull();
+    // A shell or a reader that is not a data program gets the heredoc: denied as the split guard did.
+    expect(humanCommand("bash -c 'cat > notes.md' <<'EOF'\ndiarchy reply ok\nEOF")).toBe("reply");
+    expect(humanCommand("bash scripts/x.sh <<'EOF'\ndiarchy stop\nEOF")).toBe("stop");
+    expect(humanCommand("cat <<'EOF' | grep -c bash\ndiarchy reply ok\nEOF")).toBe("reply");
+    expect(humanCommand("cat <<'EOF' && bash\ndiarchy stop\nEOF")).toBe("stop");
   });
+
+  it("denies a heredoc behind any redirection, group, wrapper, or pipe into a shell, as the split guard did", () => {
+    for (const redirection of [" 2>&1", " >/tmp/log 2>&1", " &>/dev/null", " >&2", " 2>/dev/null &"]) {
+      expect(humanCommand(`bash <<'EOF'${redirection}\ndiarchy stop\nEOF`), redirection).toBe("stop");
+    }
+    expect(humanCommand("bash 2>&1 <<'EOF'\ndiarchy stop\nEOF")).toBe("stop");
+    expect(humanCommand("{ cat <<'EOF'\ndiarchy stop\nEOF\n} | bash")).toBe("stop");
+    expect(humanCommand("(cat <<'EOF'\ndiarchy stop\nEOF\n) | bash")).toBe("stop");
+    expect(humanCommand("{ echo hi; cat <<'EOF'; } | sh\ndiarchy reply ok\nEOF")).toBe("reply");
+    expect(humanCommand("/usr/bin/env bash <<EOF\ndiarchy stop\nEOF")).toBe("stop");
+    expect(humanCommand("timeout -s KILL 60 bash <<EOF\ndiarchy stop\nEOF")).toBe("stop");
+    expect(humanCommand("sudo -u x bash <<EOF\ndiarchy stop\nEOF")).toBe("stop");
+    expect(humanCommand("cat <<'EOF' |\ndiarchy stop now\nEOF\nbash")).toBe("stop");
+    expect(humanCommand("$(cat <<'EOF'\ndiarchy stop now\nEOF\n)")).toBe("stop");
+    expect(humanCommand("echo 'x; diarchy stop now' > x.sh && bash x.sh")).toBe("stop");
+    expect(humanCommand("printf -v c 'x;diarchy stop ;'; eval \"$c\"")).toBe("stop");
+    expect(humanCommand("git -c core.pager='less; diarchy stop ' log")).toBe("stop");
+    expect(humanCommand("GIT_EDITOR='true; diarchy stop ' git commit")).toBe("stop");
+    expect(humanCommand("cat <<'EOF' > >(bash)\ndiarchy stop now\nEOF")).toBe("stop");
+  });
+
+  it("denies whatever the split guard denied, except inert text handed only to data programs", () => {
+    const corpus = guardCorpus();
+    expect(corpus.filter(([, exempt]) => exempt).length).toBeGreaterThan(500);
+    for (const [command, exempt] of corpus) {
+      expect(splitGuard(command), command).not.toBeNull();
+      expect(humanCommand(command) === null, command).toBe(exempt);
+    }
+  });
+
+  it("reads a long command in linear time", () => {
+    const started = Date.now();
+    expect(humanCommand(Array.from({ length: 20_000 }, () => "echo 'x; diarchy stop now'").join(" | "))).toBeNull();
+    expect(humanCommand(`${"eval ".repeat(20_000)}true`)).toBeNull();
+    expect(humanCommand(`echo ${"$(".repeat(20_000)}${")".repeat(20_000)}`)).toBeNull();
+    expect(humanCommand(`git commit -m "$(cat <<'EOF'\n${"x; diarchy stop now\n".repeat(50_000)}EOF\n)"`)).toBeNull();
+    expect(Date.now() - started).toBeLessThan(10_000);
+  });
+
+  it("lets through only commands in which bash runs no diarchy", () => {
+    const dir = mkdtempSync(join(tmpdir(), "diarchy-guard-"));
+    try {
+      const bin = join(dir, "bin");
+      mkdirSync(bin);
+      // diarchy logs its call; git and gh only drain stdin.
+      writeFileSync(join(bin, "diarchy"), '#!/bin/sh\necho "$@" >> "$DIARCHY_CALLS"\n', { mode: 0o755 });
+      for (const name of ["git", "gh"]) writeFileSync(join(bin, name), "#!/bin/sh\ncat > /dev/null\n", { mode: 0o755 });
+      // One heredoc payload, the one with backticks, keeps the run short.
+      const generated = guardCorpus(HEREDOC_PAYLOADS.filter((payload) => payload.includes("`")));
+      const allowed = [...EXEMPT, ...generated.filter(([, exempt]) => exempt).map(([command]) => command)].filter((command) => humanCommand(command) === null);
+      const control = "bash <<'EOF'\ndiarchy stop now\nEOF";
+      writeFileSync(join(dir, "commands"), [...allowed, control].map((command) => `${command}\0`).join(""));
+      const calls = join(dir, "calls");
+      const run = spawnSync("bash", ["-c", 'while IFS= read -r -d "" command; do bash -c "$command" < /dev/null > /dev/null 2>&1; done < commands; wait'], {
+        cwd: dir,
+        encoding: "utf8",
+        env: { PATH: `${bin}:${process.env.PATH ?? ""}`, DIARCHY_CALLS: calls, HOME: dir },
+        timeout: RUN_TIMEOUT,
+      });
+      expect(run.status, run.stderr).toBe(0);
+      // The control proves the harness sees a real call; nothing else may call diarchy.
+      expect(readFileSync(calls, "utf8")).toBe("stop now\n");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, RUN_TIMEOUT);
 
   it("denies a Bash call to diarchy reply with a PreToolUse decision and lets everything else through", async () => {
     const denied = await cli(["guard", "--agent", "claude"], { input: event('diarchy reply "continue" --budget messages_total=200') });
@@ -703,7 +842,7 @@ describe("guard", () => {
     expect(JSON.parse(stop.stdout)).toMatchObject({ hookSpecificOutput: { permissionDecision: "deny" } });
     expect(await cli(["guard", "--agent", "codex"], { input: event("npm test") })).toEqual({ code: 0, stdout: "", stderr: "" });
     expect(await cli(["guard", "--agent", "claude"], { input: event(commitHeredoc) })).toEqual({ code: 0, stdout: "", stderr: "" });
-    const script = await cli(["guard", "--agent", "claude"], { input: event("bash <<'EOF'\ndiarchy reply ok\nEOF") });
+    const script = await cli(["guard", "--agent", "claude"], { input: event("bash <<'EOF' 2>&1\ndiarchy reply ok\nEOF") });
     expect(JSON.parse(script.stdout)).toMatchObject({ hookSpecificOutput: { permissionDecision: "deny" } });
     expect(await cli(["guard", "--agent", "codex"], { input: "not json {{{" })).toEqual({ code: 0, stdout: "", stderr: "" });
     expect(await cli(["guard", "--agent", "codex"], { input: "" })).toEqual({ code: 0, stdout: "", stderr: "" });

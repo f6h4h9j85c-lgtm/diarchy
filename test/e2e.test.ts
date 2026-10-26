@@ -1831,36 +1831,75 @@ describe("brief and Stop gate guidance", () => {
     expect(step(dir, "claude").owes).toBe(false);
   }, RUN_TIMEOUT);
 
+  /** kickoff with two ACs, a plan CHALLENGE left to deadlock, then `reply --decision plan`: EXECUTE with no tasks, the lead caught up. */
+  async function ruledPlan(name: string): Promise<{ dir: string; claude: VaultStore; codex: VaultStore }> {
+    const dir = await initProject(name, false);
+    const { claude, codex } = agents(dir);
+    expect(
+      (await human(dir).kickoff({ goal: "Rate limit the API.", acceptance_criteria: ["Over-limit requests get 429.", "The limit is configurable."], lead: "claude", slug: name })).ok,
+    ).toBe(true);
+    const proposeId = posted(await claude.post({ type: "PROPOSE", to: "all", re: ["AC1", "AC2"], decision_id: "plan", claim: "A Redis bucket meets both ACs.", body: "Two tasks." }));
+    posted(
+      await codex.post({
+        type: "CHALLENGE",
+        to: "claude",
+        re: ["AC1"],
+        reply_to: proposeId,
+        decision_id: "plan",
+        claim: "An in-process bucket suffices on one replica.",
+        evidence: [{ kind: "test", test: "kubectl get deploy api prints replicas 1", result: "pending" }],
+      }),
+    );
+    const status: MessageDraft = { type: "STATUS", to: "all", re: ["AC1"], evidence: [{ kind: "file", path: "notes/probe.md" }], body: "Probe notes in notes/probe.md." };
+    posted(await codex.post(status));
+    posted(await claude.post(status));
+    expect(goalState(dir)).toMatchObject({ phase: "BLOCKED", blocked_from: "PLAN" });
+
+    const reply = await cli(["reply", "Use the Redis bucket.", "--decision", "plan", "--project", dir]);
+    expect(reply.code, reply.stderr).toBe(0);
+    expect(goalState(dir)).toMatchObject({ phase: "EXECUTE", tasks: {} });
+    claude.read();
+    return { dir, claude, codex };
+  }
+
+  /** An implement ASSIGN to codex of a new task citing `re`. */
+  function implementFor(re: string[]): MessageDraft {
+    return { type: "ASSIGN", to: "codex", re, new_task: `Ship ${re.join(" and ")}.`, kind: "implement", worktree: ".diarchy/worktrees/codex", branch: "diarchy/rl/codex" };
+  }
+
+  it("after reply --decision plan the lead owes an ASSIGN for each AC no implement task cites, and one task may cover several", async () => {
+    const each = await ruledPlan("cover-each");
+    expect(step(each.dir, "claude")).toEqual({
+      text: "EXECUTE has no tasks: ASSIGN a new_task for AC1, AC2 (call assign); one task may cover several ACs by citing each in re",
+      owes: true,
+    });
+    posted(await each.claude.post(implementFor(["AC1"])));
+    expect(step(each.dir, "claude")).toEqual({ text: "AC2 has no task: ASSIGN a new_task citing it in re (call assign)", owes: true });
+    each.claude.read();
+    expect(await gateReason(each.dir, "claude")).toContain("AC2 has no task: ASSIGN a new_task citing it in re (call assign)");
+    posted(await each.claude.post(implementFor(["AC2"])));
+    expect(step(each.dir, "claude")).toEqual({ text: "nothing owed; call wait_for_reply for the other PM's STATUS", owes: false });
+
+    const both = await ruledPlan("cover-both");
+    posted(await both.claude.post(implementFor(["AC1", "AC2"])));
+    expect(step(both.dir, "claude").owes).toBe(false);
+    both.claude.read();
+    expect(await gateReason(both.dir, "claude")).toBe("");
+  }, 2 * RUN_TIMEOUT);
+
+  it("after a plan DECIDE with tasks the plan maps tasks to ACs, so an ASSIGN citing fewer ACs owes nothing more", async () => {
+    const { dir, claude } = await inExecute("cover-plan", ["Over-limit requests get 429.", "The limit is configurable."]);
+    for (const task of ["T1", "T2"]) {
+      posted(await claude.post({ type: "ASSIGN", to: "codex", re: ["AC1"], task, kind: "implement", worktree: ".diarchy/worktrees/codex", branch: "diarchy/rl/codex" }));
+    }
+    expect(step(dir, "claude")).toEqual({ text: "nothing owed; call wait_for_reply for the other PM's STATUS", owes: false });
+  }, RUN_TIMEOUT);
+
   it(
     "deadlock, then reply --decision plan: the lead's gate asks for new_task ASSIGNs, and start --driver fake reaches DONE",
     async () => {
-      const dir = await initProject("ruling", false);
-      const { claude, codex } = agents(dir);
-      expect(
-        (await human(dir).kickoff({ goal: "Rate limit the API.", acceptance_criteria: ["Over-limit requests get 429.", "The limit is configurable."], lead: "claude", slug: "ruling" })).ok,
-      ).toBe(true);
-      const proposeId = posted(await claude.post({ type: "PROPOSE", to: "all", re: ["AC1", "AC2"], decision_id: "plan", claim: "A Redis bucket meets both ACs.", body: "Two tasks." }));
-      posted(
-        await codex.post({
-          type: "CHALLENGE",
-          to: "claude",
-          re: ["AC1"],
-          reply_to: proposeId,
-          decision_id: "plan",
-          claim: "An in-process bucket suffices on one replica.",
-          evidence: [{ kind: "test", test: "kubectl get deploy api prints replicas 1", result: "pending" }],
-        }),
-      );
-      const status: MessageDraft = { type: "STATUS", to: "all", re: ["AC1"], evidence: [{ kind: "file", path: "notes/probe.md" }], body: "Probe notes in notes/probe.md." };
-      posted(await codex.post(status));
-      posted(await claude.post(status));
-      expect(goalState(dir)).toMatchObject({ phase: "BLOCKED", blocked_from: "PLAN" });
-
-      const reply = await cli(["reply", "Use the Redis bucket.", "--decision", "plan", "--project", dir]);
-      expect(reply.code, reply.stderr).toBe(0);
-      expect(goalState(dir)).toMatchObject({ phase: "EXECUTE", tasks: {} });
-      claude.read();
-      expect(await gateReason(dir, "claude")).toContain("EXECUTE has no tasks: ASSIGN each with new_task (call assign)");
+      const { dir } = await ruledPlan("ruling");
+      expect(await gateReason(dir, "claude")).toContain("EXECUTE has no tasks: ASSIGN a new_task for AC1, AC2 (call assign)");
 
       const run = await cli(["start", "--driver", "fake", "--fake-mode", "good", "--no-worktrees", "--project", dir]);
       expect(run.code, run.stdout + run.stderr).toBe(0);

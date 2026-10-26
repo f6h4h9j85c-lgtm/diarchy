@@ -35,6 +35,7 @@ import { existsSync, writeFileSync } from "node:fs";
 import { join, posix } from "node:path";
 import { openThreads, reviewOwed } from "../protocol/index.js";
 import { VaultStore, loadConfig } from "../vault/index.js";
+import { uncoveredAcs } from "./brief.js";
 import { branchName } from "./worktrees.js";
 const agent = process.env.DIARCHY_AGENT ?? "";
 const projectDir = process.env.DIARCHY_PROJECT ?? process.cwd();
@@ -213,11 +214,11 @@ function goodAction(ctx) {
             reason: "availability",
         }));
     }
-    // EXECUTE opened by a human ruling carries no tasks: one new_task per AC, in AC order so T<n> is AC<n>'s task.
-    const uncovered = acs.findIndex((ac) => !tasks.some((task) => acOfTask(task) === ac));
-    if (uncovered >= 0 && tasks.every((task) => task.kind === "implement")) {
-        const ac = acs[uncovered];
-        const assignee = uncovered % 2 === 0 ? other : agent;
+    // EXECUTE opened by a human ruling carries no tasks: one new_task per AC the brief counts as uncovered,
+    // in AC order and ahead of any review, so T<n> is AC<n>'s task.
+    const ac = uncoveredAcs(state, messages)[0];
+    if (ac !== undefined) {
+        const assignee = acs.indexOf(ac) % 2 === 0 ? other : agent;
         return async () => void (await post(store, {
             type: "ASSIGN",
             to: assignee,

@@ -70,6 +70,23 @@ function isFixOf(message, author, url, task) {
         return false;
     return citesUrl(message, url) || (task !== undefined && message.task === task);
 }
+/**
+ * ACs the lead still owes an implement task in EXECUTE. A plan DECIDE that
+ * carried `tasks` already mapped tasks to ACs, so its todo tasks drive the
+ * brief and none is owed here. Otherwise (a human ruling, or a DECIDE with no
+ * tasks, closed plan) every AC not yet passing is owed until an implement
+ * ASSIGN cites it in `re`; one task may cover several ACs.
+ */
+export function uncoveredAcs(state, messages) {
+    const ordered = sortMessages(messages);
+    const plan = ordered.find((message) => message.type === "DECIDE" && message.decision_id === "plan");
+    if ((plan?.tasks ?? []).length > 0)
+        return [];
+    const covered = new Set(ordered.filter((message) => message.type === "ASSIGN" && message.kind === "implement").flatMap((message) => message.re));
+    return Object.entries(state.acs)
+        .filter(([id, ac]) => ac.status !== "passing" && !covered.has(id))
+        .map(([id]) => id);
+}
 /** A thread the lead PROPOSEd itself that no other PM has posted after yet: the challenger's CHALLENGE window is still open. */
 function awaitsChallenger(state, ordered, id) {
     if (state.decisions[id]?.proposer !== state.lead)
@@ -212,9 +229,15 @@ export function nextStep(state, messages, agent, unread) {
         const todo = tasks.find((task) => task.status === "todo");
         if (todo !== undefined)
             return { text: `assign ${todo.id} (${oneLine(todo.task)}): call assign`, owes: true };
-        // A human ruling on an open plan (`diarchy reply --decision plan`) opens EXECUTE with no tasks.
-        if (!tasks.some((task) => task.kind === "implement"))
-            return { text: "EXECUTE has no tasks: ASSIGN each with new_task (call assign)", owes: true };
+        // A human ruling on an open plan (`diarchy reply --decision plan`) opens EXECUTE with no tasks: each AC needs an ASSIGN citing it.
+        const uncovered = uncoveredAcs(state, messages);
+        if (uncovered.length > 0) {
+            const list = uncovered.join(", ");
+            const text = tasks.some((task) => task.kind === "implement")
+                ? `${list} ${uncovered.length === 1 ? "has" : "have"} no task: ASSIGN a new_task citing ${uncovered.length === 1 ? "it" : "each"} in re (call assign)`
+                : `EXECUTE has no tasks: ASSIGN a new_task for ${list} (call assign); one task may cover several ACs by citing each in re`;
+            return { text, owes: true };
+        }
         const reviewing = new Set(tasks.filter((task) => reviewOwed(state, task)).map((task) => task.pr));
         const rereview = changesRequested(state, messages).find((pr) => pr.fixed && !reviewing.has(pr.url));
         if (rereview !== undefined) {

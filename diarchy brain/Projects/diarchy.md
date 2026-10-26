@@ -3,23 +3,28 @@
 Multiplayer AI for coding: Claude Code and Codex CLI run as peer product managers on one goal, coordinate through an Obsidian vault chat enforced by an MCP server, and delegate to their own subagents. Human out of the loop except for deadlock, external blocker, or spent budget.
 
 ## Standing decisions
+- 2026-10-26 v0.2.0 after a two-round audit (115 confirmed findings fixed or deferred with a reason; docs/audit/2026-10-25-audit.md).
+- 2026-10-26 Guard: the original split verdict is the floor; only inert quoted text given to data-only programs is exempt.
+- 2026-10-26 Stored 0.1.0 chat files keep 0.1.0 field rules; new posts get the tightened rules; no protocol_version bump.
+- 2026-10-25 Codex sandbox on by default; `diarchy init --codex-full-access` opts out. The implementer always posts its own `pr` evidence; a PM committing for a sandboxed PM cites only `commit`.
+- 2026-10-25 Agent text renders as plain text in chat.md, goal.md, decisions.md.
+- 2026-10-25 dist/ is committed (plugin installs run no build); CI rebuilds and diffs it. Node >= 20.3.
 - 2026-10-25 Protocol is normative: docs/PROTOCOL.md, docs/ANTI-SLOP.md. Tests parse the rule table.
 - 2026-10-25 Enforcement in code (MCP server + store), never prompts alone.
 - 2026-10-25 Lead = kickoff receiver, challenger = other, swap per goal, no domain routing, evidence-based tiebreak.
 - 2026-10-25 One file per message, store-rendered views; worktree per PM; cross-model PR review required.
-- 2026-10-25 TypeScript, Node >=20, MIT; install from GitHub (prepare builds dist).
 
 ## Active threads
+- Medium deferrals from the audit: F019 reply cannot carry tasks; F022 extras; F024 engine half; F030 clean exit uses a restart; F126 re-review settled by an earlier review; F146 gate stops after one new task.
+- Samples show a full-access Codex run; mark or regenerate.
 - First live two-model run (manual).
-- Codex-side verification against a real binary.
-- Auto-resume after a human deadlock reply.
-- Node >=22.12 upgrade.
+- Node >= 22.12 upgrade.
 - Third agent adapter.
 
 ## Key notes
-- Sessions/2026-10-25 diarchy.md
+- Sessions/2026-10-26 diarchy.md (audit and fix), Sessions/2026-10-25 diarchy.md (v0.1.0 build)
+- docs/audit/2026-10-25-audit.md
 - docs/PROTOCOL.md, docs/ANTI-SLOP.md, docs/RENDERING.md, docs/ARCHITECTURE.md
-- Goal record for the build lives in the websites repo session (.claude/goals/done/).
 
 ## Layout
-src/protocol (engine) · src/vault (store, renderers) · src/mcp (server) · src/cli (launcher, fake PM, hooks) · skills/ agents/ hooks/ (Claude plugin) · .agents/ .codex/ plugin.json mcp.json (Codex plugin) · test/ (175 tests, fixtures)
+src/protocol (engine) · src/vault (store, locks, lease, renderers) · src/mcp (server) · src/cli (launcher, run record, preflight, fake PM, hooks, guard) · skills/ agents/ hooks/ .claude-plugin/ .mcp.json (Claude plugin) · .codex-plugin/ .agents/ .codex/agents/ mcp.json hooks/codex-hooks.json (Codex plugin) · dist/ (committed build) · test/ (438 tests, fixtures)

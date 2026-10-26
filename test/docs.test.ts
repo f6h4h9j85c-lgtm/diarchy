@@ -1,5 +1,5 @@
 /** User-facing docs and plugin prose that must agree with the normative specs and the installed layout. */
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -91,6 +91,32 @@ describe("implement brief", () => {
     expect(state(true).tasks.T1).toMatchObject({ assignee: "codex", kind: "implement", status: "assigned" });
     expect(nextStep(state(true), [], "codex", []).text).toMatch(/: finish it, then call status with commit, pr, and test evidence$/);
     expect(nextStep(state(false), [], "codex", []).text).toMatch(/: finish it, then call status with commit and test evidence$/);
+  });
+});
+
+describe("docs: README status", () => {
+  const readme = read("README.md");
+  const { version } = JSON.parse(read("package.json")) as { version: string };
+
+  it("names the package version on the Status line and its minor in the roadmap", () => {
+    const minor = version.split(".").slice(0, 2).join(".");
+    expect(readme.split("\n").find((line) => line.startsWith("Status:"))).toContain(`pre-alpha, v${version}.`);
+    expect(section(readme, "## Status and roadmap")).toContain(`v${minor} ships`);
+  });
+
+  it("does not deny the Codex checks INSTALL-CODEX.md reports", () => {
+    expect(read("docs", "INSTALL-CODEX.md")).toContain("verified on Codex 0.164.0");
+    const roadmap = section(readme, "## Status and roadmap");
+    expect(roadmap).not.toContain("not been exercised against a real Codex binary");
+    expect(roadmap).toContain("checked against Codex 0.164.0");
+  });
+
+  it("the project layout names every document under docs/", () => {
+    const layout = readme.split("\n").find((line) => line.startsWith("docs/ ")) ?? "";
+    for (const entry of readdirSync(join(ROOT, "docs"), { withFileTypes: true })) {
+      const name = entry.isDirectory() ? `${entry.name}/` : entry.name.replace(/\.md$/, "").replace(/^INSTALL-.*/, "INSTALL-*");
+      expect(layout.split(/, | {2,}/), name).toContain(name);
+    }
   });
 });
 

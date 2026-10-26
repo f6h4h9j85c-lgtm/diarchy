@@ -108,7 +108,7 @@ Dev mode: open `claude` and `codex` interactively in the same project and state 
 agents/          Claude Code subagents
 bin/             diarchy.js, the CLI entry (imports dist/)
 dist/            compiled src/, committed so a plugin install runs without a build
-docs/            PROTOCOL, ANTI-SLOP, RENDERING, ARCHITECTURE, INSTALL-*, samples/
+docs/            PROTOCOL, ANTI-SLOP, RENDERING, RENDERING-DESIGN-NOTES, ARCHITECTURE, QUICKSTART, INSTALL-*, samples/, audit/
 hooks/           hooks.json (Claude Code), codex-hooks.json (Codex), the three hook scripts
 scripts/         sync-skills.mjs
 skills/          diarchy-pm, diarchy-kickoff, diarchy-review
@@ -122,7 +122,7 @@ test/            vitest suites and fixtures
 
 ## Status and roadmap
 
-v0.1 ships the protocol engine, the vault store and renderers, the MCP server, both plugins, and a launcher with a real driver and a scripted fake PM. Not yet proven: CI runs lint, typecheck, build, and the tests, including an end-to-end run with the fake PM, but no live two-model run, and the Codex side has not been exercised against a real Codex binary. Next: Cursor and other MCP clients as a third agent (everything is already keyed by agent id), store-executed tests so `result: pass` is checked rather than trusted, and hardening of headless session resume.
+v0.2 ships the protocol engine, the vault store and renderers, the MCP server, both plugins, and a launcher with a real driver and a scripted fake PM. Not yet proven: CI runs lint, typecheck, build, and the tests, including an end-to-end run with the fake PM, but no live two-model run, and the Codex side has been checked against Codex 0.164.0 (sandbox, hook trust, plugin install) but not in a full run. Next: Cursor and other MCP clients as a third agent (everything is already keyed by agent id), store-executed tests so `result: pass` is checked rather than trusted, and hardening of headless session resume.
 
 ## Development
 

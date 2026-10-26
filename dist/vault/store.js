@@ -6,7 +6,7 @@
  */
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, watch } from "node:fs";
 import { join, resolve } from "node:path";
-import { AC_LINE_PATTERN, AGENT_HUMAN, AGENT_SYSTEM, BODY_MAX_WORDS, GOAL_ID_PATTERN, LINE_TERMINATOR, MESSAGE_ID_PATTERN, SchemaError, allowedTypes, assignId, checkMessageShape, describeIssue, evaluate, goalStateSchema, initialState, isoSeconds, parseKickoffFile, parseMessageFile, parseMessageId, roleOf, serializeMessageFile, tick, wordCount, } from "../protocol/index.js";
+import { AC_LINE_PATTERN, AGENT_HUMAN, AGENT_SYSTEM, BODY_MAX_WORDS, GOAL_ID_PATTERN, LINE_TERMINATOR, MESSAGE_ID_PATTERN, SchemaError, allowedTypes, assignId, checkMessageShape, describeIssue, evaluate, goalStateSchema, initialState, isoSeconds, parseKickoffFile, parseMessageFile, parseMessageId, roleOf, serializeMessageFile, tick, wordCount, workEvidenceKeys, } from "../protocol/index.js";
 import { resolveVaultPaths, vaultPaths } from "./config.js";
 import { atomicWrite, sleep as realSleep } from "./files.js";
 import { serializeKickoff, slugify, suffixSlug } from "./kickoff.js";
@@ -405,12 +405,21 @@ export class VaultStore {
             body: normalizeBody(draft.body),
         };
         const now = new Date(Math.max(this.now().getTime(), Date.parse(assigned.ts)));
-        const result = evaluate(message, assigned.state, { now, callerAgent: this.agent });
+        const workSeen = draft.type === "STATUS" ? this.workSeen(paths, state) : [];
+        const result = evaluate(message, assigned.state, { now, callerAgent: this.agent, workSeen });
         if (!result.ok)
             return result;
         await this.waitUntil(result.message.ts);
         this.writeMessage(paths, result.message);
         return { ok: true, message: result.message, state: result.state, transition: result };
+    }
+    /**
+     * Work-evidence keys of the committed STATUS messages (PROTOCOL.md 3.1),
+     * which budget.json does not keep. A file that will not parse is left out,
+     * so it cannot block a post; its evidence then counts as new once.
+     */
+    workSeen(paths, state) {
+        return this.readMessages(paths, state, true).flatMap(workEvidenceKeys);
     }
     /** Write the system ASK_HUMAN for every `system_message` effect through the same path. */
     async applyEffects(paths, transition) {
@@ -603,7 +612,10 @@ export class VaultStore {
      * DECIDE `basis: human` answering the latest ASK_HUMAN; `decision` names the
      * thread to close (an open thread by `decision_id`, a decided one by
      * `supersedes`). A ruling without terminal punctuation gets a period so
-     * `diarchy reply "continue"` is one claim.
+     * `diarchy reply "continue"` is one claim. `tasks` go only on a ruling that
+     * closes an open `plan`, which opens EXECUTE with them as todo; anywhere
+     * else they are SCHEMA before anything is posted, since once plan is decided
+     * the lead ASSIGNs new tasks.
      */
     async reply(text, options = {}) {
         this.requireHuman("reply");
@@ -629,6 +641,12 @@ export class VaultStore {
                 draft.decision_id = options.decision;
             else
                 draft.supersedes = options.decision;
+        }
+        if (options.tasks !== undefined && options.tasks.length > 0) {
+            if (draft.decision_id !== "plan") {
+                return reject("SCHEMA", schemaText("tasks", "--task needs --decision plan while plan is open; once plan is decided the lead ASSIGNs new tasks"));
+            }
+            draft.tasks = [...options.tasks];
         }
         return this.postWith(draft, (paths, current) => this.kickoffOrRebuilt(paths, current));
     }

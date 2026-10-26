@@ -1,4 +1,4 @@
-description: "A pass item sets every AC in re even beside request_changes (PROTOCOL.md 2.3 has no verdict exception), so a reviewer citing an unmet AC with a green suite marks it passing; diarchy-review step 5 forbids pass items on request_changes for this reason."
+description: "A pass item beside request_changes leaves AC status as it was (PROTOCOL.md 2.3): a reviewer citing an unmet AC with a green suite does not mark it passing, so DONE 9.2(b) cannot count it; the STATUS is still accepted and the review task closes."
 state:
   base: execute-review-assigned
 message:
@@ -27,12 +27,18 @@ expect:
   ok: true
   phase_after: EXECUTE
   effects:
-    - kind: ac_status
-      ac: AC2
-      status: passing
+    - kind: task
+      id: T4
+      status: done
   state:
     acs:
       AC1:
         status: passing
       AC2:
-        status: passing
+        status: open
+    prs:
+      https://github.com/acme/api/pull/412:
+        author: codex
+        reviews:
+          - by: claude
+            verdict: request_changes

@@ -20,8 +20,8 @@
  * fake work (a commit in their worktree, else a fabricated sha) and post
  * STATUS with commit, test, and pr evidence, lead ASSIGNs cross reviews,
  * reviewers approve, lead posts DONE. 13 messages for two ACs. After a human
- * ruling on plan (`diarchy reply --decision plan`) EXECUTE has no tasks, and
- * the lead ASSIGNs one new_task per AC instead.
+ * ruling on plan without --task (`diarchy reply --decision plan`) EXECUTE has
+ * no tasks, and the lead ASSIGNs one new_task per AC instead.
  *
  * slop: challenger posts an ack-only PROPOSE (NO_ACK), a CHALLENGE without a
  * test (CHALLENGE_NEEDS_TEST), then a valid CHALLENGE; the lead never DECIDEs
@@ -243,7 +243,7 @@ function goodAction(ctx: Ctx): Action | null {
         reason: "availability",
       }));
   }
-  // EXECUTE opened by a human ruling carries no tasks: one new_task per AC the brief counts as uncovered,
+  // EXECUTE opened by a human ruling without --task carries no tasks: one new_task per AC the brief counts as uncovered,
   // in AC order and ahead of any review, so T<n> is AC<n>'s task.
   const ac = uncoveredAcs(state, messages)[0];
   if (ac !== undefined) {

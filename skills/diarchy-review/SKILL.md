@@ -13,7 +13,7 @@ Input: an ASSIGN `kind: review` naming a PR url and `re` ACs. Below, `.diarchy/w
 4. Verdict:
    - `approve` when every cited AC is met and tests pass. Do not request changes for style, naming, or structure when ACs pass.
    - `request_changes` when a cited AC is not met, a test fails, a claimed test does not exist, or the diff touches files outside the task without a stated reason.
-5. Post STATUS with one `review` item (`url`, `verdict`) plus `test` items. Every `pass` or `fail` item sets the status of every AC in `re`, whatever the verdict, so:
+5. Post STATUS with one `review` item (`url`, `verdict`) plus `test` items. A `fail` item sets every AC in `re` failing; a `pass` item sets them passing only beside `approve` (the store ignores `pass` items on a `request_changes` STATUS), so:
    - `approve`: `re` = the ACs you checked; one `test` item per command you ran, with its `result`.
    - `request_changes`: `re` = only the unmet ACs, each backed by a `test` item with `result: fail` naming the failing command or the missing check; no `pass` items. When no AC is unmet (scope only), `re` = the ACs you checked and no `test` items.
    Body: at most one sentence per requested change, each naming a file and the AC it fails. An empty body on approve is fine.

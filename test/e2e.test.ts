@@ -2235,6 +2235,58 @@ describe("brief and Stop gate guidance", () => {
     },
     2 * RUN_TIMEOUT,
   );
+
+  it(
+    "deadlock, then reply --decision plan --task: EXECUTE begins with those tasks, the lead's gate asks to assign them, and start --driver fake reaches DONE",
+    async () => {
+      const dir = await initProject("tasks", false);
+      const { claude, codex } = agents(dir);
+      expect(
+        (await human(dir).kickoff({ goal: "Rate limit the API.", acceptance_criteria: ["Over-limit requests get 429.", "The limit is configurable."], lead: "claude", slug: "tasks" })).ok,
+      ).toBe(true);
+      const proposeId = posted(await claude.post({ type: "PROPOSE", to: "all", re: ["AC1", "AC2"], decision_id: "plan", claim: "A Redis bucket meets both ACs.", body: "Two tasks." }));
+      posted(
+        await codex.post({
+          type: "CHALLENGE",
+          to: "claude",
+          re: ["AC1"],
+          reply_to: proposeId,
+          decision_id: "plan",
+          claim: "An in-process bucket suffices on one replica.",
+          evidence: [{ kind: "test", test: "kubectl get deploy api prints replicas 1", result: "pending" }],
+        }),
+      );
+      const status: MessageDraft = { type: "STATUS", to: "all", re: ["AC1"], evidence: [{ kind: "file", path: "notes/probe.md" }], body: "Probe notes in notes/probe.md." };
+      posted(await codex.post(status));
+      posted(await claude.post(status));
+      expect(goalState(dir)).toMatchObject({ phase: "BLOCKED", blocked_from: "PLAN" });
+      const hint = await cli(["status", "--project", dir]);
+      expect(hint.stdout).toContain('run: diarchy reply "<ruling>" --decision plan [--task "<task>"]...');
+
+      const misplaced = await cli(["reply", "Use the Redis bucket.", "--task", "AC1: Over-limit requests get 429.", "--project", dir]);
+      expect(misplaced.code).toBe(1);
+      expect(misplaced.stderr).toContain('reply rejected SCHEMA: Field "tasks": --task needs --decision plan while plan is open');
+      const reply = await cli(["reply", "Use the Redis bucket.", "--decision", "plan", "--task", "AC1: Over-limit requests get 429.", "--task", "AC2: The limit is configurable.", "--project", dir]);
+      expect(reply.code, reply.stderr).toBe(0);
+      expect(goalState(dir)).toMatchObject({
+        phase: "EXECUTE",
+        tasks: { T1: { task: "AC1: Over-limit requests get 429.", status: "todo" }, T2: { task: "AC2: The limit is configurable.", status: "todo" } },
+      });
+      claude.read();
+      expect(await gateReason(dir, "claude")).toContain("assign T1 (AC1: Over-limit requests get 429.): call assign");
+
+      const run = await cli(["start", "--driver", "fake", "--fake-mode", "good", "--no-worktrees", "--project", dir]);
+      expect(run.code, run.stdout + run.stderr).toBe(0);
+      const done = goalState(dir);
+      expect(done.phase).toBe("DONE");
+      expect(Object.values(done.tasks).filter((task) => task.kind === "implement").map((task) => task.task)).toEqual([
+        "AC1: Over-limit requests get 429.",
+        "AC2: The limit is configurable.",
+      ]);
+      expect(run.stderr).not.toContain("rejected");
+    },
+    2 * RUN_TIMEOUT,
+  );
 });
 
 describe("agent-authored text in briefs, gate reasons, and status", () => {

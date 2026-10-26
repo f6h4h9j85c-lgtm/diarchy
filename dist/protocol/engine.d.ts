@@ -3,6 +3,13 @@ export { allowedTypes } from "./state.js";
 export interface EvaluateOptions {
     now: Date;
     callerAgent: AgentId;
+    /**
+     * `workEvidenceKeys` of every STATUS already accepted on the goal. budget.json
+     * does not keep them, so the store reads them from the committed chat/ files.
+     * A STATUS resets talk_since_work only with a key not among them (PROTOCOL.md
+     * 3.1); omitted, no key counts as seen.
+     */
+    workSeen?: readonly string[];
 }
 /** Run every rule in ANTI-SLOP.md order; on acceptance apply the transition. */
 export declare function evaluate(message: Message, state: GoalState, options: EvaluateOptions): Acceptance | Rejection;

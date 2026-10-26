@@ -85,7 +85,7 @@ function externalParagraphs(blocked, from) {
 }
 /**
  * A human ruling on an open `plan` is rejected while another thread is open, so the hint drops `--decision` in that case.
- * Otherwise a ruling on an open `plan` closes PLAN at once and, carrying no tasks, opens an empty EXECUTE.
+ * Otherwise a ruling on an open `plan` closes PLAN at once and opens EXECUTE with the tasks its `--task` options carry, or with none.
  * A reopened `plan` is already decided: the ruling supersedes it and EXECUTE resumes with its tasks, as for any thread.
  */
 function answerLine(decision, state, from) {
@@ -95,7 +95,7 @@ function answerLine(decision, state, from) {
         return `**To answer:** run \`diarchy reply "<ruling>"\`. Your ruling is recorded as a new DECIDE with basis human, ${from} resumes, and ${state.lead} must DECIDE ${first.join(", ")}, then plan. \`diarchy stop\` ends the run.`;
     }
     if (planOpen) {
-        return `**To answer:** run \`diarchy reply "<ruling>" --decision plan\`. Your ruling closes plan as a DECIDE with basis human, and EXECUTE begins with no tasks: ${state.lead} must ASSIGN each task with new_task. \`diarchy stop\` ends the run.`;
+        return `**To answer:** run \`diarchy reply "<ruling>" --decision plan --task "<task>"\` with one \`--task\` per task. Your ruling closes plan as a DECIDE with basis human, and EXECUTE begins with those tasks as todo for ${state.lead} to ASSIGN; without \`--task\` it begins with none, and ${state.lead} must ASSIGN each task with new_task. \`diarchy stop\` ends the run.`;
     }
     return `**To answer:** run \`diarchy reply "<ruling>" --decision ${decision}\`. Your ruling closes ${decision} as a DECIDE with basis human and ${from} resumes. \`diarchy stop\` ends the run.`;
 }

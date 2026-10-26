@@ -31,16 +31,28 @@ export declare function qualifiesAsNew(item: EvidenceItem): boolean;
 export declare function citedEvidenceKeys(state: GoalState, decisionId: string): Set<string>;
 /** Keys of the items that count as new evidence relative to `decisionId`. */
 export declare function newEvidenceKeys(state: GoalState, decisionId: string, items: EvidenceItem[]): string[];
+/**
+ * The key that tells repeated work evidence from new, or null for an item
+ * that is not work evidence (`file`, `human`, `external`, a pending `test`).
+ * A review keys on its sender and verdict too, so a re-review that changes
+ * the verdict is new; a test keys on its result, so a fixed test is new.
+ */
+export declare function workEvidenceKey(from: AgentId, item: EvidenceItem): string | null;
+/** The work-evidence keys a message carries; only a STATUS carries any, since only a STATUS resets talk_since_work. */
+export declare function workEvidenceKeys(message: Message): string[];
+/** Did an earlier STATUS carry this key? A sha matches a seen sha it prefixes or that prefixes it (short and full forms). */
+export declare function workEvidenceSeen(key: string, seen: readonly string[]): boolean;
 /** Who introduced a PR: the registry, or this very message's `pr` item. */
 export declare function prAuthor(state: GoalState, message: Message, url: string): AgentId | undefined;
 /** Has `agent` introduced a PR on this goal (first `pr` evidence)? DONE 9.2(f). */
 export declare function authoredPr(state: GoalState, agent: AgentId | null): boolean;
 /**
  * Does this review task still owe its review? The engine closes a review task
- * when its assignee's `review` evidence on the PR lands, so one that is not done
- * is owed, a re-review ASSIGNed after an earlier review included. A STATUS
- * marking it done settles it only if the assignee has reviewed that PR at all
- * (budget.json keeps no record of which review closed which task).
+ * only when its assignee's `review` evidence on the PR lands (a STATUS with
+ * task_status done leaves it as it was), so one that is not done is owed, a
+ * re-review ASSIGNed after an earlier review included. A done task with no
+ * review from its assignee is still owed: diarchy 0.2.0 and older let a STATUS
+ * mark a review task done, and goals they stored keep that status.
  */
 export declare function reviewOwed(state: GoalState, task: TaskState): boolean;
 /** The PR an agent still owes a review on, if any (BUSY_REVIEWING). */

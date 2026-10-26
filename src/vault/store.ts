@@ -30,6 +30,7 @@ import {
   serializeMessageFile,
   tick,
   wordCount,
+  workEvidenceKeys,
   type AgentId,
   type DiarchyConfig,
   type GoalState,
@@ -475,11 +476,21 @@ export class VaultStore {
       body: normalizeBody(draft.body),
     };
     const now = new Date(Math.max(this.now().getTime(), Date.parse(assigned.ts)));
-    const result = evaluate(message, assigned.state, { now, callerAgent: this.agent });
+    const workSeen = draft.type === "STATUS" ? this.workSeen(paths, state) : [];
+    const result = evaluate(message, assigned.state, { now, callerAgent: this.agent, workSeen });
     if (!result.ok) return result;
     await this.waitUntil(result.message.ts);
     this.writeMessage(paths, result.message);
     return { ok: true, message: result.message, state: result.state, transition: result };
+  }
+
+  /**
+   * Work-evidence keys of the committed STATUS messages (PROTOCOL.md 3.1),
+   * which budget.json does not keep. A file that will not parse is left out,
+   * so it cannot block a post; its evidence then counts as new once.
+   */
+  private workSeen(paths: GoalPaths, state: GoalState): string[] {
+    return this.readMessages(paths, state, true).flatMap(workEvidenceKeys);
   }
 
   /** Write the system ASK_HUMAN for every `system_message` effect through the same path. */
@@ -670,7 +681,10 @@ export class VaultStore {
    * DECIDE `basis: human` answering the latest ASK_HUMAN; `decision` names the
    * thread to close (an open thread by `decision_id`, a decided one by
    * `supersedes`). A ruling without terminal punctuation gets a period so
-   * `diarchy reply "continue"` is one claim.
+   * `diarchy reply "continue"` is one claim. `tasks` go only on a ruling that
+   * closes an open `plan`, which opens EXECUTE with them as todo; anywhere
+   * else they are SCHEMA before anything is posted, since once plan is decided
+   * the lead ASSIGNs new tasks.
    */
   async reply(text: string, options: ReplyOptions = {}): Promise<PostResult> {
     this.requireHuman("reply");
@@ -691,6 +705,12 @@ export class VaultStore {
     if (options.decision !== undefined) {
       if (state.decisions[options.decision]?.status === "open") draft.decision_id = options.decision;
       else draft.supersedes = options.decision;
+    }
+    if (options.tasks !== undefined && options.tasks.length > 0) {
+      if (draft.decision_id !== "plan") {
+        return reject("SCHEMA", schemaText("tasks", "--task needs --decision plan while plan is open; once plan is decided the lead ASSIGNs new tasks"));
+      }
+      draft.tasks = [...options.tasks];
     }
     return this.postWith(draft, (paths, current) => this.kickoffOrRebuilt(paths, current));
   }

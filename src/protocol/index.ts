@@ -51,6 +51,9 @@ export {
   roleAllows,
   roleOf,
   threadsBeforePlan,
+  workEvidenceKey,
+  workEvidenceKeys,
+  workEvidenceSeen,
   type Role,
 } from "./state.js";
 export { assignId, evaluate, initialState, tick, type AssignedId, type EvaluateOptions } from "./engine.js";

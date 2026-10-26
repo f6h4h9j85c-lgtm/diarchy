@@ -169,10 +169,11 @@ program
   .argument("<text>", "your ruling, one sentence")
   .description("Answer a BLOCKED run with a DECIDE (basis human) and resume")
   .option("--decision <id>", "thread to close: plan or D<n> (default: a new D<n>)")
+  .option("--task <text>", "with --decision plan on an open plan: a task EXECUTE begins with, as todo for the lead to assign (repeatable)", collect, [])
   .option("--budget <key=value>", "raise a limit for the rest of the goal (repeatable)", collect, [])
   .option("--body <text>", "free text under the ruling")
   .option("--json", "machine-readable output")
-  .action((text: string, options: { decision?: string; budget: string[]; body?: string; json?: boolean }) =>
+  .action((text: string, options: { decision?: string; task: string[]; budget: string[]; body?: string; json?: boolean }) =>
     exitWith(() => runReply(projectDir(), text, options)),
   );
 

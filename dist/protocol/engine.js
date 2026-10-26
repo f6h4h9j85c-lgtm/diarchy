@@ -9,7 +9,7 @@
  */
 import { RULES, RULES_IN_ORDER } from "./rules.js";
 import { checkMessageShape, compactTs, isoSeconds } from "./schema.js";
-import { deadlinePassed, evidenceKey, isPm, limitHit, messageRef, minutesSince, newEvidenceKeys, nextDecisionId, nextTaskId, repliesToOpenChallenge, totalBudgetReached, } from "./state.js";
+import { deadlinePassed, evidenceKey, isPm, limitHit, messageRef, minutesSince, newEvidenceKeys, nextDecisionId, nextTaskId, repliesToOpenChallenge, totalBudgetReached, workEvidenceKeys, workEvidenceSeen, } from "./state.js";
 import { AGENT_HUMAN, AGENT_SYSTEM, DEFAULT_LIMITS, } from "./types.js";
 export { allowedTypes } from "./state.js";
 const DEADLOCK_MINUTES = 10;
@@ -41,13 +41,13 @@ export function evaluate(message, state, options) {
         if (rejection !== null)
             return rejection;
     }
-    return accept(ctx);
+    return accept(ctx, options.workSeen ?? []);
 }
-function accept(ctx) {
+function accept(ctx, workSeen) {
     const state = structuredClone(ctx.state);
     const message = { ...ctx.message };
     const effects = [];
-    applyCounters(state, message);
+    applyCounters(state, message, workSeen);
     applyByType(state, message, effects);
     state.messages.push({
         id: message.id,
@@ -62,21 +62,15 @@ function accept(ctx) {
     return { ok: true, message, state, effects };
 }
 const TALK_EXEMPT = ["STATUS", "BLOCKED", "DONE"];
-/** PROTOCOL.md 3.1 work evidence: a commit, pr, or review, or a test that passed or failed. */
-function isWorkEvidence(item) {
-    if (item.kind === "test")
-        return item.result !== "pending";
-    return item.kind === "commit" || item.kind === "pr" || item.kind === "review";
-}
-function applyCounters(state, message) {
+function applyCounters(state, message, workSeen) {
     if (!isPm(state, message.from))
         return;
     state.used.messages_total += 1;
     if (state.phase === "PLAN" && message.type !== "KICKOFF")
         state.used.plan_messages += 1;
     if (message.type === "STATUS") {
-        // A STATUS without work evidence is accepted but neither counts nor resets (section 8).
-        if ((message.evidence ?? []).some(isWorkEvidence))
+        // Only new work evidence (PROTOCOL.md 3.1) resets; any other STATUS is accepted but neither counts nor resets (section 8).
+        if (workEvidenceKeys(message).some((key) => !workEvidenceSeen(key, workSeen)))
             state.used.talk_since_work = 0;
     }
     else if (state.phase === "EXECUTE" && !TALK_EXEMPT.includes(message.type) && !repliesToOpenChallenge(state, message)) {
@@ -237,9 +231,14 @@ function applyAssign(state, message, effects) {
     state.tasks[id] = task;
     effects.push(taskEffect(task));
 }
-/** STATUS: PR registry, reviews, task status, and in EXECUTE the AC statuses (PROTOCOL.md 2.3). */
+/**
+ * STATUS: PR registry, reviews, task status, and in EXECUTE the AC statuses
+ * (PROTOCOL.md 2.3). Beside a `request_changes` review only `fail` items set
+ * AC status: a green suite on a PR that does not meet its ACs passes none.
+ */
 function applyWork(state, message, effects) {
     const items = message.evidence ?? [];
+    const changesRequested = items.some((item) => item.kind === "review" && item.verdict === "request_changes");
     for (const item of items) {
         if (item.kind === "pr" && !(item.url in state.prs))
             state.prs[item.url] = { author: message.from, reviews: [] };
@@ -248,12 +247,15 @@ function applyWork(state, message, effects) {
         if (item.kind === "review")
             applyReview(state, message.from, item.url, item.verdict, effects);
         if (item.kind === "test" && item.result !== "pending" && state.phase === "EXECUTE") {
-            applyTest(state, message.re, item.result, effects);
+            if (item.result === "fail" || !changesRequested)
+                applyTest(state, message.re, item.result, effects);
         }
     }
     if (message.task !== undefined && message.task_status !== undefined) {
         const task = state.tasks[message.task];
-        if (task !== undefined && task.status !== message.task_status) {
+        // A review task closes only when its assignee's review evidence lands (applyReview), never by task_status done.
+        const closesReview = task?.kind === "review" && message.task_status === "done";
+        if (task !== undefined && !closesReview && task.status !== message.task_status) {
             task.status = message.task_status;
             effects.push(taskEffect(task));
         }

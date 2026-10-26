@@ -1,5 +1,7 @@
 export interface ReplyCliOptions {
     decision?: string;
+    /** `--task`, repeatable: the tasks a ruling on an open plan opens EXECUTE with. */
+    task?: string[];
     budget: string[];
     body?: string;
     json?: boolean;

@@ -128,6 +128,44 @@ export function newEvidenceKeys(state, decisionId, items) {
     const cited = citedEvidenceKeys(state, decisionId);
     return items.filter(qualifiesAsNew).map(evidenceKey).filter((key) => !cited.has(key));
 }
+// ---------------------------------------------------------------------------
+// Work evidence (PROTOCOL.md 3.1 "new work evidence", TALK_WORK_RATIO)
+// ---------------------------------------------------------------------------
+/**
+ * The key that tells repeated work evidence from new, or null for an item
+ * that is not work evidence (`file`, `human`, `external`, a pending `test`).
+ * A review keys on its sender and verdict too, so a re-review that changes
+ * the verdict is new; a test keys on its result, so a fixed test is new.
+ */
+export function workEvidenceKey(from, item) {
+    switch (item.kind) {
+        case "commit":
+            return `commit:${item.sha}`;
+        case "pr":
+            return `pr:${item.url}`;
+        case "review":
+            return `review:${from}:${item.verdict}:${item.url}`;
+        case "test":
+            return item.result === "pending" ? null : `test:${item.result}:${item.test}`;
+        default:
+            return null;
+    }
+}
+/** The work-evidence keys a message carries; only a STATUS carries any, since only a STATUS resets talk_since_work. */
+export function workEvidenceKeys(message) {
+    if (message.type !== "STATUS")
+        return [];
+    return (message.evidence ?? []).flatMap((item) => {
+        const key = workEvidenceKey(message.from, item);
+        return key === null ? [] : [key];
+    });
+}
+/** Did an earlier STATUS carry this key? A sha matches a seen sha it prefixes or that prefixes it (short and full forms). */
+export function workEvidenceSeen(key, seen) {
+    if (!key.startsWith("commit:"))
+        return seen.includes(key);
+    return seen.some((other) => other.startsWith("commit:") && (other.startsWith(key) || key.startsWith(other)));
+}
 /** Who introduced a PR: the registry, or this very message's `pr` item. */
 export function prAuthor(state, message, url) {
     const registered = state.prs[url]?.author;
@@ -142,10 +180,11 @@ export function authoredPr(state, agent) {
 }
 /**
  * Does this review task still owe its review? The engine closes a review task
- * when its assignee's `review` evidence on the PR lands, so one that is not done
- * is owed, a re-review ASSIGNed after an earlier review included. A STATUS
- * marking it done settles it only if the assignee has reviewed that PR at all
- * (budget.json keeps no record of which review closed which task).
+ * only when its assignee's `review` evidence on the PR lands (a STATUS with
+ * task_status done leaves it as it was), so one that is not done is owed, a
+ * re-review ASSIGNed after an earlier review included. A done task with no
+ * review from its assignee is still owed: diarchy 0.2.0 and older let a STATUS
+ * mark a review task done, and goals they stored keep that status.
  */
 export function reviewOwed(state, task) {
     if (task.kind !== "review" || task.assignee === null || task.pr === null)

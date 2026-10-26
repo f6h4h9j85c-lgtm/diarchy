@@ -1855,8 +1855,11 @@ describe("read and waitForReply", () => {
     expect(goal).toContain("> **Deadlock on plan, re AC1.** claude did not DECIDE within 2 messages or 10 minutes. The two positions:\n>\n");
     expect(goal).toContain("> 1. claude PROPOSE 14:02:10: *A token\\-bucket middleware keyed by API key in the existing Redis client satisfies AC1 and AC2\\.*\n");
     expect(goal).toContain("> 2. codex CHALLENGE 14:04:55: *An in\\-process bucket meets AC1 with no network hop if the API runs as one replica\\.* (test `kubectl -n prod get deploy api -o jsonpath='{.spec.replicas}' prints 1` · pending)\n>\n");
-    // A human ruling on plan carries no tasks and closes PLAN at once, so the hint must not promise that PLAN resumes.
-    expect(goal).toContain('> **To answer:** run `diarchy reply "<ruling>" --decision plan`. Your ruling closes plan as a DECIDE with basis human, and EXECUTE begins with no tasks: claude must ASSIGN each task with new_task. `diarchy stop` ends the run.\n');
+    // A human ruling on plan closes PLAN at once, with the tasks its --task options carry, so the hint must not promise that PLAN resumes.
+    const answer = '**To answer:** run `diarchy reply "<ruling>" --decision plan --task "<task>"` with one `--task` per task. Your ruling closes plan as a DECIDE with basis human, and EXECUTE begins with those tasks as todo for claude to ASSIGN; without `--task` it begins with none, and claude must ASSIGN each task with new_task. `diarchy stop` ends the run.';
+    expect(goal).toContain(`> ${answer}\n`);
+    // RENDERING.md 4.1 quotes this very paragraph, with <lead> for the lead.
+    expect(readFileSync(join(SAMPLES, "..", "RENDERING.md"), "utf8")).toContain(`\`\` ${answer.replaceAll("claude", "<lead>")} \`\``);
     expect(goal).toContain("| BLOCKED | claude | codex | 2026-10-25 14:14:55 UTC |");
     const chat = h.file("chat.md");
     expect(chat).toContain("> [!WARNING]\n> **BLOCKED** from PLAN · **human needed** since 14:14:55 UTC · lead claude · challenger codex\n");
@@ -2069,6 +2072,37 @@ describe("reply and stop as human", () => {
     expect(chat).not.toContain("## → PLAN · 14:30:00");
   });
 
+  it("reply --decision plan with tasks opens EXECUTE with them as todo; tasks on any other ruling are SCHEMA and post nothing", async () => {
+    const h = harness();
+    await replay(h, 5);
+    h.clock.set("2026-10-25T14:14:55Z");
+    await h.claude.waitForReply({ timeoutMs: 1_000 });
+    expect(h.human.state()).toMatchObject({ phase: "BLOCKED", decisions: { plan: { status: "open" }, D1: { status: "decided" } } });
+    h.clock.set("2026-10-25T14:30:00Z");
+    const chatFiles = (): number => readdirSync(join(h.goalDir(), "chat")).length;
+    const posted = chatFiles();
+    const misplaced = 'Field "tasks": --task needs --decision plan while plan is open; once plan is decided the lead ASSIGNs new tasks. Fix it per PROTOCOL.md section 3 and post again.';
+    expect(await h.human.reply("Use the Redis-backed bucket.", { tasks: ["Token bucket in Redis"] })).toEqual({ ok: false, rule: "SCHEMA", message: misplaced });
+    expect(await h.human.reply("Use the Redis-backed bucket.", { decision: "D1", tasks: ["Token bucket in Redis"] })).toEqual({ ok: false, rule: "SCHEMA", message: misplaced });
+    // Each task meets the rules a PM's plan tasks do.
+    const twoLines = await h.human.reply("Use the Redis-backed bucket.", { decision: "plan", tasks: ["Token bucket\nin Redis"] });
+    expect(twoLines).toMatchObject({ ok: false, rule: "SCHEMA", message: expect.stringMatching(/^Field "tasks\.0": must be one line/) });
+    expect(chatFiles()).toBe(posted);
+    expect(h.human.state()?.phase).toBe("BLOCKED");
+
+    const result = await h.human.reply("Use the Redis-backed bucket.", { decision: "plan", tasks: ["Token bucket in Redis", "RATE_LIMIT_PER_MIN config"] });
+    ok(result);
+    expect(result).toMatchObject({ decision_id: "plan", phase: "EXECUTE" });
+    expect(parseMessageFile(h.file(`chat/${result.id}.md`)).tasks).toEqual(["Token bucket in Redis", "RATE_LIMIT_PER_MIN config"]);
+    expect(h.human.state()?.tasks).toMatchObject({
+      T1: { task: "Token bucket in Redis", status: "todo", assignee: null },
+      T2: { task: "RATE_LIMIT_PER_MIN config", status: "todo", assignee: null },
+    });
+    expect(nextStep(h.claude.state() as GoalState, h.claude.listMessages(), "claude", [])).toEqual({ text: "assign T1 (Token bucket in Redis): call assign", owes: true });
+    // Once plan is decided, the lead ASSIGNs any further task.
+    expect(await h.human.reply("Add a README section.", { decision: "plan", tasks: ["README section"] })).toEqual({ ok: false, rule: "SCHEMA", message: misplaced });
+  });
+
   it("reply --decision on a decided thread supersedes it", async () => {
     const h = harness();
     await replay(h, D3_INDEX + 1);
@@ -2224,6 +2258,55 @@ describe("reply and stop as human", () => {
     h.clock.advance(60_000);
     ok(await h.human.reply("continue", { budgets: { messages_total: 10 } }));
     expect(h.human.state()).toMatchObject({ phase: "EXECUTE", limits: { messages_total: 10 } });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// New work evidence (PROTOCOL.md 3.1), read from the committed chat/ files
+// ---------------------------------------------------------------------------
+
+describe("work evidence the chat already holds", () => {
+  it("a STATUS resets talk_since_work only with work evidence no committed STATUS carried, and budget.json keeps no record of it", async () => {
+    const h = harness();
+    ok(await h.human.kickoff({ goal: "Tiny goal.", acceptance_criteria: ["Done."], lead: "claude", slug: "tiny" }));
+    ok(await h.claude.post({ type: "PROPOSE", to: "all", re: ["AC1"], decision_id: "plan", claim: "One step does it.", body: "Nothing to split." }));
+    ok(await h.claude.post({ type: "DECIDE", to: "all", re: ["AC1"], decision_id: "plan", basis: "authority", claim: "One step does it.", tasks: ["Do it"], body: "No test exists before the work." }));
+    const talk = (): number | undefined => h.human.state()?.used.talk_since_work;
+    const status = (sha: string): MessageDraft => ({
+      type: "STATUS",
+      to: "all",
+      re: ["AC1"],
+      evidence: [{ kind: "commit", sha }, { kind: "test", test: "npm test", result: "pass" }],
+      body: "Step landed.",
+    });
+    const assign = (to: string, task: Partial<MessageDraft>): MessageDraft => ({
+      type: "ASSIGN",
+      to,
+      re: ["AC1"],
+      kind: "implement",
+      worktree: `.diarchy/worktrees/${to}`,
+      branch: `diarchy/20261025-tiny/${to}`,
+      ...task,
+    });
+    ok(await h.claude.post(assign("codex", { task: "T1" })));
+    expect(talk()).toBe(1);
+    const first = await h.codex.post(status("abc1234"));
+    ok(first);
+    expect(talk()).toBe(0);
+    ok(await h.claude.post(assign("claude", { new_task: "Document the step" })));
+    expect(talk()).toBe(1);
+    // The same commit in its longer form, and the same passing test: nothing new.
+    const second = await h.codex.post(status("abc1234def0"));
+    ok(second);
+    expect(talk()).toBe(1);
+    expect(h.file("budget.json", "20261025-tiny")).not.toContain("abc1234");
+    // A committed chat file that will not parse is left out, so it cannot block a post; its evidence counts as new once.
+    for (const id of [first.id, second.id]) {
+      const path = join(h.goalDir("20261025-tiny"), "chat", `${id}.md`);
+      writeFileSync(path, readFileSync(path, "utf8").replace("type: STATUS", "type: HELLO"));
+    }
+    ok(await h.codex.post(status("abc1234")));
+    expect(talk()).toBe(0);
   });
 });
 

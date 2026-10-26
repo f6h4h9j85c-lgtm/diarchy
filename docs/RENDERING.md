@@ -342,7 +342,7 @@ The word `EXECUTE` in the external variant is `<blocked_from>` when the block ha
 | AC1 | <criterion> | open |
 ```
 
-Status is the literal token; `failing` is rendered `**failing**`. Status follows PROTOCOL 2.3: set by the latest `test` evidence item in a STATUS accepted in EXECUTE whose `re` includes the AC (`pass` → `passing`, `fail` → `failing`, `pending` → unchanged), `open` until one exists. `test` items in CHALLENGE, DECIDE, DONE, or a PLAN STATUS are probes or attestations and never change it. Criteria added by `ac_add` are appended in order.
+Status is the literal token; `failing` is rendered `**failing**`. Status follows PROTOCOL 2.3: set by the latest `test` evidence item in a STATUS accepted in EXECUTE whose `re` includes the AC (`pass` → `passing`, `fail` → `failing`, `pending` → unchanged), `open` until one exists. `test` items in CHALLENGE, DECIDE, DONE, or a PLAN STATUS are probes or attestations and never change it, and a `pass` item in a STATUS that carries a `request_changes` review leaves it as it was. Criteria added by `ac_add` are appended in order.
 
 ### 4.4 Tasks
 

@@ -1,0 +1,38 @@
+description: "Beside request_changes only fail items apply (PROTOCOL.md 2.3): a fail check followed by a pass item leaves the AC failing, where the latest item would otherwise have set it passing."
+state:
+  base: execute-review-assigned
+message:
+  protocol_version: 1
+  id: 20261025T152000Z-0005-claude-STATUS
+  goal: 20261025-rate-limit
+  from: claude
+  to: all
+  type: STATUS
+  re:
+    - AC2
+  evidence:
+    - kind: review
+      url: https://github.com/acme/api/pull/412
+      verdict: request_changes
+    - kind: test
+      test: grep -n RATE_LIMIT_PER_MIN src/middleware/rateLimit.ts finds no read of the variable
+      result: fail
+    - kind: test
+      test: npm test
+      result: pass
+  phase: EXECUTE
+  ts: 2026-10-25T15:20:00Z
+  body: src/middleware/rateLimit.ts hardcodes 100, so AC2 fails although the suite is green.
+expect:
+  ok: true
+  phase_after: EXECUTE
+  effects:
+    - kind: ac_status
+      ac: AC2
+      status: failing
+  state:
+    acs:
+      AC1:
+        status: passing
+      AC2:
+        status: failing

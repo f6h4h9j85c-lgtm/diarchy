@@ -237,9 +237,14 @@ function applyAssign(state, message, effects) {
     state.tasks[id] = task;
     effects.push(taskEffect(task));
 }
-/** STATUS: PR registry, reviews, task status, and in EXECUTE the AC statuses (PROTOCOL.md 2.3). */
+/**
+ * STATUS: PR registry, reviews, task status, and in EXECUTE the AC statuses
+ * (PROTOCOL.md 2.3). Beside a `request_changes` review only `fail` items set
+ * AC status: a green suite on a PR that does not meet its ACs passes none.
+ */
 function applyWork(state, message, effects) {
     const items = message.evidence ?? [];
+    const changesRequested = items.some((item) => item.kind === "review" && item.verdict === "request_changes");
     for (const item of items) {
         if (item.kind === "pr" && !(item.url in state.prs))
             state.prs[item.url] = { author: message.from, reviews: [] };
@@ -248,7 +253,8 @@ function applyWork(state, message, effects) {
         if (item.kind === "review")
             applyReview(state, message.from, item.url, item.verdict, effects);
         if (item.kind === "test" && item.result !== "pending" && state.phase === "EXECUTE") {
-            applyTest(state, message.re, item.result, effects);
+            if (item.result === "fail" || !changesRequested)
+                applyTest(state, message.re, item.result, effects);
         }
     }
     if (message.task !== undefined && message.task_status !== undefined) {

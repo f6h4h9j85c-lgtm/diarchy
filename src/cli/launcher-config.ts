@@ -21,7 +21,7 @@ export interface AgentLaunch {
 export interface LauncherKnobs {
   /** How often the supervisor re-reads budget.json (ms, at most 1000). */
   poll_ms: number;
-  /** Restarts per agent between two messages. Past it the agent is left dead until the next message lands, which respawns it with a fresh count. */
+  /** Restarts per agent between two messages. Past it the agent is left dead until the next message lands, which respawns it with a fresh count. An exit followed by another session holding the agent's lease does not count: the PM waits for that session instead. */
   max_restarts: number;
   restart_backoff_ms: number;
   /** After DONE or a non-clock block: wait this long for the PMs to exit on their own, then SIGTERM, then SIGKILL after as long again. */

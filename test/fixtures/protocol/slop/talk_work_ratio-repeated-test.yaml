@@ -1,0 +1,56 @@
+description: "TALK_WORK_RATIO: at the limit, codex repeats the passing test and the commit (in its longer form) that its STATUS in the base already carried; repeated work evidence does not reset the counter, so the next ASSIGN is still rejected."
+state:
+  base: execute-pr
+  used:
+    plan_messages: 3
+    messages_total: 8
+    talk_since_work: 3
+    wall_clock_minutes: 75
+    spend_usd: 0
+work_seen:
+  - commit:9f3c2ab
+  - pr:https://github.com/acme/api/pull/412
+  - test:pass:npm test -- rateLimit
+prior:
+  - message:
+      protocol_version: 1
+      id: 20261025T151500Z-0004-codex-STATUS
+      goal: 20261025-rate-limit
+      from: codex
+      to: all
+      type: STATUS
+      re:
+        - AC1
+      evidence:
+        - kind: commit
+          sha: 9f3c2ab4e1d0
+        - kind: test
+          test: npm test -- rateLimit
+          result: pass
+      phase: EXECUTE
+      ts: 2026-10-25T15:15:00Z
+      body: Still green on the middleware branch.
+message:
+  protocol_version: 1
+  id: 20261025T151600Z-0004-claude-ASSIGN
+  goal: 20261025-rate-limit
+  from: claude
+  to: codex
+  type: ASSIGN
+  re:
+    - AC2
+  task: T2
+  kind: implement
+  worktree: .diarchy/worktrees/codex
+  branch: diarchy/20261025-rate-limit/codex
+  phase: EXECUTE
+  ts: 2026-10-25T15:16:00Z
+  body: ""
+expect:
+  ok: false
+  rule: TALK_WORK_RATIO
+  message: 3 messages since the last STATUS with new work evidence. Post STATUS with a commit, pr, review, or a passing or failing test that no earlier STATUS carried, or post BLOCKED or DONE, before anything else.
+  state:
+    used:
+      messages_total: 9
+      talk_since_work: 3

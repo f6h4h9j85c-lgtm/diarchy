@@ -1,0 +1,106 @@
+description: "TALK_WORK_RATIO: codex reports commit abc1234, the lead's three ASSIGNs reach the limit, and codex reposts the same commit; a STATUS whose work evidence an earlier STATUS already carried is accepted but does not reset the counter, so the next ASSIGN is rejected."
+state:
+  base: execute
+prior:
+  - message:
+      protocol_version: 1
+      id: 20261025T140900Z-0001-codex-STATUS
+      goal: 20261025-rate-limit
+      from: codex
+      to: all
+      type: STATUS
+      re:
+        - AC1
+      evidence:
+        - kind: commit
+          sha: abc1234
+      phase: EXECUTE
+      ts: 2026-10-25T14:09:00Z
+      body: Middleware scaffolded.
+  - message:
+      protocol_version: 1
+      id: 20261025T141000Z-0003-claude-ASSIGN
+      goal: 20261025-rate-limit
+      from: claude
+      to: codex
+      type: ASSIGN
+      re:
+        - AC1
+      task: T1
+      kind: implement
+      worktree: .diarchy/worktrees/codex
+      branch: diarchy/20261025-rate-limit/codex
+      phase: EXECUTE
+      ts: 2026-10-25T14:10:00Z
+      body: ""
+  - message:
+      protocol_version: 1
+      id: 20261025T141100Z-0004-claude-ASSIGN
+      goal: 20261025-rate-limit
+      from: claude
+      to: claude
+      type: ASSIGN
+      re:
+        - AC2
+      task: T2
+      kind: implement
+      worktree: .diarchy/worktrees/claude
+      branch: diarchy/20261025-rate-limit/claude
+      phase: EXECUTE
+      ts: 2026-10-25T14:11:00Z
+      body: ""
+  - message:
+      protocol_version: 1
+      id: 20261025T141200Z-0005-claude-ASSIGN
+      goal: 20261025-rate-limit
+      from: claude
+      to: codex
+      type: ASSIGN
+      re:
+        - AC3
+      task: T3
+      kind: implement
+      worktree: .diarchy/worktrees/codex
+      branch: diarchy/20261025-rate-limit/codex
+      phase: EXECUTE
+      ts: 2026-10-25T14:12:00Z
+      body: ""
+  - message:
+      protocol_version: 1
+      id: 20261025T141300Z-0002-codex-STATUS
+      goal: 20261025-rate-limit
+      from: codex
+      to: all
+      type: STATUS
+      re:
+        - AC1
+      evidence:
+        - kind: commit
+          sha: abc1234
+      phase: EXECUTE
+      ts: 2026-10-25T14:13:00Z
+      body: Middleware scaffolded, as reported.
+message:
+  protocol_version: 1
+  id: 20261025T141400Z-0006-claude-ASSIGN
+  goal: 20261025-rate-limit
+  from: claude
+  to: claude
+  type: ASSIGN
+  re:
+    - AC3
+  new_task: Document RATE_LIMIT_PER_MIN in the README
+  kind: implement
+  worktree: .diarchy/worktrees/claude
+  branch: diarchy/20261025-rate-limit/claude
+  phase: EXECUTE
+  ts: 2026-10-25T14:14:00Z
+  body: ""
+expect:
+  ok: false
+  rule: TALK_WORK_RATIO
+  message: 3 messages since the last STATUS with new work evidence. Post STATUS with a commit, pr, review, or a passing or failing test that no earlier STATUS carried, or post BLOCKED or DONE, before anything else.
+  state:
+    used:
+      messages_total: 8
+      talk_since_work: 3

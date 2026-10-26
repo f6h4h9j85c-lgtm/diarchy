@@ -31,6 +31,17 @@ export declare function qualifiesAsNew(item: EvidenceItem): boolean;
 export declare function citedEvidenceKeys(state: GoalState, decisionId: string): Set<string>;
 /** Keys of the items that count as new evidence relative to `decisionId`. */
 export declare function newEvidenceKeys(state: GoalState, decisionId: string, items: EvidenceItem[]): string[];
+/**
+ * The key that tells repeated work evidence from new, or null for an item
+ * that is not work evidence (`file`, `human`, `external`, a pending `test`).
+ * A review keys on its sender and verdict too, so a re-review that changes
+ * the verdict is new; a test keys on its result, so a fixed test is new.
+ */
+export declare function workEvidenceKey(from: AgentId, item: EvidenceItem): string | null;
+/** The work-evidence keys a message carries; only a STATUS carries any, since only a STATUS resets talk_since_work. */
+export declare function workEvidenceKeys(message: Message): string[];
+/** Did an earlier STATUS carry this key? A sha matches a seen sha it prefixes or that prefixes it (short and full forms). */
+export declare function workEvidenceSeen(key: string, seen: readonly string[]): boolean;
 /** Who introduced a PR: the registry, or this very message's `pr` item. */
 export declare function prAuthor(state: GoalState, message: Message, url: string): AgentId | undefined;
 /** Has `agent` introduced a PR on this goal (first `pr` evidence)? DONE 9.2(f). */

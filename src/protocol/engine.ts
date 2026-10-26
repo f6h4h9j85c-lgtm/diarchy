@@ -21,6 +21,8 @@ import {
   nextTaskId,
   repliesToOpenChallenge,
   totalBudgetReached,
+  workEvidenceKeys,
+  workEvidenceSeen,
   type LimitHit,
 } from "./state.js";
 import {
@@ -34,7 +36,6 @@ import {
   type DecisionStatus,
   type DiarchyConfig,
   type Effect,
-  type EvidenceItem,
   type GoalState,
   type Kickoff,
   type Message,
@@ -51,6 +52,13 @@ export { allowedTypes } from "./state.js";
 export interface EvaluateOptions {
   now: Date;
   callerAgent: AgentId;
+  /**
+   * `workEvidenceKeys` of every STATUS already accepted on the goal. budget.json
+   * does not keep them, so the store reads them from the committed chat/ files.
+   * A STATUS resets talk_since_work only with a key not among them (PROTOCOL.md
+   * 3.1); omitted, no key counts as seen.
+   */
+  workSeen?: readonly string[];
 }
 
 const DEADLOCK_MINUTES = 10;
@@ -83,14 +91,14 @@ export function evaluate(message: Message, state: GoalState, options: EvaluateOp
     const rejection = RULES[id](ctx);
     if (rejection !== null) return rejection;
   }
-  return accept(ctx);
+  return accept(ctx, options.workSeen ?? []);
 }
 
-function accept(ctx: RuleContext): Acceptance {
+function accept(ctx: RuleContext, workSeen: readonly string[]): Acceptance {
   const state = structuredClone(ctx.state);
   const message: Message = { ...ctx.message };
   const effects: Effect[] = [];
-  applyCounters(state, message);
+  applyCounters(state, message, workSeen);
   applyByType(state, message, effects);
   state.messages.push({
     id: message.id,
@@ -107,19 +115,13 @@ function accept(ctx: RuleContext): Acceptance {
 
 const TALK_EXEMPT: MessageType[] = ["STATUS", "BLOCKED", "DONE"];
 
-/** PROTOCOL.md 3.1 work evidence: a commit, pr, or review, or a test that passed or failed. */
-function isWorkEvidence(item: EvidenceItem): boolean {
-  if (item.kind === "test") return item.result !== "pending";
-  return item.kind === "commit" || item.kind === "pr" || item.kind === "review";
-}
-
-function applyCounters(state: GoalState, message: Message): void {
+function applyCounters(state: GoalState, message: Message, workSeen: readonly string[]): void {
   if (!isPm(state, message.from)) return;
   state.used.messages_total += 1;
   if (state.phase === "PLAN" && message.type !== "KICKOFF") state.used.plan_messages += 1;
   if (message.type === "STATUS") {
-    // A STATUS without work evidence is accepted but neither counts nor resets (section 8).
-    if ((message.evidence ?? []).some(isWorkEvidence)) state.used.talk_since_work = 0;
+    // Only new work evidence (PROTOCOL.md 3.1) resets; any other STATUS is accepted but neither counts nor resets (section 8).
+    if (workEvidenceKeys(message).some((key) => !workEvidenceSeen(key, workSeen))) state.used.talk_since_work = 0;
   } else if (state.phase === "EXECUTE" && !TALK_EXEMPT.includes(message.type) && !repliesToOpenChallenge(state, message)) {
     state.used.talk_since_work += 1;
   }

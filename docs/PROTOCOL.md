@@ -109,7 +109,7 @@ Body: free text, at most 120 whitespace-split tokens. MAY be empty except on KIC
 
 "New evidence" relative to decision D: an item whose kind qualifies above and whose key `(kind, test|url|id)` appears in no accepted message carrying `decision_id` D or any decision D supersedes.
 
-"Work evidence": a `commit`, `pr`, or `review` item, or a `test` item with `result` pass or fail. Only a STATUS carrying work evidence resets `talk_since_work` (section 8); one carrying only `file`, `human`, `external`, or pending `test` items is accepted and leaves the counter as it was.
+"Work evidence": a `commit`, `pr`, or `review` item, or a `test` item with `result` pass or fail. It is new when no earlier STATUS on the goal carried the same key: `commit` by `sha` (a sha that is a prefix of an earlier one, or that an earlier one is a prefix of, is the same commit), `pr` by `url`, `review` by sender, `verdict`, and `url` (a re-review that changes the verdict is new), `test` by `result` and `test`. Only a STATUS carrying new work evidence resets `talk_since_work` (section 8); one carrying only work evidence seen before, or only `file`, `human`, `external`, or pending `test` items, is accepted and leaves the counter as it was. `budget.json` does not record these keys: the store reads them from the goal's committed `chat/` files and leaves out a file that will not parse.
 
 Word-limited text (`test`, `note`, each `ac_add` item) needs at least one word: a blank or whitespace-only value fails SCHEMA.
 
@@ -311,7 +311,7 @@ PRs 412 and 413 merged to main.
 | CHALLENGE | challenger only | `claim`, `decision_id` (not superseded), `reply_to`, `evidence` with a `test` item | PLAN; EXECUTE and decided threads only with new evidence; not while another decision's deadlock watch is set | round 2; starts deadlock watch | lead: DECIDE (mandatory) |
 | DECIDE | lead; `human` (`basis: human`) in BLOCKED | `claim`, `basis`, `decision_id` or `supersedes`; `evidence` when `basis: test` | PLAN; EXECUTE only replying to an open CHALLENGE or with `supersedes` plus new evidence; BLOCKED human only | closes thread, appends decisions.md, clears deadlock watch; `plan` → EXECUTE and writes `tasks`/`ac_add`; human DECIDE restores `blocked_from`, applies `budgets` | none |
 | ASSIGN | lead | `to` = agent id; `task` or `new_task`; `kind`; `worktree` + `branch` (implement) or `pr` (review) | EXECUTE | task assignee, branch, status `assigned`; review assignee busy until review evidence for that PR lands | assignee: STATUS |
-| STATUS | any PM | `evidence` non-empty | PLAN, EXECUTE | with work evidence (3.1) resets `talk_since_work`; updates PR registry, task status, and (in EXECUTE) AC status, where beside a `request_changes` review only `fail` items count (2.3) | none |
+| STATUS | any PM | `evidence` non-empty | PLAN, EXECUTE | with new work evidence (3.1) resets `talk_since_work`; updates PR registry, task status, and (in EXECUTE) AC status, where beside a `request_changes` review only `fail` items count (2.3) | none |
 | DONE | lead | `evidence` non-empty; 9.2 holds | EXECUTE | EXECUTE → DONE; its evidence changes no AC, PR, or task; launcher stops both CLIs | none |
 | BLOCKED | any PM; `human` via `diarchy stop` (`kind: external`) | `kind`, body | PLAN, EXECUTE; `human` also BLOCKED | `external`: → BLOCKED, system posts ASK_HUMAN quoting the body (its first 100 words, ending `...` when cut); `internal`: none; `human`: → BLOCKED with no ASK_HUMAN (section 6) | lead: ASSIGN or DECIDE; after `human`: human DECIDE via `diarchy reply` |
 | ASK_HUMAN | `system` only | body; `reply_to` unless budget-triggered | written at every transition into BLOCKED except `diarchy stop` | launcher notifies human, exits non-zero | human: DECIDE via `diarchy reply` |
@@ -371,7 +371,7 @@ In EXECUTE every thread is already decided, so an EXECUTE DECIDE is always a sup
 | messages_total | 80 | PM messages accepted, all phases | `used >= limit` after an acceptance in PLAN/EXECUTE: → BLOCKED, system ASK_HUMAN (TOTAL_BUDGET) |
 | challenges_per_decision | 1 | per `decision_id` | ONE_CHALLENGE |
 | rounds_per_decision | 2 | per open thread | TWO_ROUNDS |
-| talk_work_ratio | 3 | `talk_since_work`: EXECUTE messages since the last STATUS with work evidence (3.1), which resets it; BLOCKED, DONE, every STATUS, and a DECIDE replying to an open CHALLENGE neither count nor are gated | `talk_since_work >= limit`: reject all but STATUS, BLOCKED, DONE, exempt DECIDE (TALK_WORK_RATIO) |
+| talk_work_ratio | 3 | `talk_since_work`: EXECUTE messages since the last STATUS with new work evidence (3.1), which resets it; BLOCKED, DONE, every STATUS, and a DECIDE replying to an open CHALLENGE neither count nor are gated | `talk_since_work >= limit`: reject all but STATUS, BLOCKED, DONE, exempt DECIDE (TALK_WORK_RATIO) |
 | wall_clock_minutes | 240 | minutes since `kickoff.created`, checked every tick | at limit in PLAN/EXECUTE: → BLOCKED, system ASK_HUMAN (WALL_CLOCK) |
 | spend_usd | null | `used.spend_usd`; reserved: nothing writes it in diarchy 0.1 (the launcher does not meter cost), so it stays 0 | none in 0.1: a limit set here never trips; once metered, at limit same as WALL_CLOCK |
 

@@ -1,0 +1,36 @@
+description: "TALK_WORK_RATIO near miss: at the limit, claude approves PR 412 after an earlier request_changes on it; a review with a new verdict is new work evidence, so the STATUS resets the counter."
+state:
+  base: execute-pr
+  used:
+    plan_messages: 3
+    messages_total: 8
+    talk_since_work: 3
+    wall_clock_minutes: 75
+    spend_usd: 0
+work_seen:
+  - commit:9f3c2ab
+  - pr:https://github.com/acme/api/pull/412
+  - test:pass:npm test -- rateLimit
+  - review:claude:request_changes:https://github.com/acme/api/pull/412
+message:
+  protocol_version: 1
+  id: 20261025T151500Z-0004-claude-STATUS
+  goal: 20261025-rate-limit
+  from: claude
+  to: all
+  type: STATUS
+  re:
+    - AC1
+  evidence:
+    - kind: review
+      url: https://github.com/acme/api/pull/412
+      verdict: approve
+  phase: EXECUTE
+  ts: 2026-10-25T15:15:00Z
+  body: ""
+expect:
+  ok: true
+  state:
+    used:
+      messages_total: 9
+      talk_since_work: 0

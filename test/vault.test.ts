@@ -2206,6 +2206,55 @@ describe("reply and stop as human", () => {
 });
 
 // ---------------------------------------------------------------------------
+// New work evidence (PROTOCOL.md 3.1), read from the committed chat/ files
+// ---------------------------------------------------------------------------
+
+describe("work evidence the chat already holds", () => {
+  it("a STATUS resets talk_since_work only with work evidence no committed STATUS carried, and budget.json keeps no record of it", async () => {
+    const h = harness();
+    ok(await h.human.kickoff({ goal: "Tiny goal.", acceptance_criteria: ["Done."], lead: "claude", slug: "tiny" }));
+    ok(await h.claude.post({ type: "PROPOSE", to: "all", re: ["AC1"], decision_id: "plan", claim: "One step does it.", body: "Nothing to split." }));
+    ok(await h.claude.post({ type: "DECIDE", to: "all", re: ["AC1"], decision_id: "plan", basis: "authority", claim: "One step does it.", tasks: ["Do it"], body: "No test exists before the work." }));
+    const talk = (): number | undefined => h.human.state()?.used.talk_since_work;
+    const status = (sha: string): MessageDraft => ({
+      type: "STATUS",
+      to: "all",
+      re: ["AC1"],
+      evidence: [{ kind: "commit", sha }, { kind: "test", test: "npm test", result: "pass" }],
+      body: "Step landed.",
+    });
+    const assign = (to: string, task: Partial<MessageDraft>): MessageDraft => ({
+      type: "ASSIGN",
+      to,
+      re: ["AC1"],
+      kind: "implement",
+      worktree: `.diarchy/worktrees/${to}`,
+      branch: `diarchy/20261025-tiny/${to}`,
+      ...task,
+    });
+    ok(await h.claude.post(assign("codex", { task: "T1" })));
+    expect(talk()).toBe(1);
+    const first = await h.codex.post(status("abc1234"));
+    ok(first);
+    expect(talk()).toBe(0);
+    ok(await h.claude.post(assign("claude", { new_task: "Document the step" })));
+    expect(talk()).toBe(1);
+    // The same commit in its longer form, and the same passing test: nothing new.
+    const second = await h.codex.post(status("abc1234def0"));
+    ok(second);
+    expect(talk()).toBe(1);
+    expect(h.file("budget.json", "20261025-tiny")).not.toContain("abc1234");
+    // A committed chat file that will not parse is left out, so it cannot block a post; its evidence counts as new once.
+    for (const id of [first.id, second.id]) {
+      const path = join(h.goalDir("20261025-tiny"), "chat", `${id}.md`);
+      writeFileSync(path, readFileSync(path, "utf8").replace("type: STATUS", "type: HELLO"));
+    }
+    ok(await h.codex.post(status("abc1234")));
+    expect(talk()).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // A goal written by v0.1.0 (PROTOCOL.md 12)
 // ---------------------------------------------------------------------------
 

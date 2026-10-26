@@ -30,6 +30,7 @@ import {
   serializeMessageFile,
   tick,
   wordCount,
+  workEvidenceKeys,
   type AgentId,
   type DiarchyConfig,
   type GoalState,
@@ -475,11 +476,21 @@ export class VaultStore {
       body: normalizeBody(draft.body),
     };
     const now = new Date(Math.max(this.now().getTime(), Date.parse(assigned.ts)));
-    const result = evaluate(message, assigned.state, { now, callerAgent: this.agent });
+    const workSeen = draft.type === "STATUS" ? this.workSeen(paths, state) : [];
+    const result = evaluate(message, assigned.state, { now, callerAgent: this.agent, workSeen });
     if (!result.ok) return result;
     await this.waitUntil(result.message.ts);
     this.writeMessage(paths, result.message);
     return { ok: true, message: result.message, state: result.state, transition: result };
+  }
+
+  /**
+   * Work-evidence keys of the committed STATUS messages (PROTOCOL.md 3.1),
+   * which budget.json does not keep. A file that will not parse is left out,
+   * so it cannot block a post; its evidence then counts as new once.
+   */
+  private workSeen(paths: GoalPaths, state: GoalState): string[] {
+    return this.readMessages(paths, state, true).flatMap(workEvidenceKeys);
   }
 
   /** Write the system ASK_HUMAN for every `system_message` effect through the same path. */

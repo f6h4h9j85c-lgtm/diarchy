@@ -278,7 +278,7 @@ const talkWorkRatio = ({ message, state }) => {
         return null;
     if (TALK_EXEMPT.includes(message.type) || repliesToOpenChallenge(state, message))
         return null;
-    return reject("TALK_WORK_RATIO", `${state.used.talk_since_work} messages since the last STATUS with work evidence. Post STATUS with a commit, pr, review, or a passing or failing test, or post BLOCKED or DONE, before anything else.`);
+    return reject("TALK_WORK_RATIO", `${state.used.talk_since_work} messages since the last STATUS with new work evidence. Post STATUS with a commit, pr, review, or a passing or failing test that no earlier STATUS carried, or post BLOCKED or DONE, before anything else.`);
 };
 const citeAc = ({ message, state }) => {
     const known = Object.keys(state.acs);

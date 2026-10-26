@@ -9,7 +9,7 @@
  */
 import { RULES, RULES_IN_ORDER } from "./rules.js";
 import { checkMessageShape, compactTs, isoSeconds } from "./schema.js";
-import { deadlinePassed, evidenceKey, isPm, limitHit, messageRef, minutesSince, newEvidenceKeys, nextDecisionId, nextTaskId, repliesToOpenChallenge, totalBudgetReached, } from "./state.js";
+import { deadlinePassed, evidenceKey, isPm, limitHit, messageRef, minutesSince, newEvidenceKeys, nextDecisionId, nextTaskId, repliesToOpenChallenge, totalBudgetReached, workEvidenceKeys, workEvidenceSeen, } from "./state.js";
 import { AGENT_HUMAN, AGENT_SYSTEM, DEFAULT_LIMITS, } from "./types.js";
 export { allowedTypes } from "./state.js";
 const DEADLOCK_MINUTES = 10;
@@ -41,13 +41,13 @@ export function evaluate(message, state, options) {
         if (rejection !== null)
             return rejection;
     }
-    return accept(ctx);
+    return accept(ctx, options.workSeen ?? []);
 }
-function accept(ctx) {
+function accept(ctx, workSeen) {
     const state = structuredClone(ctx.state);
     const message = { ...ctx.message };
     const effects = [];
-    applyCounters(state, message);
+    applyCounters(state, message, workSeen);
     applyByType(state, message, effects);
     state.messages.push({
         id: message.id,
@@ -62,21 +62,15 @@ function accept(ctx) {
     return { ok: true, message, state, effects };
 }
 const TALK_EXEMPT = ["STATUS", "BLOCKED", "DONE"];
-/** PROTOCOL.md 3.1 work evidence: a commit, pr, or review, or a test that passed or failed. */
-function isWorkEvidence(item) {
-    if (item.kind === "test")
-        return item.result !== "pending";
-    return item.kind === "commit" || item.kind === "pr" || item.kind === "review";
-}
-function applyCounters(state, message) {
+function applyCounters(state, message, workSeen) {
     if (!isPm(state, message.from))
         return;
     state.used.messages_total += 1;
     if (state.phase === "PLAN" && message.type !== "KICKOFF")
         state.used.plan_messages += 1;
     if (message.type === "STATUS") {
-        // A STATUS without work evidence is accepted but neither counts nor resets (section 8).
-        if ((message.evidence ?? []).some(isWorkEvidence))
+        // Only new work evidence (PROTOCOL.md 3.1) resets; any other STATUS is accepted but neither counts nor resets (section 8).
+        if (workEvidenceKeys(message).some((key) => !workEvidenceSeen(key, workSeen)))
             state.used.talk_since_work = 0;
     }
     else if (state.phase === "EXECUTE" && !TALK_EXEMPT.includes(message.type) && !repliesToOpenChallenge(state, message)) {

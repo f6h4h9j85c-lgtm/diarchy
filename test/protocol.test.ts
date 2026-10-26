@@ -31,6 +31,8 @@ import {
   serializeMessageFile,
   tick,
   wordCount,
+  workEvidenceKeys,
+  workEvidenceSeen,
   type Acceptance,
   type Effect,
   type EvaluateOptions,
@@ -58,6 +60,8 @@ interface FixtureStep {
 interface Fixture extends FixtureStep {
   description: string;
   state: Record<string, unknown> & { base?: string };
+  /** Work-evidence keys of the STATUS messages the base state's goal already holds; each accepted `prior` STATUS adds its own. */
+  work_seen?: string[];
   prior?: FixtureStep[];
   expect: {
     ok: boolean;
@@ -91,8 +95,8 @@ function resolveState(spec: Fixture["state"]): GoalState {
   return parseGoalState({ ...baseState, ...overrides });
 }
 
-function optionsFor(step: FixtureStep): EvaluateOptions {
-  return { now: new Date(step.now ?? step.message.ts), callerAgent: step.caller ?? step.message.from };
+function optionsFor(step: FixtureStep, workSeen: readonly string[] = []): EvaluateOptions {
+  return { now: new Date(step.now ?? step.message.ts), callerAgent: step.caller ?? step.message.from, workSeen };
 }
 
 interface Run {
@@ -101,16 +105,19 @@ interface Run {
   effects: Effect[];
 }
 
+/** Replays `prior` and evaluates `message` the way the store does, passing the work evidence earlier STATUS messages carried. */
 function runFixture(fixture: Fixture): Run {
   let state = resolveState(fixture.state);
   const effects: Effect[] = [];
+  const workSeen = [...(fixture.work_seen ?? [])];
   for (const step of fixture.prior ?? []) {
-    const result = evaluate(step.message, state, optionsFor(step));
+    const result = evaluate(step.message, state, optionsFor(step, workSeen));
     if (!result.ok) throw new Error(`prior ${step.message.id} rejected: ${result.rule} ${result.message}`);
     state = result.state;
     effects.push(...result.effects);
+    workSeen.push(...workEvidenceKeys(result.message));
   }
-  const result = evaluate(fixture.message, state, optionsFor(fixture));
+  const result = evaluate(fixture.message, state, optionsFor(fixture, workSeen));
   if (result.ok) {
     state = result.state;
     effects.push(...result.effects);
@@ -296,8 +303,8 @@ function example(id: string): Message {
   return parseMessageFile(readFileSync(join(exampleDir, `${id}.md`), "utf8"));
 }
 
-function accept(message: Message, state: GoalState): GoalState {
-  const result = evaluate(message, state, { now: new Date(message.ts), callerAgent: message.from });
+function accept(message: Message, state: GoalState, workSeen: readonly string[] = []): GoalState {
+  const result = evaluate(message, state, { now: new Date(message.ts), callerAgent: message.from, workSeen });
   if (!result.ok) throw new Error(`${message.id}: ${result.rule} ${result.message}`);
   return result.state;
 }
@@ -391,6 +398,42 @@ describe("PROTOCOL.md examples", () => {
 });
 
 // ---------------------------------------------------------------------------
+// New work evidence (PROTOCOL.md 3.1): what resets talk_since_work
+// ---------------------------------------------------------------------------
+
+describe("work evidence keys", () => {
+  const status = example("20261025T151200Z-0003-codex-STATUS");
+
+  it("key a STATUS's commit by sha, pr by url, review by sender and verdict, and test by result; nothing else is work evidence", () => {
+    expect(workEvidenceKeys(status)).toEqual(["commit:9f3c2ab", "pr:https://github.com/acme/api/pull/412", "test:pass:npm test -- rateLimit"]);
+    const other: Message = {
+      ...status,
+      evidence: [
+        { kind: "review", url: "https://github.com/acme/api/pull/412", verdict: "request_changes" },
+        { kind: "test", test: "npm test", result: "pending" },
+        { kind: "test", test: "npm test", result: "fail" },
+        { kind: "file", path: "notes/review.md" },
+        { kind: "external", url: "https://ci.example/run/1" },
+      ],
+    };
+    expect(workEvidenceKeys(other)).toEqual(["review:codex:request_changes:https://github.com/acme/api/pull/412", "test:fail:npm test"]);
+    expect(workEvidenceKeys({ ...status, type: "DONE" })).toEqual([]);
+  });
+
+  it("count a sha as seen when it prefixes a seen sha or a seen sha prefixes it; every other key must match exactly", () => {
+    const seen = ["commit:9f3c2ab", "commit:1c0ffee42d", "test:fail:npm test", "review:claude:request_changes:https://github.com/acme/api/pull/412"];
+    expect(workEvidenceSeen("commit:9f3c2ab4e1", seen)).toBe(true);
+    expect(workEvidenceSeen("commit:1c0ffee", seen)).toBe(true);
+    expect(workEvidenceSeen("commit:9f3c2ac", seen)).toBe(false);
+    expect(workEvidenceSeen("test:fail:npm test", seen)).toBe(true);
+    expect(workEvidenceSeen("test:pass:npm test", seen)).toBe(false);
+    expect(workEvidenceSeen("review:claude:request_changes:https://github.com/acme/api/pull/412", seen)).toBe(true);
+    expect(workEvidenceSeen("review:claude:approve:https://github.com/acme/api/pull/412", seen)).toBe(false);
+    expect(workEvidenceSeen("pr:commit:9f3c2ab", seen)).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // The sample run behind docs/samples reaches DONE under 9.2 (a) to (f)
 // ---------------------------------------------------------------------------
 
@@ -401,6 +444,8 @@ describe("sample run", () => {
     const kickoff = parseKickoffFile(readFileSync(join(SAMPLE_RUN, "kickoff.md"), "utf8"));
     let state = initialState(kickoff, CONFIG, new Date(kickoff.created));
     const files = readdirSync(SAMPLE_RUN).filter((file) => file.endsWith(".md") && file !== "kickoff.md").sort();
+    // As the store does, each STATUS is evaluated against the work evidence the earlier ones carried.
+    const workSeen: string[] = [];
     for (const file of files) {
       const message = parseMessageFile(readFileSync(join(SAMPLE_RUN, file), "utf8"));
       // Store-assigned decision ids: the engine assigns them itself (PROTOCOL.md section 3).
@@ -409,7 +454,8 @@ describe("sample run", () => {
         (message.type === "DECIDE" && (message.supersedes !== undefined || message.from === "human"));
       if (storeAssigned) delete message.decision_id;
       if (message.type === "DONE") expect(state).toEqual(loadBase("execute-ready"));
-      state = accept(message, state);
+      state = accept(message, state, workSeen);
+      workSeen.push(...workEvidenceKeys(message));
     }
     expect(state.phase).toBe("DONE");
   });

@@ -94,6 +94,12 @@ export declare class VaultStore {
     private postWith;
     /** Assign id, evaluate, and on acceptance write the message file. Call under the lock. */
     private accept;
+    /**
+     * Work-evidence keys of the committed STATUS messages (PROTOCOL.md 3.1),
+     * which budget.json does not keep. A file that will not parse is left out,
+     * so it cannot block a post; its evidence then counts as new once.
+     */
+    private workSeen;
     /** Write the system ASK_HUMAN for every `system_message` effect through the same path. */
     private applyEffects;
     /** Time-based transitions (DEADLOCK deadline, WALL_CLOCK) land before anything else. Call under the lock. */

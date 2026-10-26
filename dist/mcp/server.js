@@ -8,19 +8,18 @@
  * do not fit a tool's input schema are such a rejection too (SCHEMA): the
  * server checks them itself instead of leaving it to the SDK.
  */
-import { readFileSync } from "node:fs";
-import { basename, posix } from "node:path";
+import { existsSync, readFileSync } from "node:fs";
+import { basename, join, posix, resolve } from "node:path";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { VERSION } from "../index.js";
 import { ASSIGN_KINDS, BLOCKED_KINDS, DECISION_BASES, MESSAGE_TYPES, STATUS_TASK_STATUSES, SchemaError, describeIssue, evidenceItemSchema, isMessageType, partialBudgetsSchema, schemaMessage, typedOnlyMessage, } from "../protocol/index.js";
-import { AgentLease, CorruptVaultFileError, MAX_WAIT_MS, NoGoalError, VaultStore, loadConfig, } from "../vault/index.js";
+import { AgentLease, CONFIG_FILENAME, CorruptVaultFileError, MAX_WAIT_MS, NoGoalError, VaultStore, loadConfig, vaultPaths, } from "../vault/index.js";
 /** Error codes the server adds to the protocol's RuleId set (PROTOCOL.md section 10). */
 export const SERVER_ERRORS = ["NO_GOAL", "WRONG_TOOL", "AGENT_BUSY", "INTERNAL"];
 export const TOOL_NAMES = ["kickoff", "post", "read", "wait_for_reply", "decide", "assign", "status"];
 /** Message types `post` refuses because a dedicated tool builds them. */
 const DEDICATED_TOOL = { KICKOFF: "kickoff", DECIDE: "decide", ASSIGN: "assign" };
-const NO_GOAL_TEXT = new NoGoalError().message;
 const INSTRUCTIONS = [
     "diarchy coordinates two PM agents (lead and challenger) on one goal through a shared vault.",
     "Loop: read, then at most one of post, decide, assign, status, then wait_for_reply; repeat until phase DONE or BLOCKED.",
@@ -48,18 +47,30 @@ function corruptFileText(error) {
     return `${error.message} The vault is damaged, not your draft, so do not retry. Post BLOCKED with kind external naming that file so the human can fix it or run diarchy stop.`;
 }
 /**
- * Run a tool body; NoGoalError becomes NO_GOAL, a CorruptVaultFileError (a
- * vault file that will not parse) keeps its rule (SCHEMA, or TYPED_ONLY for an
- * unknown message type) with a message naming the file, anything else
- * INTERNAL. The server never crashes on a bad input.
+ * The NO_GOAL message (PROTOCOL.md section 10): it names the vault the server
+ * checked and, when the project has no diarchy.config.json, says this is the
+ * default vault, so a server started outside its project is not taken for one
+ * with an empty vault and kicked off there.
  */
-async function runTool(body) {
+function noGoalText(projectDir, config) {
+    const text = `No goal in ${vaultPaths(projectDir, config).vault}. Call kickoff first.`;
+    if (existsSync(join(projectDir, CONFIG_FILENAME)))
+        return text;
+    return `${text} No ${CONFIG_FILENAME} in ${resolve(projectDir)}, so this is the default vault: if a goal should be running, this server started outside its project; tell the human instead of calling kickoff.`;
+}
+/**
+ * Run a tool body; NoGoalError becomes NO_GOAL with the message `noGoal`, a
+ * CorruptVaultFileError (a vault file that will not parse) keeps its rule
+ * (SCHEMA, or TYPED_ONLY for an unknown message type) with a message naming
+ * the file, anything else INTERNAL. The server never crashes on a bad input.
+ */
+async function runTool(body, noGoal) {
     try {
         return toolResult(await body());
     }
     catch (error) {
         if (error instanceof NoGoalError)
-            return toolResult(serverError("NO_GOAL", NO_GOAL_TEXT));
+            return toolResult(serverError("NO_GOAL", noGoal));
         logError(error);
         if (error instanceof CorruptVaultFileError)
             return toolResult({ ok: false, rule: error.rule, message: corruptFileText(error) });
@@ -116,6 +127,7 @@ export function createMcpServer(options) {
     const config = loadConfig(projectDir);
     const store = options.store ?? new VaultStore({ projectDir, config, agent, ...(options.now === undefined ? {} : { now: options.now }) });
     const server = new McpServer({ name: "diarchy", version: VERSION }, { capabilities: { logging: {} }, instructions: INSTRUCTIONS });
+    const noGoal = noGoalText(projectDir, config);
     /** The wait_for_reply this server has in flight, if any: one agent, one wait. */
     let waiting = null;
     /**
@@ -127,7 +139,7 @@ export function createMcpServer(options) {
     const run = (body) => {
         waiting?.abort();
         waiting = null;
-        return runTool(body);
+        return runTool(body, noGoal);
     };
     const lease = new AgentLease(agent);
     server.server.onclose = () => lease.release();
@@ -241,7 +253,7 @@ export function createMcpServer(options) {
         title: "Read the chat",
         description: "Return the goal text (goal_text), every acceptance criterion with its text and status open, passing, or failing (acs), messages from the other agent, the human, and the system since your inbox cursor, plus phase, your role, the types you may post now, budgets, lead, and challenger. Plan against goal_text and acs. Call it first in every turn and after any rejection. Advances the cursor; pass since (a message id) to re-read from a point. Returns NO_GOAL when nothing was kicked off.",
         inputSchema: { since: z.string().optional().describe("Message id to read after; default: your inbox cursor.") },
-    }, (args) => asAgent(() => store.read(args) ?? serverError("NO_GOAL", NO_GOAL_TEXT)));
+    }, (args) => asAgent(() => store.read(args) ?? serverError("NO_GOAL", noGoal)));
     register("wait_for_reply", {
         title: "Wait for a reply",
         description: `Block until the other agent, the human, or the system posts, then return the same result as read. Use it instead of polling read. timeout_ms defaults to and is capped at ${MAX_WAIT_MS}; on expiry it returns { timeout: true } and you call it again (the goal may also have moved to BLOCKED by deadline, which arrives as a system ASK_HUMAN). Sends a progress notification every 15 s. A wait that is cancelled, or overtaken by your next call, also returns { timeout: true } and leaves your inbox cursor alone, so the reply arrives on that next call. If you are the lead and your plan PROPOSE has drawn no CHALLENGE after two timeouts, or the challenger has posted something else, stop waiting: decide any thread the challenger opened first, then plan (basis authority when no CHALLENGE came).`,
@@ -264,7 +276,7 @@ export function createMcpServer(options) {
     const view = (title, uri, file, description) => {
         server.registerResource(title, uri, { title, description, mimeType: "text/markdown" }, (url) => {
             const goal = currentGoal(store);
-            const text = goal === null ? `${NO_GOAL_TEXT}\n` : readFileSync(goal.paths[file], "utf8");
+            const text = goal === null ? `${noGoal}\n` : readFileSync(goal.paths[file], "utf8");
             return { contents: [{ uri: url.href, mimeType: "text/markdown", text }] };
         });
     };

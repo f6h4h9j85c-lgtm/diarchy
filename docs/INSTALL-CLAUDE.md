@@ -63,8 +63,14 @@ after editing `src/`, run `npm run build` (see CONTRIBUTING.md).
 2. Run `/plugin` and check `diarchy@diarchy` is enabled.
 3. Ask Claude to call the diarchy `read` tool. With no goal in the vault it
    answers `{ ok: false, rule: "NO_GOAL", ... }`; that is the server working.
-   Once a goal exists it returns the goal text (`goal_text`), every acceptance
-   criterion with its status (`acs`), the phase, your role, and unread messages.
+   Its message names the vault it checked, which must be this project's
+   (`<project> brain/diarchy` unless `vault` in diarchy.config.json says
+   otherwise); a vault under another directory means the server started
+   outside the project. Until `diarchy init` has run (Project configuration,
+   below), the message also says the project has no diarchy.config.json, so
+   the default vault was checked. Once a goal exists it returns the goal text
+   (`goal_text`), every acceptance criterion with its status (`acs`), the
+   phase, your role, and unread messages.
 4. On the next session start, with a goal active, the first lines of context are
    the inbox brief from `diarchy inbox-skim`. With no goal active nothing is
    printed; that is expected.

@@ -434,10 +434,12 @@ A posting tool (`kickoff`, `post`, `decide`, `assign`, `status`) answers `{ ok: 
 
 | Code | When | Message |
 |---|---|---|
-| NO_GOAL | any tool but `kickoff` before the first goal in this vault is kicked off | No goal in this vault. Call kickoff first. |
+| NO_GOAL | any tool but `kickoff` before the first goal in this vault is kicked off | No goal in {vault}. Call kickoff first. |
 | WRONG_TOOL | `post` with type KICKOFF, DECIDE, or ASSIGN | {type} goes through the {tool} tool, not post. Call {tool} with the same fields. |
 | AGENT_BUSY | any tool but `kickoff` while another live server acts as the same agent on the goal (below) | Another diarchy server already acts as {agent} on this goal (pid {pid}). One session per agent: end that session, or stop here; once it exits, the next call as {agent} takes over. |
 | INTERNAL | an unexpected exception, also logged to stderr | {error} |
+
+In NO_GOAL, `{vault}` is the absolute path of the vault the server checked. A project with no diarchy.config.json resolves to the default vault, and then the server appends `No diarchy.config.json in {project}, so this is the default vault: if a goal should be running, this server started outside its project; tell the human instead of calling kickoff.`, `{project}` being the absolute project directory.
 
 A stored vault file that will not parse (kickoff.md, a `chat/` message file) surfaces as a rejection too, not as INTERNAL: rule SCHEMA, or TYPED_ONLY for a message file whose `type` is unknown, with a message that names the file as corrupt instead of the rule's usual text. The PM then posts BLOCKED `kind: external`, which goes through even when kickoff.md is corrupt. `diarchy stop` and `diarchy reply` still work from budget.json, and the rendered views leave out a message file that will not parse, so the human can always fix the file or retire the goal. A `budget.json` that will not parse surfaces the same way (SCHEMA naming the file, 2.3), but nothing can post to that goal, so the message tells the PM to stop and tell the human, who repairs the file or moves the goal directory out of the vault.
 

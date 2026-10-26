@@ -1,15 +1,16 @@
 /**
  * The fake PM under a non-default `worktrees` config: its ASSIGNs must name the
  * worktree and branch the launcher created from `worktrees.root` and
- * `branch_prefix`, not the built-in defaults (audit finding F096).
+ * `branch_prefix`, not the built-in defaults (audit finding F096). A
+ * `branch_prefix` git rejects stops `diarchy start` before kickoff (F157).
  *
  * Runs `diarchy start --driver fake` from source against a temp git repo, as
  * test/e2e.test.ts does.
  */
 import { spawn, spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -48,32 +49,45 @@ function git(dir: string, ...args: string[]): string {
   return result.stdout.trim();
 }
 
+const temps: string[] = [];
+afterAll(() => {
+  for (const tmp of temps.splice(0)) rmSync(tmp, { recursive: true, force: true });
+});
+
+interface Config {
+  vault: string;
+  worktrees?: Record<string, string>;
+  launcher?: Record<string, number>;
+}
+
+/** A committed git repo after `diarchy init`, with `worktrees` set and fast supervisor knobs; returns the config written. */
+async function initProject(name: string, worktrees: Record<string, string>): Promise<{ dir: string; configPath: string; config: Config }> {
+  const tmp = mkdtempSync(join(tmpdir(), "diarchy-wt-"));
+  temps.push(tmp);
+  const dir = join(tmp, name);
+  mkdirSync(dir);
+  git(dir, "init", "-q");
+  writeFileSync(join(dir, "README.md"), `# ${name}\n`);
+  git(dir, "add", ".");
+  git(dir, "commit", "-q", "-m", "init");
+  const init = await cli(["init", "--project", dir]);
+  expect(init.code, init.stderr).toBe(0);
+  const configPath = join(dir, "diarchy.config.json");
+  const config = JSON.parse(readFileSync(configPath, "utf8")) as Config;
+  config.worktrees = worktrees;
+  config.launcher = { ...config.launcher, poll_ms: 100, restart_backoff_ms: 200, stop_grace_ms: 3000 };
+  writeFileSync(configPath, `${JSON.stringify(config, null, 2)}\n`);
+  return { dir, configPath, config };
+}
+
 describe("start --driver fake with a non-default worktrees config", () => {
-  let tmp = "";
   let dir = "";
   let run: { code: number; stdout: string; stderr: string };
 
   beforeAll(async () => {
-    tmp = mkdtempSync(join(tmpdir(), "diarchy-wt-"));
-    dir = join(tmp, "gadget");
-    mkdirSync(dir);
-    git(dir, "init", "-q");
-    writeFileSync(join(dir, "README.md"), "# gadget\n");
-    git(dir, "add", ".");
-    git(dir, "commit", "-q", "-m", "init");
-    const init = await cli(["init", "--project", dir]);
-    expect(init.code, init.stderr).toBe(0);
-    const configPath = join(dir, "diarchy.config.json");
-    const config = JSON.parse(readFileSync(configPath, "utf8")) as Record<string, unknown> & { launcher?: Record<string, number> };
-    config.worktrees = WORKTREES;
-    config.launcher = { ...config.launcher, poll_ms: 100, restart_backoff_ms: 200, stop_grace_ms: 3000 };
-    writeFileSync(configPath, `${JSON.stringify(config, null, 2)}\n`);
+    ({ dir } = await initProject("gadget", WORKTREES));
     run = await cli(["start", "Ship the fake gadget", "--ac", "The gadget renders.", "--lead", "claude", "--driver", "fake", "--fake-mode", "good", "--project", dir]);
   }, 45_000);
-
-  afterAll(() => {
-    if (tmp !== "") rmSync(tmp, { recursive: true, force: true });
-  });
 
   it("reaches DONE with every implement ASSIGN on the configured worktree and branch", () => {
     expect(run.code, run.stdout + run.stderr).toBe(0);
@@ -89,4 +103,17 @@ describe("start --driver fake with a non-default worktrees config", () => {
       expect(git(join(dir, WORKTREES.root, message.to), "rev-parse", "--abbrev-ref", "HEAD")).toBe(message.branch);
     }
   });
+});
+
+describe("start with a worktrees.branch_prefix git rejects", () => {
+  it("exits 1 naming the file and the key before it kicks off, so no goal, worktree, or branch is made", async () => {
+    const { dir, configPath, config } = await initProject("trailing-slash", { root: ".diarchy/wt", branch_prefix: "diarchy/" });
+    const run = await cli(["start", "Add a hello file", "--ac", "hello.txt exists", "--driver", "fake", "--project", dir]);
+    expect(run.code, run.stdout + run.stderr).toBe(1);
+    expect(run.stderr).toContain(`diarchy: ${configPath}: worktrees.branch_prefix: must be a branch name of letters, digits`);
+    expect(run.stdout).not.toContain("kickoff");
+    expect(existsSync(resolve(dir, config.vault, "goals"))).toBe(false);
+    expect(existsSync(join(dir, ".diarchy", "wt"))).toBe(false);
+    expect(git(dir, "branch", "--list", "diarchy*")).toBe("");
+  }, 45_000);
 });

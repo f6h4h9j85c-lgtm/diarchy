@@ -2008,8 +2008,12 @@ describe("config", () => {
     temps.push(root);
     const path = join(root, "diarchy.config.json");
     const write = (worktrees: Record<string, string>) => writeFileSync(path, JSON.stringify({ protocol_version: 1, vault: "notes/diarchy", worktrees }));
-    write({ root: ".diarchy/worktrees", branch_prefix: "team+ai" });
-    expect(() => loadConfig(root)).toThrow(`${path}: worktrees.branch_prefix: must be letters, digits, and . _ / - with no ".." and no leading "-"`);
+    const rule = 'must be a branch name of letters, digits, and . _ / - with no "..", "//", "/." or ".lock/", no leading "-", "/" or ".", no trailing "/", "." or ".lock", and not "HEAD"';
+    // F157: a prefix git rejects as part of a branch name fails here, not at `git worktree add` after kickoff.
+    for (const prefix of ["team+ai", "diarchy/", "a//b", "/diarchy", "diarchy.lock", "pm/.x", "diarchy."]) {
+      write({ root: ".diarchy/worktrees", branch_prefix: prefix });
+      expect(() => loadConfig(root), prefix).toThrow(new Error(`${path}: worktrees.branch_prefix: ${rule}`));
+    }
     write({ root: "wt\ncodex", branch_prefix: "team-ai" });
     expect(() => loadConfig(root)).toThrow(`${path}: worktrees.root: must be one line with no control characters`);
     write({ root: ".diarchy/wt", branch_prefix: "team-ai/v1.2_x" });

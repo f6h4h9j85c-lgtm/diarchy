@@ -398,7 +398,7 @@ The `allowed_types` a tool returns (section 10) apply these gates: at the `talk_
 }
 ```
 
-This is the file `diarchy init` writes, with `<project>` standing for the project directory's name.
+This is the file `diarchy init` writes, with `<project>` standing for the project directory's name. `diarchy start` and `diarchy kickoff` refuse a project without it (`no diarchy.config.json in <dir>; run diarchy init first, or pass --project <dir>`), so a command run from the wrong directory kicks off no goal in a default vault there.
 
 `worktrees.branch_prefix` follows the section 3 `branch` rules, 133 characters max, and `worktrees.root` is one line of 183 characters max, so the default ASSIGN `branch` (`<branch_prefix>/<goal-id>/<agent>`) and `worktree` (`<worktrees.root>/<agent>`) the `assign` tool fills in always pass section 3, and git accepts the branch. Loading a config that breaks either fails with an error naming the file and the key, and `diarchy start` loads the config before kickoff, so a bad key starts no goal.
 

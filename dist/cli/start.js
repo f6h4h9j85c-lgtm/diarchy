@@ -15,7 +15,7 @@ import { createInterface } from "node:readline";
 import { AGENT_HUMAN } from "../protocol/index.js";
 import { VaultStore, leaseHolder, loadConfig } from "../vault/index.js";
 import { blockReason, blockSummary, replyHint } from "./brief.js";
-import { CliError, EXIT_BLOCKED, EXIT_ERROR, EXIT_OK, nowHms, onBrokenPipe, sleep } from "./common.js";
+import { CliError, EXIT_BLOCKED, EXIT_ERROR, EXIT_OK, nowHms, onBrokenPipe, requireConfig, sleep } from "./common.js";
 import { clearSession, defaultFakeScript, detectSessionId, fakePlan, flavorOf, loadSession, realPlan, saveSession, sandboxNotice, } from "./drivers.js";
 import { kickoffInput } from "./kickoff.js";
 import { loadLauncherConfig } from "./launcher-config.js";
@@ -56,6 +56,7 @@ function fakeMode(options) {
     throw new CliError(`--fake-mode (or DIARCHY_FAKE_MODE) must be good, slop, or silent, got "${mode}"`);
 }
 export async function runStart(projectDir, goalText, options) {
+    requireConfig(projectDir);
     const driver = parseDriver(options.driver);
     const platform = platformProblem(process.platform, driver);
     if (platform !== null)

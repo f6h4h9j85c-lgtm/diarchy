@@ -16,7 +16,7 @@ import { createInterface } from "node:readline";
 import { AGENT_HUMAN, type DiarchyConfig, type GoalState, type Phase } from "../protocol/index.js";
 import { VaultStore, leaseHolder, loadConfig, type CorruptVaultFileError, type GoalRef, type LockOwner } from "../vault/index.js";
 import { blockReason, blockSummary, replyHint } from "./brief.js";
-import { CliError, EXIT_BLOCKED, EXIT_ERROR, EXIT_OK, nowHms, onBrokenPipe, sleep } from "./common.js";
+import { CliError, EXIT_BLOCKED, EXIT_ERROR, EXIT_OK, nowHms, onBrokenPipe, requireConfig, sleep } from "./common.js";
 import {
   clearSession,
   defaultFakeScript,
@@ -77,6 +77,7 @@ function fakeMode(options: StartOptions): string {
 }
 
 export async function runStart(projectDir: string, goalText: string | undefined, options: StartOptions): Promise<number> {
+  requireConfig(projectDir);
   const driver = parseDriver(options.driver);
   const platform = platformProblem(process.platform, driver);
   if (platform !== null) throw new CliError(platform);

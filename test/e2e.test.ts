@@ -261,6 +261,26 @@ describe("diarchy init", () => {
     expect(existsSync(join(dir, "bare brain"))).toBe(false);
   });
 
+  it("start and kickoff in a directory with no diarchy.config.json refuse and create nothing, attach included", async () => {
+    const dir = makeProject("stray", false);
+    const refusal = `diarchy: no diarchy.config.json in ${dir}; run diarchy init first, or pass --project <dir>\n`;
+    for (const args of [
+      ["start", "Ship the stray widget", "--ac", "It renders.", "--driver", "fake", "--no-worktrees"],
+      ["start", "--driver", "fake", "--no-worktrees"],
+      ["kickoff", "Ship the stray widget", "--ac", "It renders."],
+    ]) {
+      const fromCwd = await cli(args, { cwd: dir });
+      expect(fromCwd.code, args.join(" ")).toBe(1);
+      expect(fromCwd.stderr, args.join(" ")).toBe(refusal);
+      const flagged = await cli([...args, "--project", dir]);
+      expect(flagged.code, args.join(" ")).toBe(1);
+      expect(flagged.stderr, args.join(" ")).toBe(refusal);
+    }
+    expect(readdirSync(dir)).toEqual([]);
+    // PROTOCOL.md section 8 quotes the refusal, with <dir> for the directory.
+    expect(readFileSync(join(ROOT, "docs", "PROTOCOL.md"), "utf8")).toContain(`\`${refusal.slice("diarchy: ".length, -1).replace(dir, "<dir>")}\``);
+  });
+
   it("rejects fewer or more than two agents", async () => {
     const dir = makeProject("solo", false);
     const result = await cli(["init", "--project", dir, "--agents", "claude"]);

@@ -6,9 +6,10 @@
  * needs no build step; `npm test -- e2e` selects it.
  */
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -118,6 +119,18 @@ function goalState(dir: string): GoalState {
 
 function lines(text: string): string[] {
   return text.split("\n").filter((line) => line !== "");
+}
+
+/** Every entry under a git directory with its mtime, size, and bytes: any write there, even a lock file made and removed, changes it. */
+function gitSnapshot(dir: string): Record<string, string> {
+  const entries: Record<string, string> = {};
+  for (const rel of readdirSync(dir, { recursive: true, encoding: "utf8" })) {
+    const stat = statSync(join(dir, rel));
+    entries[rel] = stat.isDirectory()
+      ? `dir ${stat.mtimeMs}`
+      : `${stat.mtimeMs} ${stat.size} ${createHash("sha1").update(readFileSync(join(dir, rel))).digest("hex")}`;
+  }
+  return entries;
 }
 
 // ---------------------------------------------------------------------------
@@ -269,6 +282,97 @@ describe("worktree Codex files", () => {
     git(dir, "worktree", "add", "-q", "-b", "after", after, "HEAD");
     expect(missingFromWorktrees(dir, [after])).toEqual([]);
     expect(missingFromWorktrees(dir, [after, before])).toEqual(["AGENTS.md", ".codex/agents"]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// An agent worktree under a custom worktrees.root resolves to the project that owns it
+// ---------------------------------------------------------------------------
+
+describe("project resolution from an agent worktree under a custom worktrees.root", () => {
+  /** What Codex gives a stdio MCP server by default: a fixed allowlist, so no DIARCHY_PROJECT. */
+  function codexServerEnv(): NodeJS.ProcessEnv {
+    const env: NodeJS.ProcessEnv = {};
+    for (const key of ["HOME", "LOGNAME", "PATH", "SHELL", "USER", "LANG", "LC_ALL", "TERM", "TMPDIR", "TZ"]) {
+      if (process.env[key] !== undefined) env[key] = process.env[key];
+    }
+    return env;
+  }
+
+  /** `diarchy mcp --agent codex` started in `cwd` as the documented config.toml server would be; returns the `read` result. */
+  function mcpRead(cwd: string): Promise<Record<string, unknown>> {
+    return new Promise((resolveRead, reject) => {
+      const child = spawn(process.execPath, ["--import", TSX, CLI, "mcp", "--agent", "codex"], { cwd, env: codexServerEnv(), stdio: ["pipe", "pipe", "pipe"] });
+      let stdout = "";
+      let stderr = "";
+      child.stderr.on("data", (chunk: Buffer) => (stderr += chunk.toString()));
+      child.on("exit", (code) => reject(new Error(`diarchy mcp exited ${code} before answering: ${stderr}`)));
+      child.stdout.on("data", (chunk: Buffer) => {
+        stdout += chunk.toString();
+        const frame = stdout
+          .split("\n")
+          .filter((line) => line.trim() !== "")
+          .map((line) => JSON.parse(line) as { id?: number; result?: { structuredContent?: Record<string, unknown>; content?: { text: string }[] } })
+          .find((candidate) => candidate.id === 2);
+        if (frame === undefined) return;
+        child.stdin.end();
+        resolveRead(frame.result?.structuredContent ?? (JSON.parse(frame.result?.content?.[0]?.text ?? "{}") as Record<string, unknown>));
+      });
+      const frames = [
+        { jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "raw", version: "0" } } },
+        { jsonrpc: "2.0", method: "notifications/initialized" },
+        { jsonrpc: "2.0", id: 2, method: "tools/call", params: { name: "read", arguments: {} } },
+      ];
+      for (const frame of frames) child.stdin.write(`${JSON.stringify(frame)}\n`);
+    });
+  }
+
+  async function customRootProject(name: string, root: string, commitConfig: boolean): Promise<{ dir: string; goalId: string; worktree: string }> {
+    const dir = await initProject(name);
+    const config = readConfig(dir);
+    config.worktrees = { root, branch_prefix: "diarchy" };
+    writeFileSync(join(dir, "diarchy.config.json"), `${JSON.stringify(config, null, 2)}\n`);
+    if (commitConfig) {
+      git(dir, "add", "diarchy.config.json");
+      git(dir, "commit", "-q", "-m", "diarchy config");
+    }
+    const kick = await cli(["kickoff", "Rate limit the API.", "--ac", "Over-limit requests get 429.", "--slug", "limit", "--lead", "claude", "--project", dir]);
+    expect(kick.code, kick.stderr).toBe(0);
+    const goalId = goalPaths(dir).goalId;
+    const worktree = resolve(dir, root, "codex");
+    git(dir, "worktree", "add", "-q", "-b", `diarchy/${goalId}/codex`, worktree, "HEAD");
+    return { dir, goalId, worktree };
+  }
+
+  for (const [label, root, commitConfig] of [
+    ["outside the project, config not committed", "../outside-wt", false],
+    ["inside the project with the config committed into the worktree", ".wt", true],
+  ] as const) {
+    it(
+      `status and the Codex MCP server (Codex's default env) read the main vault from a worktree ${label}`,
+      async () => {
+        const { goalId, worktree } = await customRootProject(commitConfig ? "inside" : "outside", root, commitConfig);
+        expect(existsSync(join(worktree, "diarchy.config.json"))).toBe(commitConfig);
+        const status = await cli(["status"], { cwd: worktree });
+        expect(status.code, status.stderr).toBe(0);
+        expect(status.stdout).toMatch(new RegExp(`^goal ${goalId} · PLAN · lead claude`));
+        const nested = join(worktree, "src");
+        mkdirSync(nested, { recursive: true });
+        expect((await cli(["status"], { cwd: nested })).stdout).toMatch(new RegExp(`^goal ${goalId} · PLAN`));
+        expect(await mcpRead(worktree)).toMatchObject({ goal: goalId, phase: "PLAN", role: "challenger" });
+        expect(readdirSync(worktree).some((entry) => entry.endsWith(" brain"))).toBe(false);
+      },
+      RUN_TIMEOUT,
+    );
+  }
+
+  it("a worktree the config does not place under worktrees.root keeps its own resolution", async () => {
+    const { dir } = await customRootProject("byhand", "../byhand-wt", false);
+    const feature = join(dir, "..", "feature");
+    git(dir, "worktree", "add", "-q", "-b", "feature", feature, "HEAD");
+    const status = await cli(["status"], { cwd: feature });
+    expect(status.code, status.stderr).toBe(0);
+    expect(status.stdout).toMatch(/^no goal in .*feature brain/);
   });
 });
 
@@ -446,6 +550,37 @@ describe("start --driver fake (good)", () => {
       expect(restore.status, restore.stderr).toBe(0);
       expect(git(reviewer, "rev-parse", "--abbrev-ref", "HEAD")).toBe(`diarchy/${paths.goalId}/codex`);
     }
+  });
+
+  it("the review skill's read-only path tests and diffs the PR head without writing to the git directory the Codex sandbox keeps read-only", () => {
+    const skill = readFileSync(join(ROOT, "skills", "diarchy-review", "SKILL.md"), "utf8");
+    const archive = /`(d=\$\(mktemp -d\) && git archive <branch> \| tar -x -C "\$d")`/.exec(skill)?.[1] ?? "";
+    const diff = /`(git diff main\.\.\.<branch>)`/.exec(skill)?.[1] ?? "";
+    expect(archive).not.toBe("");
+    expect(diff).not.toBe("");
+    const author = `diarchy/${paths.goalId}/claude`;
+    const reviewer = join(dir, ".diarchy", "worktrees", "codex");
+    const base = git(dir, "rev-parse", "--abbrev-ref", "HEAD");
+    const sh = (command: string) => spawnSync("sh", ["-c", command], { cwd: reviewer, encoding: "utf8", env: { ...process.env, ...GIT_ENV } });
+    const gitDir = join(dir, ".git");
+    const before = gitSnapshot(gitDir);
+
+    const extracted = sh(`${archive.replaceAll("<branch>", author)} && printf %s "$d"`);
+    expect(extracted.status, extracted.stderr).toBe(0);
+    const copy = extracted.stdout;
+    temps.push(copy);
+    const tracked = lines(git(dir, "ls-tree", "-r", "--name-only", author));
+    expect(tracked.length).toBeGreaterThan(0);
+    for (const file of tracked) expect(readFileSync(join(copy, file), "utf8").trim(), file).toBe(git(dir, "show", `${author}:${file}`));
+    const changed = sh(`${diff.replace("main...", `${base}...`).replaceAll("<branch>", author)} --stat`);
+    expect(changed.status, changed.stderr).toBe(0);
+    expect(changed.stdout).toContain("changed");
+    expect(gitSnapshot(gitDir)).toEqual(before);
+
+    // Control: step 1's checkout does write there, which is why it fails under the sandbox.
+    expect(sh(`git checkout -q --detach ${author}`).status).toBe(0);
+    expect(gitSnapshot(gitDir)).not.toEqual(before);
+    expect(sh(`git checkout -q diarchy/${paths.goalId}/codex`).status).toBe(0);
   });
 });
 

@@ -82,6 +82,9 @@ describe("drivers: the start notice for a sandboxed Codex PM", () => {
     expect(notice).not.toBeNull();
     expect(notice).toContain("codex runs in the Codex workspace-write sandbox");
     expect(notice).toContain("cannot commit, push, or open a PR");
+    // F137: whoever opens the PR for it cites only the commit, so codex stays the author and the other PM reviews.
+    expect(notice).toContain("the other PM commits its work and opens its PR citing only commit, with the url in its STATUS body");
+    expect(notice).toContain("codex posts the pr evidence itself");
     expect(notice).toContain("diarchy init --codex-full-access");
     expect(notice).not.toContain("\n");
     expect(notice).not.toContain("\u2014");

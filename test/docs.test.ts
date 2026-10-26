@@ -121,3 +121,36 @@ describe("docs: install paths", () => {
     expect(template).toContain("`$diarchy-pm`");
   });
 });
+
+describe("docs: the sandboxed Codex PM's PR stays its own (PROTOCOL.md 9.1, 9.2(f))", () => {
+  const flat = (...parts: string[]): string => read(...parts).replace(/\s+/g, " ");
+
+  it("diarchy-pm tells the implementer to post its own pr evidence and the committing PM to cite only commit", () => {
+    const execute = section(read("skills", "diarchy-pm", "SKILL.md"), "## EXECUTE phase");
+    expect(execute).toContain("Post your own PR's `pr` evidence (first citer = author); a PM committing or opening a PR for a sandboxed PM cites only `commit`, url in body.");
+  });
+
+  it("diarchy-review, AGENTS.md, INSTALL-CODEX.md 5, and QUICKSTART.md say the same", () => {
+    expect(flat("skills", "diarchy-review", "SKILL.md")).toContain(
+      "a PM that commits or opens the PR for a sandboxed implementer cites only `commit` and passes the url in its STATUS body",
+    );
+    const agents = flat("templates", "AGENTS.md");
+    expect(agents).toContain("cites only `commit`, and gives the url in its STATUS body");
+    expect(agents).toContain("the implementer always posts the `pr` evidence itself");
+    const install = section(read("docs", "INSTALL-CODEX.md"), "## 5. Headless runs").replace(/\s+/g, " ");
+    expect(install).toContain("The Codex PM still posts that PR's `pr` evidence itself (PROTOCOL.md 9.1).");
+    expect(install).toContain("cites only `commit` and passes the url in its STATUS body, and the Codex PM then cites that url as `pr`");
+    const quick = flat("docs", "QUICKSTART.md");
+    expect(quick).toContain("citing only the commit and passing the url in its STATUS body. The Codex PM then posts the `pr` evidence itself");
+    expect(quick).toContain("each implementer has introduced a PR with its own `pr` evidence");
+  });
+
+  it("the review skill and INSTALL-CODEX.md 5 give a sandboxed reviewer a read-only way to test the PR head", () => {
+    const archive = 'd=$(mktemp -d) && git archive <branch> | tar -x -C "$d"';
+    expect(read("skills", "diarchy-review", "SKILL.md")).toContain(`\`${archive}\``);
+    expect(read("skills", "diarchy-review", "SKILL.md")).toContain("`git diff main...<branch>`");
+    const install = section(read("docs", "INSTALL-CODEX.md"), "## 5. Headless runs").replace(/\s+/g, " ");
+    expect(install).toContain(archive);
+    expect(install).toContain("git diff main...<branch>");
+  });
+});

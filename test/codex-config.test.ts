@@ -307,6 +307,17 @@ describe("codex-config: JSON manifests", () => {
     expect(s.tool_timeout_sec).toBeGreaterThanOrEqual(600);
     expect(s.startup_timeout_sec).toBeGreaterThan(0);
   });
+
+  it("every documented [mcp_servers.diarchy] block forwards DIARCHY_PROJECT, which Codex otherwise strips from a server's env", () => {
+    // That block overrides the plugin's mcp.json; Codex passes a server only a fixed allowlist plus env_vars.
+    for (const file of ["README.md", "docs/INSTALL-CODEX.md"]) {
+      const blocks = [...readFileSync(at(file), "utf8").matchAll(/```toml\n([\s\S]*?)```/g)]
+        .map((match) => match[1])
+        .filter((block) => block.includes("[mcp_servers.diarchy]"));
+      expect(blocks, file).toHaveLength(1);
+      expect(blocks[0], file).toContain('env_vars = ["DIARCHY_PROJECT"]\n');
+    }
+  });
 });
 
 describe("codex-config: hooks", () => {

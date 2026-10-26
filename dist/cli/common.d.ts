@@ -19,8 +19,10 @@ export declare class CliError extends Error {
 /**
  * The project root: `--project`, else `DIARCHY_PROJECT` (set by the launcher
  * for its children and their hooks), else the cwd. A cwd inside
- * `.diarchy/worktrees/<agent>` resolves to the project that owns the worktree,
- * so hooks and the MCP server find the right vault from inside a worktree.
+ * `.diarchy/worktrees/<agent>`, or inside an agent worktree under any other
+ * `worktrees.root` (see worktreeOwner), resolves to the project that owns the
+ * worktree, so hooks and the MCP server find the right vault from inside a
+ * worktree even when Codex has dropped DIARCHY_PROJECT from the server's env.
  * Otherwise the nearest directory at or above the cwd that holds
  * diarchy.config.json wins, so a command run from `<project>/src` reads the
  * project's vault; `walkUp: false` (for `init`) keeps the cwd.
@@ -28,6 +30,15 @@ export declare class CliError extends Error {
 export declare function resolveProjectDir(option: string | undefined, options?: {
     walkUp?: boolean;
 }): string;
+/**
+ * The project that owns `dir` when `dir` is inside a linked git worktree that
+ * the project's config places at `<worktrees.root>/<agent>` (PROTOCOL.md 9.1),
+ * else null. The main checkout is the parent of the worktree's common git
+ * directory; the project is found by walking up from the same place in it,
+ * and its diarchy.config.json wins over a copy committed into the worktree.
+ * A worktree the config does not name (one a user made by hand) is not owned.
+ */
+export declare function worktreeOwner(dir: string): string | null;
 /** The nearest directory at or above `start` holding diarchy.config.json. */
 export declare function findConfigDir(start: string): string | null;
 /**

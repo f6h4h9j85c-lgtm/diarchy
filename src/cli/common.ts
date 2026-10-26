@@ -1,10 +1,11 @@
 /** Helpers shared by the diarchy CLI commands: project resolution, stores, parsing, output. */
-import { existsSync } from "node:fs";
-import { dirname, join, resolve, sep } from "node:path";
+import { existsSync, realpathSync, statSync } from "node:fs";
+import { basename, dirname, join, relative, resolve, sep } from "node:path";
 
 import { AGENT_HUMAN, partialBudgetsSchema, type BudgetLimits, type Message } from "../protocol/index.js";
 import { CONFIG_FILENAME, VaultStore, loadConfig, vaultPaths, type GoalRef } from "../vault/index.js";
 import { GLYPHS, SEP, hms } from "../vault/render/shared.js";
+import { git, worktreePath } from "./worktrees.js";
 
 export const EXIT_OK = 0;
 export const EXIT_ERROR = 1;
@@ -46,8 +47,10 @@ export class CliError extends Error {
 /**
  * The project root: `--project`, else `DIARCHY_PROJECT` (set by the launcher
  * for its children and their hooks), else the cwd. A cwd inside
- * `.diarchy/worktrees/<agent>` resolves to the project that owns the worktree,
- * so hooks and the MCP server find the right vault from inside a worktree.
+ * `.diarchy/worktrees/<agent>`, or inside an agent worktree under any other
+ * `worktrees.root` (see worktreeOwner), resolves to the project that owns the
+ * worktree, so hooks and the MCP server find the right vault from inside a
+ * worktree even when Codex has dropped DIARCHY_PROJECT from the server's env.
  * Otherwise the nearest directory at or above the cwd that holds
  * diarchy.config.json wins, so a command run from `<project>/src` reads the
  * project's vault; `walkUp: false` (for `init`) keeps the cwd.
@@ -60,7 +63,53 @@ export function resolveProjectDir(option: string | undefined, options: { walkUp?
   const marker = `${sep}.diarchy${sep}worktrees${sep}`;
   const index = cwd.indexOf(marker);
   if (index !== -1) return cwd.slice(0, index);
-  return options.walkUp === false ? cwd : (findConfigDir(cwd) ?? cwd);
+  if (options.walkUp === false) return cwd;
+  return worktreeOwner(cwd) ?? findConfigDir(cwd) ?? cwd;
+}
+
+/** Whether the nearest `.git` at or above `start` is a file, as in a linked worktree (or a submodule). */
+function inGitFileCheckout(start: string): boolean {
+  for (let dir = resolve(start); ; ) {
+    const entry = join(dir, ".git");
+    if (existsSync(entry)) return !statSync(entry).isDirectory();
+    const parent = dirname(dir);
+    if (parent === dir) return false;
+    dir = parent;
+  }
+}
+
+function realPath(path: string): string | null {
+  try {
+    return realpathSync(path);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The project that owns `dir` when `dir` is inside a linked git worktree that
+ * the project's config places at `<worktrees.root>/<agent>` (PROTOCOL.md 9.1),
+ * else null. The main checkout is the parent of the worktree's common git
+ * directory; the project is found by walking up from the same place in it,
+ * and its diarchy.config.json wins over a copy committed into the worktree.
+ * A worktree the config does not name (one a user made by hand) is not owned.
+ */
+export function worktreeOwner(dir: string): string | null {
+  const start = realPath(dir);
+  if (start === null || !inGitFileCheckout(start)) return null;
+  const result = git(start, ["rev-parse", "--path-format=absolute", "--show-toplevel", "--git-dir", "--git-common-dir"]);
+  if (!result.ok) return null;
+  const [toplevel, gitDir, commonDir] = result.stdout.split("\n").map((line) => resolve(start, line.trim()));
+  if (toplevel === undefined || gitDir === undefined || commonDir === undefined) return null;
+  if (gitDir === commonDir || basename(commonDir) !== ".git") return null;
+  const owner = findConfigDir(join(dirname(commonDir), relative(toplevel, start)));
+  if (owner === null) return null;
+  try {
+    const config = loadConfig(owner);
+    return Object.keys(config.agents).some((agent) => realPath(worktreePath(owner, config, agent)) === toplevel) ? owner : null;
+  } catch {
+    return null;
+  }
 }
 
 /** The nearest directory at or above `start` holding diarchy.config.json. */

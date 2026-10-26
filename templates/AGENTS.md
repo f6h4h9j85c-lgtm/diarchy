@@ -21,6 +21,12 @@ goal through the `diarchy` MCP server. In this file you are the `codex` PM.
 - Work only in your worktree on your branch: the ones your implement ASSIGN names, which are
   `<worktrees.root>/codex` and `<branch_prefix>/<goal-id>/codex` from `diarchy.config.json`
   (by default `.diarchy/worktrees/codex` and `diarchy/<goal-id>/codex`). Never commit to main.
+- Under the default sandbox you cannot commit, push, or open a PR (`Read-only file system`).
+  Finish the task in your worktree and post STATUS with `test` and `file` evidence; the other
+  PM commits and opens the PR, cites only `commit`, and gives the url in its STATUS body. Then
+  you post STATUS with that url as `pr` evidence: the implementer always posts the `pr`
+  evidence itself, since the first agent to cite a PR is its author and the other PM reviews
+  it. To review, use the read-only path in `diarchy-review` step 1.
 - Idle means `wait_for_reply`, not polling and not ending the session.
 - Never post ASK_HUMAN. Post BLOCKED `kind: external` and the system pages the human.
 

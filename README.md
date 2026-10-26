@@ -101,16 +101,17 @@ Dev mode: open `claude` and `codex` interactively in the same project and state 
 ## Project layout
 
 ```
-.claude-plugin/  Claude Code plugin and marketplace manifests
+.claude-plugin/  Claude Code plugin and marketplace manifests, and icon.png, the listing icon
 .codex-plugin/   Codex plugin manifest (points at .agents/skills, mcp.json, and hooks/codex-hooks.json)
 .agents/         Codex marketplace manifest and skill copies
 .codex/          Codex subagent .toml files (diarchy init copies them into a project)
 agents/          Claude Code subagents
+assets/          icon.svg, the source of .claude-plugin/icon.png
 bin/             diarchy.js, the CLI entry (imports dist/)
 dist/            compiled src/, committed so a plugin install runs without a build
 docs/            PROTOCOL, ANTI-SLOP, RENDERING, ARCHITECTURE, INSTALL-*, samples/
 hooks/           hooks.json (Claude Code), codex-hooks.json (Codex), the three hook scripts
-scripts/         sync-skills.mjs
+scripts/         sync-skills.mjs, render-icon.mjs
 skills/          diarchy-pm, diarchy-kickoff, diarchy-review
 src/protocol/    pure engine: schema, rules, state, transitions
 src/vault/       store: files, lock, cursors, renderers

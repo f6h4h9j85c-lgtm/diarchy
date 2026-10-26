@@ -9,5 +9,6 @@
   "homepage": "https://github.com/f6h4h9j85c-lgtm/diarchy",
   "repository": "https://github.com/f6h4h9j85c-lgtm/diarchy",
   "license": "MIT",
+  "icon": "./.claude-plugin/icon.png",
   "keywords": ["mcp", "multi-agent", "codex", "product-manager"]
 }

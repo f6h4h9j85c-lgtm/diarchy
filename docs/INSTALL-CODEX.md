@@ -192,9 +192,10 @@ only with `diarchy reply` while the goal is BLOCKED.
 
 A sandboxed Codex PM cannot check out a PR head to review it either: the
 checkout and the fetch both write to the read-only git directory, and the
-fetch needs the network too. The `diarchy-review` skill then has it extract the branch into a
-temporary directory (`d=$(mktemp -d) && git archive <branch> | tar -x -C "$d"`),
-run the tests there, and read the change with `git diff main...<branch>`.
+fetch needs the network too. The `diarchy-review` skill then has it extract
+the branch into a temporary directory
+(`d=$(mktemp -d) && git archive <branch> | tar -x -C "$d"`), run the tests
+there, and read the change with `git diff main...<branch>`.
 
 ### Opt in to full access
 

@@ -133,6 +133,19 @@ describe("docs: install paths", () => {
     }
   });
 
+  it("INSTALL-CODEX.md prose wraps at 80 columns", () => {
+    // The file is hard-wrapped; code blocks are exempt. INSTALL-CLAUDE.md and AGENTS.md wrap more loosely and are not checked.
+    let fenced = false;
+    const long: string[] = [];
+    read("docs", "INSTALL-CODEX.md")
+      .split("\n")
+      .forEach((line, index) => {
+        if (line.startsWith("```")) fenced = !fenced;
+        else if (!fenced && line.length > 80) long.push(`${index + 1}: ${line}`);
+      });
+    expect(long).toEqual([]);
+  });
+
   it("templates/AGENTS.md names skills, not repository paths that exist only in the diarchy checkout", () => {
     const template = read("templates", "AGENTS.md");
     expect(template).not.toMatch(/\.agents\/skills|skills\/diarchy-\w+\/SKILL\.md/);

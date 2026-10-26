@@ -173,6 +173,20 @@ describe("docs: the sandboxed Codex PM's PR stays its own (PROTOCOL.md 9.1, 9.2(
   });
 });
 
+describe("docs: PROTOCOL.md promises only what the tools and commands do", () => {
+  const protocol = read("docs", "PROTOCOL.md");
+
+  it("kickoff takes no goal_id, and a wedged goal is stopped or moved, not retired", () => {
+    // The kickoff tool declares goal, acceptance_criteria, budgets, and slug; there is no retire command.
+    expect(section(protocol, "## 2. Vault layout")).not.toContain("goal_id");
+    expect(protocol).not.toMatch(/retire the goal/);
+    expect(read("src", "vault", "store.ts")).not.toMatch(/retire a wedged goal/);
+    expect(section(protocol, "## 10. MCP tools").replace(/\s+/g, " ")).toContain(
+      "so the human can always fix the file, stop the run with `diarchy stop`, or move the goal directory out of the vault.",
+    );
+  });
+});
+
 describe("docs: answering a deadlock", () => {
   it("QUICKSTART.md says a plan ruling is refused while another thread is open and the plain reply answers then", () => {
     const answer = section(read("docs", "QUICKSTART.md"), "## 6. Answer");

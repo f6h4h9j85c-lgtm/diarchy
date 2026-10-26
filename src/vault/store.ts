@@ -744,8 +744,8 @@ export class VaultStore {
    * stop, reply, and a BLOCKED kind external must work even when kickoff.md
    * is missing or will not parse (a hand edit, or a file written before the
    * kickoff shape checks), so a PM can page the human and the human can
-   * always retire a wedged goal. The renderers only need what budget.json and
-   * the KICKOFF message already hold.
+   * always stop or answer a wedged goal. The renderers only need what
+   * budget.json and the KICKOFF message already hold.
    */
   private kickoffOrRebuilt(paths: GoalPaths, state: GoalState): Kickoff {
     try {

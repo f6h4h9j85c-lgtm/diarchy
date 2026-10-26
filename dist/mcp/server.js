@@ -166,7 +166,7 @@ export function createMcpServer(options) {
     }));
     register("post", {
         title: "Post a message",
-        description: "Post a PROPOSE, CHALLENGE, STATUS, DONE, or BLOCKED to the shared chat. PROPOSE and CHALLENGE need a one-sentence claim; a CHALLENGE also needs reply_to the PROPOSE, its decision_id, and a test evidence item naming the cheapest check that settles it; one CHALLENGE per decision, ever. STATUS and DONE need evidence. BLOCKED needs kind and a body; kind external pages the human. DECIDE and ASSIGN go through the decide and assign tools; the store builds KICKOFF and ASK_HUMAN itself. Returns the message id, the phase, and the types you may post next.",
+        description: "Post a PROPOSE, CHALLENGE, STATUS, DONE, or BLOCKED to the shared chat. PROPOSE and CHALLENGE need a one-sentence claim; a CHALLENGE also needs reply_to the PROPOSE or DECIDE on that decision, its decision_id, and a test evidence item naming the cheapest check that settles it; one CHALLENGE per decision, ever. STATUS and DONE need evidence. BLOCKED needs kind and a body; kind external pages the human. DECIDE and ASSIGN go through the decide and assign tools; the store builds KICKOFF and ASK_HUMAN itself. Returns the message id, the phase, and the types you may post next.",
         inputSchema: {
             type: z.enum(MESSAGE_TYPES).describe("PROPOSE, CHALLENGE, STATUS, DONE, or BLOCKED."),
             to: z.string().default("all").describe("An agent id, or all."),

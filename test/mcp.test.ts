@@ -202,6 +202,14 @@ describe("tools/list", () => {
       expect(row, field).toContain(field);
     }
   });
+
+  it("the post description lets a CHALLENGE reply to the DECIDE on its decision, as the rules do", async () => {
+    // A thread opened by a superseding DECIDE has no PROPOSE; the rules accept a reply_to on any message of that decision.
+    const h = await harness();
+    const { tools } = await h.claude.listTools();
+    const post = tools.find((tool) => tool.name === "post")?.description ?? "";
+    expect(post).toContain("a CHALLENGE also needs reply_to the PROPOSE or DECIDE on that decision, its decision_id,");
+  });
 });
 
 // ---------------------------------------------------------------------------

@@ -110,7 +110,7 @@ bin/             diarchy.js, the CLI entry (imports dist/)
 dist/            compiled src/, committed so a plugin install runs without a build
 docs/            PROTOCOL, ANTI-SLOP, RENDERING, RENDERING-DESIGN-NOTES, ARCHITECTURE, QUICKSTART, INSTALL-*, samples/, audit/
 hooks/           hooks.json (Claude Code), codex-hooks.json (Codex), the three hook scripts
-scripts/         sync-skills.mjs
+scripts/         sync-skills.mjs, gen-samples.ts (rebuilds docs/samples from the sample run)
 skills/          diarchy-pm, diarchy-kickoff, diarchy-review
 src/protocol/    pure engine: schema, rules, state, transitions
 src/vault/       store: files, lock, cursors, renderers

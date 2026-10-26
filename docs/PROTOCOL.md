@@ -418,7 +418,7 @@ This is the file `diarchy init` writes, with `<project>` standing for the projec
 
 ### 9.1 Worktrees, branches, PRs
 
-Each PM works only in `<worktrees.root>/<agent>` on `<branch_prefix>/<goal-id>/<agent>`; ASSIGN carries both and the launcher creates the worktrees at kickoff. Work ships as a PR: the implementer posts STATUS with `pr` evidence; the lead ASSIGNs `kind: review` (with `pr`) to the other agent; the reviewer posts STATUS with `review` evidence, the only thing that counts as review. A `verdict: approve` from a non-author unlocks merge; the author merges and posts STATUS with the merge `commit`.
+Each PM works only in `<worktrees.root>/<agent>` on `<branch_prefix>/<goal-id>/<agent>`; ASSIGN carries both and the launcher creates the worktrees at kickoff. Work ships as a PR: the implementer posts STATUS with `pr` evidence; the lead ASSIGNs `kind: review` (with `pr`) to the other agent; the reviewer posts STATUS with `review` evidence, the only thing that counts as review. A `verdict: approve` from a non-author unlocks merge; the author merges and posts STATUS with the merge `commit` (a sandboxed author's PR is merged by the PM that opened it).
 
 ### 9.2 DONE preconditions (DONE_PRECONDITION)
 

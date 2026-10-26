@@ -163,7 +163,7 @@ function listFiles(dir: string): string[] {
 }
 
 // ---------------------------------------------------------------------------
-// The sample run behind docs/samples: kickoff.md plus 21 message files
+// The sample run behind docs/samples: kickoff.md plus 23 message files
 // ---------------------------------------------------------------------------
 
 const RUN_KICKOFF = parseKickoffFile(readFileSync(join(SAMPLE_RUN, "kickoff.md"), "utf8"));
@@ -230,17 +230,39 @@ async function replay(h: Harness, count = RUN.length, onStep?: (message: Message
 }
 
 const BLOCKED_INDEX = RUN.findIndex((message) => message.type === "BLOCKED") + 1;
+const D1_CHALLENGE = RUN.findIndex((message) => message.type === "CHALLENGE" && message.phase === "EXECUTE");
+const D3_INDEX = RUN.findIndex((message) => message.decision_id === "D3");
 
 // ---------------------------------------------------------------------------
 // Golden renders
 // ---------------------------------------------------------------------------
 
 describe("golden renders", () => {
-  it("the sample run has 21 messages in (ts, seq) order with one writer-owned file each", () => {
-    expect(RUN).toHaveLength(21);
+  it("the sample run has 23 messages in (ts, seq) order with one writer-owned file each", () => {
+    expect(RUN).toHaveLength(23);
     expect(RUN_FILES).toEqual(RUN.map((message) => `${message.id}.md`));
     expect(RUN.map((message) => message.ts)).toEqual([...RUN.map((message) => message.ts)].sort());
-    expect(new Set(RUN.map((message) => message.ts)).size).toBe(21);
+    expect(new Set(RUN.map((message) => message.ts)).size).toBe(23);
+  });
+
+  it("the sample run is a default-sandbox run: claude commits for codex and opens its PR, codex posts its pr evidence (INSTALL-CODEX.md 5)", () => {
+    // The sandboxed Codex PM cannot commit, so every sha is first cited by claude.
+    const committer = new Map<string, string>();
+    for (const message of RUN) {
+      for (const item of message.evidence ?? []) if (item.kind === "commit" && !committer.has(item.sha)) committer.set(item.sha, message.from);
+    }
+    expect(committer.size).toBeGreaterThan(0);
+    expect(new Set(committer.values())).toEqual(new Set(["claude"]));
+    // Codex's PR: claude passes the url in a STATUS body citing only commit, then codex is the first to cite it as pr.
+    const prs = RUN.flatMap((message) => (message.evidence ?? []).flatMap((item) => (item.kind === "pr" ? [{ url: item.url, message }] : [])));
+    const codexPrs = prs.filter(({ url, message }) => message.from === "codex" && prs.find((pr) => pr.url === url)?.message === message);
+    expect(codexPrs).not.toEqual([]);
+    for (const { url, message } of codexPrs) {
+      const opened = RUN.findIndex((entry) => entry.from === "claude" && entry.type === "STATUS" && entry.body.includes(url));
+      expect(opened, url).toBeGreaterThanOrEqual(0);
+      expect(opened, url).toBeLessThan(RUN.indexOf(message));
+      expect(RUN[opened].evidence?.map((item) => item.kind), url).toEqual(["commit"]);
+    }
   });
 
   it("replays the run through a real VaultStore and reproduces chat.md, decisions.md, goal.md byte for byte", async () => {
@@ -256,8 +278,8 @@ describe("golden renders", () => {
     }
     const state = h.claude.state();
     expect(state?.phase).toBe("DONE");
-    expect(state?.used).toMatchObject({ messages_total: 18, plan_messages: 5, wall_clock_minutes: 150 });
-    expect(state?.seq).toEqual({ claude: 12, codex: 6, human: 2, system: 1 });
+    expect(state?.used).toMatchObject({ messages_total: 20, plan_messages: 5, wall_clock_minutes: 150 });
+    expect(state?.seq).toEqual({ claude: 14, codex: 6, human: 2, system: 1 });
   });
 
   it("reproduces goal-blocked.md after the BLOCKED message, with a WARNING strip in chat.md", async () => {
@@ -412,20 +434,20 @@ describe("renderer rules", () => {
     await replay(h);
     const state = h.claude.state();
     if (state === null) throw new Error("no goal");
-    expect(budgetLine(state)).toBe("18 of 80 messages (PLAN 5 of 12) · 150 of 240 min");
+    expect(budgetLine(state)).toBe("20 of 80 messages (PLAN 5 of 12) · 150 of 240 min");
     const spending: GoalState = {
       ...state,
       limits: { ...state.limits, spend_usd: 50 },
       used: { ...state.used, spend_usd: 12.5 },
-      deadlock_watch: { decision_id: "D1", challenge_id: RUN[16].id, remaining: 2, deadline: "2026-10-25T15:59:12Z" },
+      deadlock_watch: { decision_id: "D1", challenge_id: RUN[D1_CHALLENGE].id, remaining: 2, deadline: "2026-10-25T15:59:12Z" },
     };
     // D1 is decided here, so the watch is on an EXECUTE CHALLENGE, not on an open thread.
     expect(budgetLine(spending)).toBe(
-      "18 of 80 messages (PLAN 5 of 12) · 150 of 240 min · 12.50 of 50.00 USD · CHALLENGE on D1, DECIDE due by 15:59:12 UTC",
+      "20 of 80 messages (PLAN 5 of 12) · 150 of 240 min · 12.50 of 50.00 USD · CHALLENGE on D1, DECIDE due by 15:59:12 UTC",
     );
     const reopened: GoalState = { ...spending, decisions: { ...spending.decisions, D1: { ...spending.decisions.D1, status: "open" } } };
     expect(budgetLine(reopened)).toBe(
-      "18 of 80 messages (PLAN 5 of 12) · 150 of 240 min · 12.50 of 50.00 USD · open D1, DECIDE due by 15:59:12 UTC",
+      "20 of 80 messages (PLAN 5 of 12) · 150 of 240 min · 12.50 of 50.00 USD · open D1, DECIDE due by 15:59:12 UTC",
     );
     expect(budgetLine(null)).toBe("budget unavailable");
     const kickoff = h.claude.readKickoff();
@@ -437,10 +459,10 @@ describe("renderer rules", () => {
 
   it("the open deadlock shows in the strip while the lead's DECIDE is pending", async () => {
     const h = harness();
-    await replay(h, RUN.findIndex((message) => message.id === RUN[16].id) + 1);
-    expect(RUN[16].type).toBe("CHALLENGE");
+    await replay(h, D1_CHALLENGE + 1);
+    expect(RUN[D1_CHALLENGE].type).toBe("CHALLENGE");
     const chat = h.file("chat.md");
-    expect(chat).toContain("> 14 of 80 messages (PLAN 5 of 12) · 109 of 240 min · CHALLENGE on D1, DECIDE due by 15:59:12 UTC\n");
+    expect(chat).toContain("> 16 of 80 messages (PLAN 5 of 12) · 109 of 240 min · CHALLENGE on D1, DECIDE due by 15:59:12 UTC\n");
     // RENDERING.md 2.1 "Example, EXECUTE" is this very strip, its summary escaped and cut as 1.1 and 2.1 say.
     const rendering = readFileSync(join(SAMPLES, "..", "RENDERING.md"), "utf8");
     const strip = /Example, EXECUTE:\n\n```\n([\s\S]*?)```/.exec(rendering)?.[1];
@@ -827,7 +849,7 @@ describe("store-owned files", () => {
       }
       expect(listFiles(goalDir).filter((name) => name.includes(".tmp-") || name.includes(".lock"))).toEqual([]);
     });
-    expect(seen.size).toBe(21);
+    expect(seen.size).toBe(23);
   });
 
   it("no public method takes a path; only kickoff, post, read, waitForReply, reply, stop, and render write", async () => {
@@ -2049,8 +2071,8 @@ describe("reply and stop as human", () => {
 
   it("reply --decision on a decided thread supersedes it", async () => {
     const h = harness();
-    await replay(h, 18);
-    expect(RUN[17].decision_id).toBe("D3");
+    await replay(h, D3_INDEX + 1);
+    expect(RUN[D3_INDEX].decision_id).toBe("D3");
     h.clock.set("2026-10-25T16:00:00Z");
     ok(await h.human.stop("Pausing before the default changes again."));
     h.clock.set("2026-10-25T16:01:00Z");
@@ -2247,6 +2269,13 @@ describe("docs that quote the sample run", () => {
     expect(named.length).toBeGreaterThan(0);
     expect(new Set(named)).toEqual(new Set([goalId]));
     expect(quickstart).toContain(`goals/${goalId}/chat.md`);
+  });
+
+  it("RENDERING-DESIGN-NOTES quotes the budget line samples/chat.md renders", () => {
+    const notes = readFileSync(join(DOCS, "RENDERING-DESIGN-NOTES.md"), "utf8");
+    const quoted = /^> (\d+ of \d+ messages .*)$/m.exec(notes)?.[1];
+    expect(quoted).toBeDefined();
+    expect(readFileSync(join(SAMPLES, "chat.md"), "utf8")).toContain(`\n> ${quoted}\n`);
   });
 
   it("RENDERING-DESIGN-NOTES quotes the AC statuses goal-blocked.md renders", () => {

@@ -207,6 +207,9 @@ describe("docs: the sandboxed Codex PM's PR stays its own (PROTOCOL.md 9.1, 9.2(
       expect(text, name).not.toMatch(/committed by the Claude PM or (by you|the human)/);
     }
     expect(install).toContain("the Claude PM commits and pushes `.diarchy/worktrees/codex` from outside the sandbox and opens its PR");
+    // Who merges: the sample run shows the Claude PM merging the sandboxed Codex PM's PR.
+    expect(flat("skills", "diarchy-review", "SKILL.md")).toContain("(for a sandboxed author, the PM that opened the PR merges it)");
+    expect(section(read("docs", "PROTOCOL.md"), "### 9.1 Worktrees, branches, PRs")).toContain("(a sandboxed author's PR is merged by the PM that opened it)");
   });
 
   it("the review skill and INSTALL-CODEX.md 5 give a sandboxed reviewer a read-only way to test the PR head", () => {

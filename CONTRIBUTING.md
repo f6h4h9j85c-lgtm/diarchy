@@ -23,7 +23,7 @@ CI runs these on Node 20 and 22, plus the `dist/` check below. `npm test -- prot
 
 ## Changing rendering
 
-Edit `docs/RENDERING.md` first. The samples win over the spec when they disagree, so change `docs/samples/*.md` in the same commit. `test/vault.test.ts` replays `test/fixtures/vault/sample-run/` through a real store and compares bytes; the failing assertion shows the diff. The sample message files are the golden input and are not edited to make a rendering change pass.
+Edit `docs/RENDERING.md` first. The samples win over the spec when they disagree, so change `docs/samples/*.md` in the same commit. `test/vault.test.ts` replays `test/fixtures/vault/sample-run/` through a real store and compares bytes; the failing assertion shows the diff. The sample message files are the golden input and are not edited to make a rendering change pass. `npm run gen-samples` replays them through the store and rewrites `docs/samples/*.md`, the message files, and `test/fixtures/protocol/bases/execute-ready.yaml`; after a rendering change only the samples may move. To change the scenario itself, edit, add, or delete message files (any parseable id; ts sets the order) and rerun it: the store assigns the ids and `reply_to` follows them. Then update the counts the tests pin and the strips `docs/RENDERING.md` quotes.
 
 ## Conventions
 

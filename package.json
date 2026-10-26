@@ -45,7 +45,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "dev": "tsx src/cli/index.ts",
-    "sync-skills": "node scripts/sync-skills.mjs"
+    "sync-skills": "node scripts/sync-skills.mjs",
+    "gen-samples": "tsx scripts/gen-samples.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.32.2",

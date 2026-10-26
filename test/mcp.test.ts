@@ -190,6 +190,14 @@ describe("tools/list", () => {
     }
   });
 
+  it("the wait_for_reply description bounds the lead's wait on a silent challenger, deciding the challenger's threads before plan", async () => {
+    const h = await harness();
+    const { tools } = await h.claude.listTools();
+    const wait = tools.find((tool) => tool.name === "wait_for_reply")?.description ?? "";
+    expect(wait).toContain("If you are the lead and your plan PROPOSE has drawn no CHALLENGE after two timeouts, or the challenger has posted something else, stop waiting");
+    expect(wait).toContain("decide any thread the challenger opened first, then plan (basis authority when no CHALLENGE came)");
+  });
+
   it("the read description and the PROTOCOL.md section 10 read row name goal_text and acs", async () => {
     const h = await harness();
     const { tools } = await h.claude.listTools();

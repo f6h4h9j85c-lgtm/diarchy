@@ -1,6 +1,6 @@
 {
   "name": "diarchy",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "hooks": "./hooks/codex-hooks.json",
   "description": "Two PM agents, Claude Code and Codex CLI, coordinating on one goal through a protocol-enforced MCP server. Adds the diarchy MCP tools, the diarchy-pm, diarchy-kickoff, and diarchy-review skills, five subagents, and session hooks.",
   "keywords": ["mcp", "multi-agent", "codex", "product-manager"],

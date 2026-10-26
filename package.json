@@ -1,6 +1,6 @@
 {
   "name": "diarchy",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Two AI coding agents (Claude Code and Codex), each running as a product manager, coordinating PM-to-PM through an Obsidian vault with a protocol enforced in code.",
   "type": "module",
   "license": "MIT",

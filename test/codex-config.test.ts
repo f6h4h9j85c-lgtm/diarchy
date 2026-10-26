@@ -159,6 +159,16 @@ function walk(dir: string, base = dir): string[] {
   return files.sort();
 }
 
+/** The text from `heading` up to the next heading of the same or higher level. */
+function section(doc: string, heading: string): string {
+  const start = doc.indexOf(`\n${heading}\n`);
+  expect(start, heading).toBeGreaterThanOrEqual(0);
+  const level = /^#+/.exec(heading)?.[0] ?? "##";
+  const rest = doc.slice(start + heading.length + 2);
+  const end = rest.search(new RegExp(`^#{1,${level.length}} `, "m"));
+  return end < 0 ? rest : rest.slice(0, end);
+}
+
 const AGENT_NAMES = ["planner", "designer", "implementer", "reviewer", "security"];
 const pkg = readJson(at("package.json")) as { version: string };
 /** The manifest Codex reads: `.codex-plugin/plugin.json` takes precedence over a root `plugin.json`. */
@@ -305,7 +315,8 @@ describe("codex-config: JSON manifests", () => {
     // With cwd at the plugin root the server finds the project only through DIARCHY_PROJECT.
     expect(s.env_vars).toContain("DIARCHY_PROJECT");
     expect(s.tool_timeout_sec).toBeGreaterThanOrEqual(600);
-    expect(s.startup_timeout_sec).toBeGreaterThan(0);
+    // Codex's own startup default is 30 s; a lower value shortens it instead of raising it.
+    expect(s.startup_timeout_sec).toBeGreaterThanOrEqual(30);
   });
 
   it("every documented [mcp_servers.diarchy] block forwards DIARCHY_PROJECT, which Codex otherwise strips from a server's env", () => {
@@ -532,6 +543,33 @@ describe("codex-config: skill and install prose", () => {
     const text = read("docs", "INSTALL-CODEX.md");
     expect(text).toContain("codex plugin add diarchy@diarchy");
     expect(text).not.toMatch(/no one-line `codex plugin install`/);
+  });
+
+  it("INSTALL-CODEX.md 2 never calls the plugin server's fallback cwd a real project: Codex runs it from its cache copy", () => {
+    const text = section(read("docs", "INSTALL-CODEX.md"), "## 2. Register the MCP server").replace(/\s+/g, " ");
+    expect(text).not.toContain("which is the right project only when Codex runs inside the diarchy checkout");
+    expect(text).not.toContain("in any other project");
+    expect(text).toContain("finds the project only through `DIARCHY_PROJECT`");
+    expect(text).toContain("`~/.codex/plugins/cache/diarchy/diarchy/<version>`");
+    expect(text).toContain("Every interactive session therefore needs this server in `~/.codex/config.toml`, including sessions in the diarchy checkout");
+  });
+
+  it("every documented Codex MCP timeout matches mcp.json and none sits under Codex's defaults (30 s startup, 300 s tool)", () => {
+    const server = (readJson(at("mcp.json")) as { mcpServers: Record<string, Record<string, number>> }).mcpServers.diarchy;
+    const docs = ["README.md", ...walk(at("docs")).map((file) => join("docs", file))];
+    let seen = 0;
+    for (const file of docs) {
+      for (const [, key, value] of read(file).matchAll(/^(startup_timeout_sec|tool_timeout_sec) = (\d+)$/gm)) {
+        seen++;
+        expect(Number(value), `${file} ${key}`).toBe(server[key]);
+      }
+    }
+    expect(seen).toBeGreaterThanOrEqual(4);
+    expect(server.startup_timeout_sec).toBeGreaterThanOrEqual(30);
+    expect(server.tool_timeout_sec).toBeGreaterThanOrEqual(300);
+    const why = read("docs", "INSTALL-CODEX.md").replace(/\s+/g, " ");
+    expect(why).toContain("Codex's defaults are 30 seconds to start a server and 300 seconds per tool call.");
+    expect(why).not.toContain("default tool timeout would cut every call off");
   });
 
   it("diarchy-kickoff hands an active goal to the role read returns, never assuming challenger", () => {

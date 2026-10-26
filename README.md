@@ -77,7 +77,7 @@ enabled = true
 command = "diarchy"
 args = ["mcp", "--agent", "codex"]
 env_vars = ["DIARCHY_PROJECT"]
-startup_timeout_sec = 20
+startup_timeout_sec = 60
 tool_timeout_sec = 1800
 ```
 

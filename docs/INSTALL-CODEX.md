@@ -51,22 +51,24 @@ Claude manifest and start the Claude `.mcp.json` server with a literal
 The plugin's `mcp.json` already registers the `diarchy` server. It runs
 `node bin/diarchy.js mcp --agent codex` with `cwd = "."`, which Codex rewrites
 to the installed plugin root; Codex never rewrites relative `args`, so the
-relative script path depends on that `cwd`. The server locates the project
+relative script path depends on that `cwd`. This server finds the project only
 through `DIARCHY_PROJECT`, which `mcp.json` forwards from the environment
-(`env_vars`) and the diarchy launcher sets for its children. Without that
-variable the server falls back to its own working directory, the plugin root,
-which is the right project only when Codex runs inside the diarchy checkout.
+(`env_vars`) and `diarchy start` sets for both PMs. Without that variable the
+server falls back to its own working directory, which is always Codex's copy of
+the plugin in its cache (`~/.codex/plugins/cache/diarchy/diarchy/<version>`),
+never a real project, even when Codex runs inside the diarchy checkout.
 In the plugin cache that `bin/diarchy.js` runs the global `diarchy` (section 1).
 
-For interactive use in any other project, add to `~/.codex/config.toml`, which
-runs the global CLI from section 1 directly:
+Every interactive session therefore needs this server in
+`~/.codex/config.toml`, including sessions in the diarchy checkout; it runs the
+global CLI from section 1 directly:
 
 ```toml
 [mcp_servers.diarchy]
 command = "diarchy"
 args = ["mcp", "--agent", "codex"]
 env_vars = ["DIARCHY_PROJECT"]
-startup_timeout_sec = 20
+startup_timeout_sec = 60
 tool_timeout_sec = 1800
 ```
 
@@ -81,13 +83,15 @@ checkout that owns it, else the nearest directory at or above it that holds
 `diarchy.config.json`. `--agent codex` is what makes this server post as
 `codex`.
 
-Why the raised timeouts: `wait_for_reply` blocks for up to 110 seconds per call
-and the PM chains several while the other agent works; Codex's default tool
-timeout would cut every call off mid-wait, so the PM gets a tool error in place
-of each reply and only its next call brings the message in (the server drops a
-cut-off wait without moving the inbox cursor, so nothing is lost, but every
-wait costs a failed turn). `startup_timeout_sec = 20` covers a cold `node`
-start on a slow disk. The plugin's `mcp.json` carries the same two
+Why the raised timeouts: Codex's defaults are 30 seconds to start a server and
+300 seconds per tool call. Each `wait_for_reply` call blocks for up to 110
+seconds, so the default tool timeout already covers every wait, however many
+the PM chains while the other agent works; `tool_timeout_sec = 1800` is
+headroom over it, not a fix for a cut-off. Keep it above 110, or Codex cuts
+waits off and the PM gets a tool error in place of the reply.
+`startup_timeout_sec = 60`
+doubles the startup default for a cold `node` start on a slow disk; a value
+under 30 would shorten it instead. The plugin's `mcp.json` carries the same two
 values.
 
 ## 3. Trust the project, then trust the hooks

@@ -2361,6 +2361,18 @@ describe("docs that quote the sample run", () => {
     expect(readFileSync(join(SAMPLES, "chat.md"), "utf8")).toContain(`\n> ${quoted}\n`);
   });
 
+  it("RENDERING-DESIGN-NOTES gives the counts of the RENDERING.md EXECUTE and BLOCKED strips", () => {
+    const notes = readFileSync(join(DOCS, "RENDERING-DESIGN-NOTES.md"), "utf8");
+    const rendering = readFileSync(join(DOCS, "RENDERING.md"), "utf8");
+    const strip = (name: string): string => new RegExp(`Example, ${name}:\n\n\`\`\`\n([\\s\\S]*?)\`\`\``).exec(rendering)?.[1] ?? "";
+    const execute = /^> (\d+) of \d+ messages .* · (\d+) of \d+ min/m.exec(strip("EXECUTE"));
+    expect(execute).not.toBeNull();
+    expect(notes).toContain(`The EXECUTE example said 93 minutes and 12 messages; it is ${execute?.[2]} and ${execute?.[1]}.`);
+    const blocked = /^> (\d+) of \d+ messages /m.exec(strip("BLOCKED"));
+    expect(blocked).not.toBeNull();
+    expect(notes).toContain(`so it is ${blocked?.[1]}.`);
+  });
+
   it("RENDERING-DESIGN-NOTES quotes the AC statuses goal-blocked.md renders", () => {
     const notes = readFileSync(join(DOCS, "RENDERING-DESIGN-NOTES.md"), "utf8");
     const statuses = [...readFileSync(join(SAMPLES, "goal-blocked.md"), "utf8").matchAll(/^\| AC\d+ \|.*\| ([^|]+) \|$/gm)].map((match) => match[1]);

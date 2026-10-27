@@ -225,9 +225,9 @@ export function nextStep(state, messages, agent, unread) {
                 // A thread the lead opened keeps the challenger's CHALLENGE window, as plan does; one the challenger opened is the lead's to DECIDE now.
                 const ordered = sortMessages(messages);
                 const ready = first.find((id) => !awaitsChallenger(state, ordered, id));
-                return ready === undefined ? { text: `${wait} ${decideFirst()}`, owes: false } : { text: decideFirst(ready), owes: true };
+                return ready === undefined ? { text: `${wait} ${decideFirst()}`, owes: false, dueOnTimeout: true } : { text: decideFirst(ready), owes: true };
             }
-            return { text: `${wait} call decide with decision_id plan (basis authority, body: no CHALLENGE came)`, owes: false };
+            return { text: `${wait} call decide with decision_id plan (basis authority, body: no CHALLENGE came)`, owes: false, dueOnTimeout: true };
         }
     }
     if (lead && state.phase === "EXECUTE") {

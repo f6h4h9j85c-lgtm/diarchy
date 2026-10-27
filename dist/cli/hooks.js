@@ -53,6 +53,17 @@ function readChat(store) {
 function corruptStep(error) {
     return { text: `${corruptText(error)} Post BLOCKED with kind external naming that file (call post), so the human can repair it or run diarchy stop`, owes: true };
 }
+/**
+ * The step the Stop gate acts on for `agent`, with the messages it read: in
+ * PLAN/EXECUTE a chat file that will not parse makes it the BLOCKED that
+ * brings the human, else it is `nextStep`. The supervisor parks a PM by it.
+ */
+export function gateStep(store, goal, state, agent) {
+    const { messages, corrupt } = readChat(store);
+    if (corrupt.length > 0 && (state.phase === "PLAN" || state.phase === "EXECUTE"))
+        return { step: corruptStep(corrupt[0]), messages };
+    return { step: nextStep(state, messages, agent, unreadFor(goal, messages, agent)), messages };
+}
 export function runInboxSkim(projectDir, agent) {
     const store = humanStore(projectDir);
     let goal;
@@ -271,9 +282,7 @@ export function runGate(projectDir, agent, hookJson = "") {
     const state = store.state();
     if (state === null || state.goal !== goal.goalId)
         return null;
-    const { messages, corrupt } = readChat(store);
-    const unread = unreadFor(goal, messages, agent);
-    const step = corrupt.length > 0 ? corruptStep(corrupt[0]) : nextStep(state, messages, agent, unread);
+    const { step, messages } = gateStep(store, goal, state, agent);
     const path = gateRecordPath(projectDir, agent, gateSessionKey(hookJson));
     const lastId = messages.length === 0 ? null : messages[messages.length - 1].id;
     let record = loadGateRecord(path);

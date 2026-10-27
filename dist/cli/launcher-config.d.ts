@@ -10,7 +10,8 @@ export interface LauncherKnobs {
     /**
      * Restarts per agent between two messages. Past it the agent is left dead until the next message lands, which respawns it with a fresh count.
      * An exit followed by another session holding the agent's lease does not count: the PM waits for that session instead. Nor does a clean
-     * exit (code 0) with nothing owed, as the Stop gate judges it, while the other PM runs: the PM is parked until a message lands or no PM is left running.
+     * exit (code 0) with nothing owed, as the Stop gate judges it, while the other PM runs: the PM is parked until a message lands, no PM is left running,
+     * or, once between two messages, 220 s pass with no message. The lead is not parked while its DECIDE after the plan CHALLENGE window, or its DONE, is due.
      */
     max_restarts: number;
     restart_backoff_ms: number;

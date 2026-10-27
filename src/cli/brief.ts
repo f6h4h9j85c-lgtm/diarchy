@@ -200,6 +200,8 @@ export interface NextStep {
   text: string;
   /** True when the agent owes the goal something now (the Stop gate blocks on this). */
   owes: boolean;
+  /** True when the step falls due once wait_for_reply times out with no message (the lead in the plan CHALLENGE window), so no message brings it. */
+  dueOnTimeout?: boolean;
 }
 
 /** The imperative next step for `agent`, in priority order. */
@@ -260,9 +262,9 @@ export function nextStep(state: GoalState, messages: Message[], agent: AgentId, 
         // A thread the lead opened keeps the challenger's CHALLENGE window, as plan does; one the challenger opened is the lead's to DECIDE now.
         const ordered = sortMessages(messages);
         const ready = first.find((id) => !awaitsChallenger(state, ordered, id));
-        return ready === undefined ? { text: `${wait} ${decideFirst()}`, owes: false } : { text: decideFirst(ready), owes: true };
+        return ready === undefined ? { text: `${wait} ${decideFirst()}`, owes: false, dueOnTimeout: true } : { text: decideFirst(ready), owes: true };
       }
-      return { text: `${wait} call decide with decision_id plan (basis authority, body: no CHALLENGE came)`, owes: false };
+      return { text: `${wait} call decide with decision_id plan (basis authority, body: no CHALLENGE came)`, owes: false, dueOnTimeout: true };
     }
   }
   if (lead && state.phase === "EXECUTE") {

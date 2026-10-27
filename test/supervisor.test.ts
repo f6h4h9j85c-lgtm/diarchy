@@ -22,7 +22,7 @@ import { findExecutable, platformProblem } from "../src/cli/preflight.js";
 import { claimRunRecord, identify, pidPath, psStartTime, readRunRecord, reapLeftovers, runningSupervisor } from "../src/cli/run-record.js";
 import { worktreePath } from "../src/cli/worktrees.js";
 import { createMcpServer } from "../src/mcp/index.js";
-import { VaultStore, loadConfig, type MessageDraft } from "../src/vault/index.js";
+import { MAX_WAIT_MS, VaultStore, loadConfig, type MessageDraft } from "../src/vault/index.js";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const CLI = join(ROOT, "src", "cli", "index.ts");
@@ -721,6 +721,236 @@ describe("a PM that ends its turn with nothing owed", () => {
     await cli(["stop", "--project", dir]);
     await run.done;
   }, 60_000);
+
+  /**
+   * A stand-in for a lead that ends its turn early: the lead ($STANDIN_LEAD)
+   * reads its inbox, posts the $STANDIN_FIRST draft (JSON; none when unset) and
+   * ends its turn with exit 0 on its first run, and on each later run posts
+   * $STANDIN_NEXT and works silently. The other agent never ends its session:
+   * it calls wait_for_reply in a loop, as diarchy-pm says.
+   */
+  function earlyLeadScript(): string {
+    const path = join(tempDir(), "early-lead.mjs");
+    writeFileSync(
+      path,
+      [
+        'import { appendFileSync, existsSync } from "node:fs";',
+        `const { VaultStore, loadConfig } = await import(${DIST_VAULT});`,
+        "const agent = process.env.DIARCHY_AGENT;",
+        "const projectDir = process.env.DIARCHY_PROJECT;",
+        "const pidFile = `${process.env.STANDIN_DIR}/${agent}.pid`;",
+        "const first = !existsSync(pidFile);",
+        "appendFileSync(pidFile, `${process.pid}\\n`);",
+        "const store = new VaultStore({ projectDir, config: loadConfig(projectDir), agent, pollIntervalMs: 50 });",
+        "store.read();",
+        "if (agent !== process.env.STANDIN_LEAD) for (;;) await store.waitForReply({ timeoutMs: 400 });",
+        'const draft = process.env[first ? "STANDIN_FIRST" : "STANDIN_NEXT"];',
+        "if (draft !== undefined) {",
+        "  const result = await store.post(JSON.parse(draft));",
+        "  console.log(result.ok ? `posted ${result.id}` : `rejected ${result.rule}: ${result.message}`);",
+        "}",
+        "if (first) process.exit(0);",
+        "setInterval(() => undefined, 1000);",
+        "",
+      ].join("\n"),
+    );
+    return path;
+  }
+
+  const DECIDE_PLAN: MessageDraft = {
+    type: "DECIDE",
+    to: "all",
+    re: ["AC1"],
+    decision_id: "plan",
+    basis: "authority",
+    claim: "The plan stands as proposed.",
+    tasks: ["AC1: park and test"],
+    body: "No CHALLENGE came.",
+  };
+
+  it("never parks the lead in the silent plan CHALLENGE window: it is restarted and DECIDEs plan", async () => {
+    const dir = await initProject("park-window");
+    const standin = tempDir();
+    const run = launch(
+      ["start", "Decide after a silent window", "--ac", "The lead decides.", "--lead", "claude", "--driver", "fake", "--fake-script", earlyLeadScript(), "--no-worktrees", "--project", dir],
+      { STANDIN_DIR: standin, STANDIN_LEAD: "claude", STANDIN_FIRST: JSON.stringify(PLAN_PROPOSE), STANDIN_NEXT: JSON.stringify(DECIDE_PLAN) },
+    );
+    await until("the plan decided", () => run.out().includes("EXECUTE · 3 messages · last claude DECIDE plan"), 30_000);
+    expect(run.out()).toContain("claude restarting in 0.2 s (restart 1 of 3)");
+    expect(run.out()).not.toContain(idle("claude"));
+    expect(pids(standin, "claude")).toHaveLength(2);
+    expect(pids(standin, "codex")).toHaveLength(1);
+
+    await cli(["stop", "--project", dir]);
+    await run.done;
+  }, 60_000);
+
+  it("never parks the lead once a DONE would pass 9.2: it is restarted and posts DONE", async () => {
+    const dir = await initProject("park-done", (config) => {
+      config.review = { required: false };
+    });
+    expect((await cli(["kickoff", "Finish the goal", "--ac", "hello.txt exists", "--lead", "claude", "--project", dir])).code).toBe(0);
+    const config = loadConfig(dir);
+    const claude = new VaultStore({ projectDir: dir, config, agent: "claude", pollIntervalMs: 20 });
+    const codex = new VaultStore({ projectDir: dir, config, agent: "codex", pollIntervalMs: 20 });
+    const goal = claude.activeGoal()?.goalId ?? "";
+    const posted = async (store: VaultStore, draft: MessageDraft): Promise<void> => {
+      const result = await store.post(draft);
+      if (!result.ok) throw new Error(`${result.rule}: ${result.message}`);
+    };
+    await posted(claude, PLAN_PROPOSE);
+    await posted(claude, DECIDE_PLAN);
+    await posted(claude, { type: "ASSIGN", to: "codex", re: ["AC1"], task: "T1", kind: "implement", worktree: ".diarchy/worktrees/codex", branch: `diarchy/${goal}/codex` });
+    codex.read();
+    const evidence = [{ kind: "commit" as const, sha: "abc1234" }, { kind: "test" as const, test: "test -f hello.txt", result: "pass" as const }];
+    await posted(codex, { type: "STATUS", to: "all", re: ["AC1"], task: "T1", task_status: "done", evidence, body: "T1 landed; hello.txt exists and its check passes." });
+    claude.read();
+    // Every precondition holds, yet the Stop gate does not cover DONE: the lead's brief says nothing is owed.
+    expect((await cli(["gate", "--agent", "claude", "--project", dir])).stdout).toBe("");
+
+    const standin = tempDir();
+    const run = launch(["start", "--driver", "fake", "--fake-script", earlyLeadScript(), "--no-worktrees", "--project", dir], {
+      STANDIN_DIR: standin,
+      STANDIN_LEAD: "claude",
+      STANDIN_NEXT: JSON.stringify({ type: "DONE", to: "all", re: ["AC1"], evidence, body: "Every task is done and AC1 passes." }),
+    });
+    await until("DONE", () => run.out().includes("DONE · "), 30_000);
+    const result = await run.done;
+    expect(result.code, result.stdout + result.stderr).toBe(0);
+    expect(result.stdout).toContain("claude restarting in 0.2 s (restart 1 of 3)");
+    expect(result.stdout).not.toContain(idle("claude"));
+  }, 60_000);
+
+  it("starts a parked PM once, using no restart, when no message lands by the park deadline, and once again after the next message", async () => {
+    const dir = await initProject("park-deadline");
+    const standin = tempDir();
+    const run = launch(
+      ["start", "Relaunch a parked PM once", "--ac", "An idle PM costs one turn.", "--lead", "claude", "--driver", "fake", "--fake-script", readerScript(), "--no-worktrees", "--project", dir],
+      { STANDIN_DIR: standin, STANDIN_READERS: "codex", DIARCHY_PARK_RELAUNCH_MS: "600" },
+    );
+    const relaunch = "codex starting again: no message in 0.6 s since it was parked (no restart used)";
+    const count = (line: string): number => run.out().split(line).length - 1;
+    await until("codex parked after its relaunch", () => count(idle("codex")) === 2, 30_000);
+    // Several deadlines: it stays parked until a message lands.
+    await new Promise((done) => setTimeout(done, 2_500));
+    expect(count(relaunch)).toBe(1);
+    expect(count(idle("codex"))).toBe(2);
+    expect(pids(standin, "codex")).toHaveLength(2);
+
+    const claude = new VaultStore({ projectDir: dir, config: loadConfig(dir), agent: "claude", pollIntervalMs: 20 });
+    expect((await claude.post(PLAN_PROPOSE)).ok).toBe(true);
+    await until("codex parked after its second relaunch", () => count(idle("codex")) === 4, 30_000);
+    await new Promise((done) => setTimeout(done, 2_500));
+    expect(count("codex respawning: a message landed")).toBe(1);
+    expect(count(relaunch)).toBe(2);
+    expect(count(idle("codex"))).toBe(4);
+    expect(pids(standin, "codex")).toHaveLength(4);
+    expect(run.out()).not.toContain("codex restarting");
+
+    await cli(["stop", "--project", dir]);
+    await run.done;
+  }, 60_000);
+
+  it("starts a parked PM once the last running PM waits on another session instead", async () => {
+    // claude reads, then ends its turn once $STANDIN_DIR/claude-go exists; codex exits 1 once codex-go exists, then works silently.
+    const script = join(tempDir(), "go-files.mjs");
+    writeFileSync(
+      script,
+      [
+        'import { appendFileSync, existsSync } from "node:fs";',
+        "const agent = process.env.DIARCHY_AGENT;",
+        "const dir = process.env.STANDIN_DIR;",
+        "const first = !existsSync(`${dir}/${agent}.pid`);",
+        "appendFileSync(`${dir}/${agent}.pid`, `${process.pid}\\n`);",
+        'if (agent === "claude") {',
+        `  const { VaultStore, loadConfig } = await import(${DIST_VAULT});`,
+        "  const projectDir = process.env.DIARCHY_PROJECT;",
+        "  new VaultStore({ projectDir, config: loadConfig(projectDir), agent }).read();",
+        "  while (!existsSync(`${dir}/claude-go`)) await new Promise((done) => setTimeout(done, 50));",
+        "  process.exit(0);",
+        "}",
+        "if (first) {",
+        "  while (!existsSync(`${dir}/codex-go`)) await new Promise((done) => setTimeout(done, 50));",
+        "  process.exit(1);",
+        "}",
+        "setInterval(() => undefined, 1000);",
+        "",
+      ].join("\n"),
+    );
+    // A long backoff, so claude ends its turn while codex waits to be restarted.
+    const dir = await initProject("park-waiting", (config) => {
+      config.launcher.restart_backoff_ms = 4_000;
+    });
+    // codex leads, so claude, the challenger, owes nothing before the plan PROPOSE.
+    expect((await cli(["kickoff", "Wake the parked PM", "--ac", "Nobody is stranded.", "--lead", "codex", "--project", dir])).code).toBe(0);
+    const standin = tempDir();
+    const run = launch(["start", "--driver", "fake", "--fake-script", script, "--no-worktrees", "--project", dir], { STANDIN_DIR: standin });
+    await until("both PMs spawned", () => pids(standin, "claude").length === 1 && pids(standin, "codex").length === 1, 30_000);
+
+    // An interactive Codex session takes the agent; the codex PM then exits and waits out its backoff.
+    const session = await interactiveSession(dir, "codex");
+    const read = await session.callTool({ name: "read", arguments: {} });
+    expect(read.isError, JSON.stringify(read.content)).toBeFalsy();
+    writeFileSync(join(standin, "codex-go"), "");
+    await until("codex restarting", () => run.out().includes("codex restarting in 4 s (restart 1 of 3)"), 30_000);
+    writeFileSync(join(standin, "claude-go"), "");
+    await until("claude parked", () => run.out().includes(idle("claude")), 30_000);
+
+    // Once codex waits on the session, no PM of this supervisor runs, so the parked claude starts again.
+    const waiting = `codex waiting: another session (pid ${process.pid}) acts as codex on this goal`;
+    const wake = "claude starting again: no PM is running";
+    await until("claude woken", () => run.out().includes(wake), 30_000);
+    expect(run.out().indexOf(waiting)).toBeGreaterThan(run.out().indexOf(idle("claude")));
+    expect(run.out().indexOf(wake)).toBeGreaterThan(run.out().indexOf(waiting));
+    await until("claude started again", () => pids(standin, "claude").length >= 2, 30_000);
+
+    await session.close();
+    await cli(["stop", "--project", dir]);
+    await run.done;
+  }, 90_000);
+
+  it("is not parked while the Stop gate holds it for a corrupt chat file in EXECUTE", async () => {
+    const dir = await initProject("park-corrupt");
+    expect((await cli(["kickoff", "Hold the PM at the gate", "--ac", "The gate holds it.", "--lead", "claude", "--project", dir])).code).toBe(0);
+    const config = loadConfig(dir);
+    const claude = new VaultStore({ projectDir: dir, config, agent: "claude", pollIntervalMs: 20 });
+    const codex = new VaultStore({ projectDir: dir, config, agent: "codex", pollIntervalMs: 20 });
+    const propose = await claude.post(PLAN_PROPOSE);
+    if (!propose.ok) throw new Error(propose.message);
+    expect((await claude.post(DECIDE_PLAN)).ok).toBe(true);
+    codex.read();
+    // A hand edit in Obsidian: one property the schema does not know. codex otherwise owes nothing, but the gate holds it.
+    const file = join(claude.activeGoal()?.paths.chatDir ?? "", `${propose.id}.md`);
+    writeFileSync(file, readFileSync(file, "utf8").replace(/^type: PROPOSE$/m, "type: PROPOSE\nextra: x"));
+    expect((await cli(["gate", "--agent", "codex", "--project", dir])).stdout).toContain(`Vault file ${file} is corrupt`);
+
+    // codex ends its turn at once; claude works silently.
+    const script = join(tempDir(), "turn-ender.mjs");
+    writeFileSync(
+      script,
+      [
+        'import { appendFileSync } from "node:fs";',
+        "appendFileSync(`${process.env.STANDIN_DIR}/${process.env.DIARCHY_AGENT}.pid`, `${process.pid}\\n`);",
+        'if (process.env.DIARCHY_AGENT === "codex") process.exit(0);',
+        "setInterval(() => undefined, 1000);",
+        "",
+      ].join("\n"),
+    );
+    const standin = tempDir();
+    const run = launch(["start", "--driver", "fake", "--fake-script", script, "--no-worktrees", "--project", dir], { STANDIN_DIR: standin });
+    await until("codex restarted", () => run.out().includes("codex restarting in 0.2 s (restart 1 of 3)"), 30_000);
+    expect(run.out()).not.toContain(idle("codex"));
+
+    await cli(["stop", "--project", dir]);
+    await run.done;
+  }, 60_000);
+
+  it("PROTOCOL.md 8 and ARCHITECTURE.md state the park deadline: twice the wait_for_reply cap", () => {
+    const seconds = `${(2 * MAX_WAIT_MS) / 1000} s`;
+    const flat = (doc: string): string => readFileSync(join(ROOT, "docs", doc), "utf8").replace(/\s+/g, " ");
+    expect(flat("PROTOCOL.md")).toContain(`when none lands within ${seconds} (twice the \`wait_for_reply\` cap) of its parking`);
+    expect(flat("ARCHITECTURE.md")).toContain(`starting it once after ${seconds} without a message`);
+  });
 });
 
 // ---------------------------------------------------------------------------

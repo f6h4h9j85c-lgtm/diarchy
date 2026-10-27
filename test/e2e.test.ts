@@ -67,9 +67,11 @@ function git(dir: string, ...args: string[]): string {
 }
 
 const temps: string[] = [];
+// Deleting every run's temp dirs can outlast vitest's 10 s hook default on a loaded machine.
+const CLEANUP_TIMEOUT = 60_000;
 afterAll(() => {
   for (const dir of temps.splice(0)) rmSync(dir, { recursive: true, force: true });
-});
+}, CLEANUP_TIMEOUT);
 
 function makeProject(name: string, withGit = true): string {
   const root = mkdtempSync(join(tmpdir(), "diarchy-e2e-"));
@@ -1823,9 +1825,14 @@ describe("isLaunchWrapper (F154)", () => {
       ["bunx", "diarchy", "mcp"],
       ["/usr/local/bin/bun", "run", "mcp"],
       ["bun", "x", "diarchy@0.3.0", "mcp"],
-      // yarn berry runs from the project's release file.
+      // bun runs a script or a package (CF1), its flags and their values before it.
+      ["bun", "run", "--cwd", "/p", "mcp"],
+      ["bun", "x", "--silent", "@scope/diarchy", "mcp"],
+      // yarn berry runs from the project's release file, numbered or not (CF2).
       ["node", "/p/.yarn/releases/yarn-4.5.1.cjs", "run", "mcp"],
       ["/usr/bin/node", "/p/.yarn/releases/yarn-4.0.0-rc.42.cjs", "dlx", "diarchy"],
+      ["node", "/p/.yarn/releases/yarn-berry.cjs", "run", "mcp"],
+      ["node", ".yarn/releases/yarn-sources.cjs", "run", "mcp"],
       ["node", "/home/u/.codex/plugins/cache/diarchy/bin/diarchy.js", "mcp", "--agent", "codex"],
       ["node", "/usr/local/bin/diarchy", "mcp", "--agent", "codex"],
     ];
@@ -1840,8 +1847,15 @@ describe("isLaunchWrapper (F154)", () => {
       ["/usr/bin/shellcheck", "x.sh"],
       // A CLI that bun runs itself is a program, not a wrapper; so is a title naming no launcher.
       ["bun", "/usr/lib/node_modules/@anthropic-ai/claude-code/cli.js"],
+      // So is a file bun runs, or anything under --bun (CF1).
+      ["bun", "run", "/usr/lib/node_modules/@anthropic-ai/claude-code/cli.js"],
+      ["bun", "run", "cli.js"],
+      ["bun", "run", "--bun", "claude"],
+      ["bun", "x", "--bun", "claude"],
+      ["bunx", "--bun", "claude"],
       ["claude --resume abc"],
       ["node", "/p/.yarn/releases/yarnish.cjs"],
+      ["node", "/p/yarn-berry.cjs"],
     ];
     for (const argv of programs) expect(isLaunchWrapper(argv), argv.join(" ")).toBe(false);
   });

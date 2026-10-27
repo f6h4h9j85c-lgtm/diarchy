@@ -336,9 +336,12 @@ describe("diarchy doctor (offline)", () => {
       // Two servers: following the fix must not leave a list without the plugin's rule.
       writeStub({ claude: { "mcp list": { stdout: `plugin:diarchy:diarchy: node ${ROOT}bin/diarchy.js mcp --agent claude - ✓ Connected\ndiarchy: diarchy mcp --agent claude - ✓ Connected\n` } } });
       expect(await c5()).toMatchObject({ status: "warn", fix: `claude mcp remove diarchy (keep the plugin's), then ${fix}` });
+      // Two servers and a list that allows neither's tools: every diarchy tool is denied, so it fails (CF3).
+      setAllowedTools(dir, "Bash(git *),Bash(make *)");
+      expect(await c5()).toMatchObject({ status: "fail", fix: `${fix}, then claude mcp remove diarchy` });
       // The health check starts the server in the project, so the doctor turns the trail off for it.
       const listed = calls.filter((call) => call.args.join(" ") === "mcp list");
-      expect(listed.map((call) => call.env?.DIARCHY_DIAG)).toEqual(["0", "0", "0"]);
+      expect(listed.map((call) => call.env?.DIARCHY_DIAG)).toEqual(["0", "0", "0", "0"]);
     },
     DOCTOR_TIMEOUT,
   );
@@ -420,6 +423,88 @@ describe("diarchy doctor (offline)", () => {
         expect(probes()).toEqual([]);
       } finally {
         child.kill("SIGKILL");
+      }
+    },
+    DOCTOR_TIMEOUT,
+  );
+
+  it(
+    "kills the C6 server at a signal before deleting the probe project, which that server cannot recreate (CF4); it gets DIARCHY_DIAG=0",
+    async () => {
+      const tmp = join(world, "tmp-signal-c6");
+      const plugin = join(world, "slow-plugin");
+      mkdirSync(tmp);
+      mkdirSync(plugin);
+      const started = join(world, "c6-started.json");
+      const go = join(world, "c6-go");
+      // A server that never answers; once told to go, it writes into its project, as a late diag line or read would.
+      writeFileSync(
+        join(plugin, "server.mjs"),
+        [
+          'import { existsSync, mkdirSync, writeFileSync } from "node:fs";',
+          'import { join } from "node:path";',
+          "const [started, go] = process.argv.slice(2);",
+          "const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => key.startsWith(\"DIARCHY_\")));",
+          "writeFileSync(started, JSON.stringify({ pid: process.pid, env }));",
+          "const until = Date.now() + 60_000;",
+          "const poll = setInterval(() => {",
+          "  if (Date.now() > until) process.exit(1);",
+          "  if (!existsSync(go)) return;",
+          '  mkdirSync(join(process.env.DIARCHY_PROJECT, ".diarchy"), { recursive: true });',
+          "  clearInterval(poll);",
+          "}, 20);",
+        ].join("\n"),
+      );
+      writeFileSync(join(plugin, ".mcp.json"), JSON.stringify({ mcpServers: { diarchy: { command: process.execPath, args: ["${CLAUDE_PLUGIN_ROOT}/server.mjs", started, go] } } }));
+      writeStub({ claudePlugin: { installPath: plugin } });
+      const probes = (): string[] => readdirSync(tmp).filter((name) => name.startsWith("diarchy-doctor-"));
+      const running = (pid: number): boolean => {
+        try {
+          process.kill(pid, 0);
+        } catch {
+          return false;
+        }
+        try {
+          return !/^\d+ \(.*\) Z/.test(readFileSync(`/proc/${pid}/stat`, "utf8"));
+        } catch {
+          return true;
+        }
+      };
+      const child = spawn(process.execPath, ["--import", TSX, CLI, "doctor", "--json", "--project", good], {
+        cwd: world,
+        env: { ...env, TMPDIR: tmp, DIARCHY_DIAG: "1", DIARCHY_FAKE_MODE: "x" },
+        stdio: "ignore",
+      });
+      const closed = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolve, reject) => {
+        child.on("error", reject);
+        child.on("close", (code, signal) => resolve({ code, signal }));
+      });
+      let server = 0;
+      try {
+        await vi.waitFor(
+          () => {
+            if (!existsSync(started)) throw new Error("the doctor has not started the C6 server yet");
+          },
+          { timeout: DOCTOR_TIMEOUT - 30_000, interval: 100 },
+        );
+        const seen = JSON.parse(readFileSync(started, "utf8")) as { pid: number; env: Record<string, string> };
+        server = seen.pid;
+        expect(seen.env.DIARCHY_DIAG).toBe("0");
+        expect(seen.env.DIARCHY_FAKE_MODE).toBeUndefined();
+        expect(probes()).toHaveLength(1);
+        child.kill("SIGTERM");
+        expect(await closed).toEqual({ code: 143, signal: null });
+        writeFileSync(go, "");
+        await vi.waitFor(
+          () => {
+            if (running(server)) throw new Error("the C6 server is still running");
+          },
+          { timeout: 30_000, interval: 50 },
+        );
+        expect(probes()).toEqual([]);
+      } finally {
+        child.kill("SIGKILL");
+        if (server !== 0 && running(server)) process.kill(server, "SIGKILL");
       }
     },
     DOCTOR_TIMEOUT,
@@ -568,6 +653,43 @@ describe("diarchy doctor --live", () => {
         } catch {
           // already gone
         }
+      }
+    },
+    DOCTOR_TIMEOUT,
+  );
+});
+
+describe("diarchy smoke's doctor step", () => {
+  it(
+    "takes a SIGTERM sent to smoke's pid alone during a slow claude live turn: no codex turn, no goal, exit 143 (CF6)",
+    async () => {
+      const tmp = join(world, "tmp-smoke-signal");
+      const out = join(world, "out-smoke-signal");
+      for (const dir of [tmp, out]) mkdirSync(dir);
+      writeStub({ live: { claude: "slow", slowMs: 3_000 } });
+      for (const flavor of ["claude", "codex"]) rmSync(join(record, `${flavor}.args.json`), { force: true });
+      const child = spawn(process.execPath, ["--import", TSX, CLI, "smoke", "--no-transcripts", "--out", out], { cwd: world, env: { ...env, TMPDIR: tmp }, stdio: "ignore" });
+      const closed = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolve, reject) => {
+        child.on("error", reject);
+        child.on("close", (code, signal) => resolve({ code, signal }));
+      });
+      try {
+        await vi.waitFor(
+          () => {
+            if (!existsSync(join(record, "claude.args.json"))) throw new Error("smoke's doctor has not started the claude turn yet");
+          },
+          { timeout: DOCTOR_TIMEOUT - 60_000, interval: 100 },
+        );
+        child.kill("SIGTERM");
+        expect(await closed).toEqual({ code: 143, signal: null });
+        expect(existsSync(join(record, "codex.args.json"))).toBe(false);
+        const bundle = join(out, readdirSync(out).find((name) => /^diarchy-smoke-\d{8}T\d{6}Z$/.test(name)) ?? "no bundle");
+        const summary = JSON.parse(readFileSync(join(bundle, "summary.json"), "utf8")) as Record<string, unknown>;
+        expect(summary).toMatchObject({ goal: null, interrupted: true, exit_code: 143, aborted: { step: "doctor", reason: "interrupted by a signal" } });
+        expect(existsSync(join(bundle, "kickoff.json"))).toBe(false);
+        expect(readdirSync(tmp).filter((name) => name.startsWith("diarchy-doctor-"))).toEqual([]);
+      } finally {
+        child.kill("SIGKILL");
       }
     },
     DOCTOR_TIMEOUT,

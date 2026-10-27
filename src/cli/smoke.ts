@@ -31,11 +31,14 @@
  * summary.json and summary.txt. Every file in it is redacted: home paths,
  * emails, and common token shapes.
  *
- * Exit codes: 0 DONE, 2 BLOCKED once both PMs posted, 1 otherwise.
+ * A signal is forwarded to the step running, and no further step starts.
+ *
+ * Exit codes: 0 DONE, 2 BLOCKED once both PMs posted, 128 plus the signal's
+ * number when a signal stopped the run, 1 otherwise.
  */
 import { spawn, type ChildProcess } from "node:child_process";
 import { appendFileSync, closeSync, cpSync, existsSync, mkdirSync, mkdtempSync, openSync, readdirSync, readFileSync, readSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { arch, homedir, platform, release, tmpdir } from "node:os";
+import { arch, constants, homedir, platform, release, tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
@@ -45,7 +48,7 @@ import { parseMessageId } from "../protocol/index.js";
 import { CONFIG_FILENAME, loadConfig, vaultPaths } from "../vault/index.js";
 import { CliError, EXIT_BLOCKED, EXIT_ERROR, EXIT_OK, onBrokenPipe, sleep } from "./common.js";
 import { DIAG_LOG, DIAG_MARKER } from "./diag.js";
-import { helpFlags, spawnRunner, type RunResult } from "./doctor.js";
+import { helpFlags, settleSignals, spawnRunner, type RunResult } from "./doctor.js";
 import { flavorOf, tsxLoader } from "./drivers.js";
 import { loadLauncherConfig } from "./launcher-config.js";
 import { pidPath, reapLeftovers } from "./run-record.js";
@@ -434,6 +437,10 @@ class SmokeRun {
   private readonly self = selfArgs();
   private quiet = false;
   interrupted = 0;
+  /** The first signal, which sets the exit code. */
+  signal: NodeJS.Signals | null = null;
+  /** The doctor step, while it runs. */
+  doctorChild: ChildProcess | null = null;
   start: ChildProcess | null = null;
   goalId: string | null = null;
   aborted: { step: string; reason: string } | null = null;
@@ -476,6 +483,12 @@ class SmokeRun {
 
   private checkInterrupted(step: string): void {
     if (this.interrupted > 0) throw new Abort(step, "interrupted by a signal");
+  }
+
+  /** After a step: let a signal that arrived during its spawnSync reach onSignal, then stop if one did. */
+  async settle(step: string): Promise<void> {
+    await settleSignals();
+    this.checkInterrupted(step);
   }
 
   private put(rel: string, text: string): void {
@@ -586,12 +599,13 @@ class SmokeRun {
   }
 
   /** `diarchy doctor --json`, with --live unless --no-ping; a real run stops here on any fail. */
-  doctor(): void {
+  async doctor(): Promise<void> {
     const live = this.settings.driver === "real" && this.settings.ping;
     this.say(`doctor${live ? " --live (one short real turn per CLI)" : ""}`);
-    const result = this.diarchy(["doctor", "--json", ...(live ? ["--live", "--out", join(this.bundle, "ping")] : [])], DOCTOR_TIMEOUT_MS);
+    const result = await this.doctorRun(["doctor", "--json", ...(live ? ["--live", "--out", join(this.bundle, "ping")] : [])]);
     this.put("doctor.json", result.stdout);
     if (result.stderr.trim() !== "") this.put("doctor.stderr.txt", result.stderr);
+    await this.settle("doctor");
     const report = parseJson(result.stdout);
     const checks = isRecord(report) && Array.isArray(report.checks) ? report.checks.filter(isRecord) : null;
     const gated = this.settings.driver === "real";
@@ -607,7 +621,33 @@ class SmokeRun {
       throw new Abort("doctor", `${fails.length} doctor check${fails.length === 1 ? "" : "s"} failed: ${list}. doctor.json has a fix line for each; fix them and run diarchy smoke again`);
     }
     this.say(`doctor: ${checks.length} checks, ${fails.length} fail${gated || fails.length === 0 ? "" : " (not gating: --driver fake needs neither CLI)"}`);
-    this.checkInterrupted("doctor");
+  }
+
+  /** The doctor as a child onSignal can forward a signal to: a spawnSync would hold every signal until its live turns were done. */
+  private doctorRun(args: string[]): Promise<RunResult> {
+    return new Promise((done) => {
+      const proc = spawn(process.execPath, [...this.self, ...args, "--project", this.project], { cwd: this.project, env: this.env, stdio: ["ignore", "pipe", "pipe"] });
+      this.doctorChild = proc;
+      let stdout = "";
+      let stderr = "";
+      let error: string | null = null;
+      proc.stdout.on("data", (chunk: Buffer) => (stdout += chunk.toString()));
+      proc.stderr.on("data", (chunk: Buffer) => (stderr += chunk.toString()));
+      const timer = setTimeout(() => {
+        error = "ETIMEDOUT";
+        proc.kill("SIGKILL");
+      }, DOCTOR_TIMEOUT_MS);
+      const finish = (code: number | null): void => {
+        clearTimeout(timer);
+        this.doctorChild = null;
+        done({ code, stdout, stderr, error });
+      };
+      proc.on("error", (failure: NodeJS.ErrnoException) => {
+        error = failure.code ?? failure.message;
+        finish(null);
+      });
+      proc.on("close", (code) => finish(code));
+    });
   }
 
   kickoff(): void {
@@ -689,9 +729,11 @@ class SmokeRun {
     for (const leftover of await reapLeftovers(this.project)) this.notes.push(`stopped ${leftover.agent} (pid ${leftover.pid}), left running by start`);
   }
 
-  /** Forward a signal: first SIGTERM to start (which stops both PMs), then SIGKILL. */
+  /** Forward a signal: to the doctor as it came; to start first SIGTERM (which stops both PMs), then SIGKILL. */
   onSignal(signal: NodeJS.Signals): void {
     this.interrupted += 1;
+    this.signal ??= signal;
+    this.doctorChild?.kill(signal);
     if (this.start !== null) this.start.kill(this.interrupted > 1 ? "SIGKILL" : "SIGTERM");
     this.say(`${signal}: stopping the run; the bundle is still written${this.interrupted > 1 ? "" : " (again to kill start)"}`);
   }
@@ -846,7 +888,7 @@ class SmokeRun {
       mode: this.settings.repo === null ? "local" : "github",
       repo: this.settings.repo,
       verdict: judged.verdict,
-      exit_code: judged.exitCode,
+      exit_code: this.signal === null ? judged.exitCode : 128 + constants.signals[this.signal],
       levels: judged.levels,
       goal: this.goalId,
       phase,
@@ -905,12 +947,19 @@ export async function runSmoke(options: SmokeOptions): Promise<number> {
     }
     if (settings.transcripts) smoke.say(TRANSCRIPT_NOTICE);
     try {
+      // After each step, a signal that arrived during it stops the run before the next.
       const remote = settings.repo === null ? null : smoke.github(settings.repo);
+      if (remote !== null) await smoke.settle("github");
       smoke.setup(remote);
-      smoke.doctor();
-      if (remote !== null) smoke.push();
+      await smoke.settle("setup");
+      await smoke.doctor();
+      if (remote !== null) {
+        smoke.push();
+        await smoke.settle("github");
+      }
       smoke.trace();
       smoke.kickoff();
+      await smoke.settle("kickoff");
       await smoke.runGoal();
     } catch (error) {
       if (!(error instanceof Abort)) throw error;

@@ -120,10 +120,11 @@ export interface McpProbe {
   error: string | null;
 }
 
-export type McpProber = (target: McpTarget, timeoutMs: number) => Promise<McpProbe>;
+/** `onChild` is told the server's pid once it is spawned, and null once it is closed. */
+export type McpProber = (target: McpTarget, timeoutMs: number, onChild?: (pid: number | null) => void) => Promise<McpProbe>;
 
 /** Connect an MCP client over stdio, list the tools, and call `read` once. The SDK client loads only here. */
-export const sdkProber: McpProber = async (target, timeoutMs) => {
+export const sdkProber: McpProber = async (target, timeoutMs, onChild) => {
   const { Client } = await import("@modelcontextprotocol/sdk/client/index.js");
   const { StdioClientTransport } = await import("@modelcontextprotocol/sdk/client/stdio.js");
   const transport = new StdioClientTransport({ command: target.command, args: target.args, cwd: target.cwd, env: target.env, stderr: "pipe" });
@@ -136,7 +137,10 @@ export const sdkProber: McpProber = async (target, timeoutMs) => {
     timer = setTimeout(() => reject(new Error(`no answer within ${timeoutMs / 1000} s`)), timeoutMs);
   });
   try {
-    await Promise.race([client.connect(transport), expired]);
+    // connect spawns the server before its first await.
+    const connecting = client.connect(transport);
+    onChild?.(transport.pid);
+    await Promise.race([connecting, expired]);
     probe.connected = true;
     probe.version = client.getServerVersion()?.version ?? null;
     const listed = await Promise.race([client.listTools(), expired]);
@@ -151,6 +155,7 @@ export const sdkProber: McpProber = async (target, timeoutMs) => {
   } finally {
     clearTimeout(timer);
     await client.close().catch(() => undefined);
+    onChild?.(null);
   }
   return probe;
 };
@@ -240,7 +245,7 @@ function failure(command: string, result: RunResult): string {
  * synchronous code polls. Two hops, since code resumed from an I/O callback
  * runs its first setImmediate before the next poll.
  */
-async function settleSignals(): Promise<void> {
+export async function settleSignals(): Promise<void> {
   for (let hop = 0; hop < 2; hop += 1) await new Promise((done) => setImmediate(done));
 }
 
@@ -408,6 +413,8 @@ class Doctor {
   private codex: CodexFacts | null = null;
   private probe: Promise<ProbeProject> | null = null;
   private readonly temps: string[] = [];
+  /** The pid of the MCP server a probe is talking to, while it runs. */
+  private probeChild: number | null = null;
 
   constructor(
     private readonly projectDir: string,
@@ -442,6 +449,17 @@ class Doctor {
 
   cleanup(): void {
     for (const dir of this.temps.splice(0)) rmSync(dir, { recursive: true, force: true });
+  }
+
+  /** Kill a probe's MCP server still running, so it cannot write into a probe project after cleanup deletes it. */
+  killProbe(): void {
+    if (this.probeChild === null) return;
+    try {
+      process.kill(this.probeChild, "SIGKILL");
+    } catch {
+      // already gone
+    }
+    this.probeChild = null;
   }
 
   async offline(): Promise<void> {
@@ -670,6 +688,8 @@ class Doctor {
     const pluginFix = `add ${PLUGIN_TOOLS}__* to --allowedTools in ${args}`;
     if (plugin === undefined && bare === undefined) {
       this.add("claude", "C5", "fail", "claude mcp list shows no diarchy server", `claude plugin install diarchy --marketplace ${MARKETPLACE}`);
+    } else if (plugin !== undefined && bare !== undefined && !allowsPlugin && !allowsBare) {
+      this.add("claude", "C5", "fail", `two diarchy servers, and ${args} allows neither's tools (${PLUGIN_TOOLS}__* or ${BARE_TOOLS}__*), so a headless run is denied every diarchy tool`, `${pluginFix}, then claude mcp remove diarchy`);
     } else if (plugin !== undefined && bare !== undefined) {
       const rule = allowsPlugin ? "" : `, and ${args} does not allow the plugin's ${PLUGIN_TOOLS}__*`;
       this.add("claude", "C5", "warn", `two diarchy servers: the plugin's plugin:diarchy:diarchy and a bare diarchy, so the PM sees each tool twice${rule}`, `claude mcp remove diarchy (keep the plugin's)${allowsPlugin ? "" : `, then ${pluginFix}`}`);
@@ -696,11 +716,12 @@ class Doctor {
       server !== null && Array.isArray(server.args) && server.args.every((arg) => typeof arg === "string")
         ? server.args.map((arg: string) => substitute(arg))
         : [join(installPath, "bin", "diarchy.js"), "mcp", "--agent", "claude"];
+    // Without the caller's other DIARCHY_* variables; no check reads the probe project's trail, so DIARCHY_DIAG=0 keeps it off.
     await this.mcpProbe("claude", "C6", (probe) => ({
       command,
       args,
       cwd: probe.dir,
-      env: { ...stringEnv(this.deps.env), DIARCHY_PROJECT: probe.dir, DIARCHY_AGENT: agent, DIARCHY_GOAL: probe.goalId },
+      env: { ...stringEnv(liveEnv(this.deps.env)), DIARCHY_PROJECT: probe.dir, DIARCHY_AGENT: agent, DIARCHY_GOAL: probe.goalId, DIARCHY_DIAG: "0" },
     }));
   }
 
@@ -862,7 +883,7 @@ class Doctor {
       const launched: Record<string, string> = { ...stringEnv(this.deps.env), DIARCHY_PROJECT: probe.dir, DIARCHY_AGENT: agent, DIARCHY_GOAL: probe.goalId };
       const env: Record<string, string> = {};
       for (const name of [...CODEX_ENV_ALLOWLIST, ...transport.envVars]) if (launched[name] !== undefined) env[name] = launched[name];
-      Object.assign(env, transport.env);
+      Object.assign(env, transport.env, { DIARCHY_DIAG: "0" });
       const cwd = transport.cwd !== null && isAbsolute(transport.cwd) ? transport.cwd : resolve(sep);
       return { command: transport.command, args: transport.args, cwd, env };
     });
@@ -873,7 +894,7 @@ class Doctor {
     const probe = await this.probeOrWarn(group, id);
     if (probe === null) return;
     const spec = target(probe);
-    const result = await this.deps.probeMcp(spec, PROBE_TIMEOUT_MS);
+    const result = await this.deps.probeMcp(spec, PROBE_TIMEOUT_MS, (pid) => (this.probeChild = pid));
     const { TOOL_NAMES } = await import("../mcp/index.js");
     const expected = [...TOOL_NAMES].sort();
     const missing = expected.filter((tool) => !result.tools.includes(tool));
@@ -1052,6 +1073,7 @@ const PLAN_VARS = new Set(["DIARCHY_AGENT", "DIARCHY_PROJECT", "DIARCHY_GOAL", "
 /**
  * realPlan's env without any other DIARCHY_* variable the caller exported: a
  * DIARCHY_DIAG=0 would turn off the probe project's trail the checks read.
+ * C6 starts its server from the same, with DIARCHY_DIAG=0 of its own.
  */
 export function liveEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   return Object.fromEntries(Object.entries(env).filter(([key]) => !key.startsWith("DIARCHY_") || PLAN_VARS.has(key)));
@@ -1122,12 +1144,14 @@ const SIGNALS: NodeJS.Signals[] = ["SIGINT", "SIGTERM", "SIGHUP"];
 
 export async function doctorReport(projectDir: string, options: DoctorOptions = {}, deps: DoctorDeps = defaultDeps()): Promise<DoctorReport> {
   const doctor = new Doctor(projectDir, deps);
-  // A signal's default action skips the finally below, so a handler deletes the
-  // probe projects and exits. It runs only when the event loop polls, which a
-  // spawnSync in progress (a check, or a live turn of up to 180 s) does not
-  // let it do: hence settleSignals before each live turn and before the
-  // handlers come off, or a signal would be dropped and the run go on.
+  // A signal's default action skips the finally below, so a handler kills a
+  // probe's MCP server still running, deletes the probe projects, and exits.
+  // It runs only when the event loop polls, which a spawnSync in progress (a
+  // check, or a live turn of up to 180 s) does not let it do: hence
+  // settleSignals before each live turn and before the handlers come off, or
+  // a signal would be dropped and the run go on.
   const onSignal = (signal: NodeJS.Signals): void => {
+    doctor.killProbe();
     doctor.cleanup();
     process.exit(128 + constants.signals[signal]);
   };

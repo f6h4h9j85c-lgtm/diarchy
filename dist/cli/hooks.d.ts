@@ -20,8 +20,9 @@ export interface GateDecision {
 }
 /**
  * Whether `argv` is a launch wrapper a CLI may start its MCP server through:
- * a shell, env, npx or `npm exec` (whose process title reads `npm exec`),
- * pnpm, yarn, bunx, or bin/diarchy.js handing `mcp` on to the diarchy on PATH.
+ * a shell, env, npx or any npm command (`npm exec`, `npm x`, `npm run`,
+ * `npm start`), pnpm, yarn or a `.yarn/releases` file, bunx, `bun run` or
+ * `bun x`, or bin/diarchy.js handing `mcp` on to the diarchy on PATH.
  */
 export declare function isLaunchWrapper(argv: string[]): boolean;
 /** What the gate reads about processes; the defaults are this process's, and tests pass their own. */
@@ -43,6 +44,8 @@ export interface ProcessProbe {
  * A CLI may start its server through launch wrappers (`sh -c`, npx, or
  * bin/diarchy.js handing on to the diarchy on PATH, `isLaunchWrapper`): up to
  * MAX_WRAPPERS of them are stepped over, so the parent compared is the CLI.
+ * A wrapper isLaunchWrapper does not recognise still makes the session's own
+ * server look like another session's, and the Stop gate then lets its turn end.
  * When it cannot tell, it answers false and the gate blocks as it would with
  * no lease: the owner file is not readable or not written yet; the holder's
  * parent is pid 1 (a CLI that is itself pid 1 in a container, or an orphaned

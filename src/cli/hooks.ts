@@ -193,18 +193,22 @@ const LAUNCHERS = new Set(["sh", "bash", "dash", "zsh", "ksh", "env", "npx", "np
 
 /**
  * Whether `argv` is a launch wrapper a CLI may start its MCP server through:
- * a shell, env, npx or `npm exec` (whose process title reads `npm exec`),
- * pnpm, yarn, bunx, or bin/diarchy.js handing `mcp` on to the diarchy on PATH.
+ * a shell, env, npx or any npm command (`npm exec`, `npm x`, `npm run`,
+ * `npm start`), pnpm, yarn or a `.yarn/releases` file, bunx, `bun run` or
+ * `bun x`, or bin/diarchy.js handing `mcp` on to the diarchy on PATH.
  */
 export function isLaunchWrapper(argv: string[]): boolean {
   const name = (word: string | undefined): string => (word ?? "").split("/").pop() ?? "";
-  if (argv.length === 0) return false;
-  if (argv[0].startsWith("npm exec")) return true;
-  // A runner started as `node /usr/bin/npx ...` before it sets its title.
-  const program = name(argv[0]) === "node" ? name(argv[1]).replace(/(?:-cli)?\.[cm]?js$/, "") : name(argv[0]);
+  // npm overwrites its argv with its title, so /proc reads one word such as "npm run mcp"; `ps` splits it.
+  const words = argv.length === 1 && /\s/.test(argv[0]) ? argv[0].trim().split(/\s+/) : argv;
+  if (words.length === 0) return false;
+  if (name(words[0]) === "bun" && (words[1] === "run" || words[1] === "x")) return true;
+  // A runner started as `node /usr/bin/npx ...` before it sets its title; yarn as `node .yarn/releases/yarn-4.5.1.cjs`.
+  const runner = name(words[1]).replace(/(?:-cli)?\.[cm]?js$/, "").replace(/^yarn-\d[\w.-]*$/, "yarn");
+  const program = name(words[0]) === "node" ? runner : name(words[0]);
   if (LAUNCHERS.has(program)) return true;
-  const script = argv.findIndex((word) => /(?:^|\/)diarchy(?:\.js)?$/.test(word));
-  return script !== -1 && argv[script + 1] === "mcp";
+  const script = words.findIndex((word) => /(?:^|\/)diarchy(?:\.js)?$/.test(word));
+  return script !== -1 && words[script + 1] === "mcp";
 }
 
 /** What the gate reads about processes; the defaults are this process's, and tests pass their own. */
@@ -261,6 +265,8 @@ function isOwnAncestor(pid: number, probe: ProcessProbe): boolean | null {
  * A CLI may start its server through launch wrappers (`sh -c`, npx, or
  * bin/diarchy.js handing on to the diarchy on PATH, `isLaunchWrapper`): up to
  * MAX_WRAPPERS of them are stepped over, so the parent compared is the CLI.
+ * A wrapper isLaunchWrapper does not recognise still makes the session's own
+ * server look like another session's, and the Stop gate then lets its turn end.
  * When it cannot tell, it answers false and the gate blocks as it would with
  * no lease: the owner file is not readable or not written yet; the holder's
  * parent is pid 1 (a CLI that is itself pid 1 in a container, or an orphaned

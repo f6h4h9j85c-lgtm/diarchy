@@ -1647,11 +1647,19 @@ describe("gate and the agent lease (F154)", () => {
         return { server: [process.execPath, copy.bin], env: { PATH: copy.path } };
       },
     ],
+    // `npm run mcp` on Linux: npm overwrites its argv with its title, so /proc reads one word (PF3).
+    [
+      "a process titled npm run mcp",
+      () => {
+        const titled = 'process.title = "npm run mcp"; const c = require("node:child_process").spawn(process.argv[1], process.argv.slice(2), { stdio: "inherit" }); c.on("exit", (code) => process.exit(code ?? 1));';
+        return { server: [process.execPath, "-e", titled, process.execPath, "--import", TSX, CLI], env: {} };
+      },
+    ],
   ];
   it.each(WRAPPED)(
     "holds the holder's own session when its CLI starts the server through %s, and still lets another session go",
     async (name, wrap) => {
-      const slug = name.startsWith("sh") ? "lgsh" : "lgbin";
+      const slug = name.startsWith("sh") ? "lgsh" : name.startsWith("bin") ? "lgbin" : "lgnpm";
       const dir = await initProject(`lease-gate-${slug}`, false);
       const kick = await human(dir).kickoff({ goal: "Gate by the lease.", acceptance_criteria: ["Only the holder is held."], lead: "claude", slug });
       expect(kick.ok).toBe(true);
@@ -1798,12 +1806,26 @@ describe("isLaunchWrapper (F154)", () => {
       // npm overwrites its argv with its title, so /proc reads one word.
       ["npm exec"],
       ["npm exec @scope/diarchy"],
+      // So do npm's other launch forms (PF3): `npm x`, `npm run`, `npm run-script`, `npm start`.
+      ["npm x diarchy mcp --agent claude"],
+      ["npm run mcp"],
+      ["npm run --silent mcp"],
+      ["npm run-script mcp"],
+      ["npm start"],
+      // The same title as macOS `ps` reads it, split on spaces, and npm before it sets its title.
+      ["npm", "x", "diarchy", "mcp"],
+      ["node", "/usr/lib/node_modules/npm/bin/npm-cli.js", "run", "mcp"],
       ["npx", "-y", "diarchy", "mcp"],
       ["node", "/usr/bin/npx", "-y", "diarchy", "mcp"],
       ["node", "/usr/lib/node_modules/npm/bin/npx-cli.js", "diarchy", "mcp"],
       ["/usr/local/bin/pnpm", "dlx", "diarchy", "mcp"],
       ["node", "/usr/lib/node_modules/yarn/bin/yarn.js", "dlx", "diarchy"],
       ["bunx", "diarchy", "mcp"],
+      ["/usr/local/bin/bun", "run", "mcp"],
+      ["bun", "x", "diarchy@0.3.0", "mcp"],
+      // yarn berry runs from the project's release file.
+      ["node", "/p/.yarn/releases/yarn-4.5.1.cjs", "run", "mcp"],
+      ["/usr/bin/node", "/p/.yarn/releases/yarn-4.0.0-rc.42.cjs", "dlx", "diarchy"],
       ["node", "/home/u/.codex/plugins/cache/diarchy/bin/diarchy.js", "mcp", "--agent", "codex"],
       ["node", "/usr/local/bin/diarchy", "mcp", "--agent", "codex"],
     ];
@@ -1816,6 +1838,10 @@ describe("isLaunchWrapper (F154)", () => {
       ["node", "--import", "tsx", "src/cli/index.ts", "gate", "--agent", "claude"],
       ["node", "bin/diarchy.js", "gate", "--agent", "claude"],
       ["/usr/bin/shellcheck", "x.sh"],
+      // A CLI that bun runs itself is a program, not a wrapper; so is a title naming no launcher.
+      ["bun", "/usr/lib/node_modules/@anthropic-ai/claude-code/cli.js"],
+      ["claude --resume abc"],
+      ["node", "/p/.yarn/releases/yarnish.cjs"],
     ];
     for (const argv of programs) expect(isLaunchWrapper(argv), argv.join(" ")).toBe(false);
   });

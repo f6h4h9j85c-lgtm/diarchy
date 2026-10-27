@@ -330,6 +330,31 @@ describe("PROTOCOL.md section 10", () => {
     expect(existsSync(join(projectDir, "stray brain"))).toBe(false);
   });
 
+  it("NO_GOAL from a server that started before diarchy init says the config came later and asks for a restart; it does not reload", async () => {
+    const root = mkdtempSync(join(tmpdir(), "diarchy-mcp-"));
+    temps.push(root);
+    const projectDir = join(root, "late");
+    mkdirSync(projectDir);
+    const client = await connect(projectDir, "claude", null);
+    expect((await rejected(client, "read")).message).toContain(`No diarchy.config.json in ${projectDir}, so this is the default vault`);
+
+    writeFileSync(join(projectDir, CONFIG_FILENAME), `${JSON.stringify({ protocol_version: 1, vault: "notes/diarchy", agents: { claude: { command: "claude" }, codex: { command: "codex" } } })}\n`);
+    const message = `No goal in ${join(projectDir, "late brain", "diarchy")}. Call kickoff first. diarchy.config.json was written in ${projectDir} after this server started, so this server still uses the default vault: tell the human to restart this session so the server loads it, instead of calling kickoff.`;
+    expect(await rejected(client, "read")).toEqual({ ok: false, rule: "NO_GOAL", message });
+    expect(resourceText(await client.readResource({ uri: "diarchy://goal" }))).toBe(`${message}\n`);
+    const row = CODE_ROWS.find(([code]) => code === "NO_GOAL")?.[2] ?? "";
+    const appended = /appends instead `([^`]+)`/.exec(SECTION_10)?.[1] ?? "";
+    expect(appended, "PROTOCOL.md section 10 gives the config-written-later sentence").not.toBe("");
+    expect(message).toMatch(template(`${row} ${appended}`));
+
+    // A server started after init loads the config: its vault, and no suffix.
+    expect(await rejected(await connect(projectDir, "codex", null), "read")).toEqual({
+      ok: false,
+      rule: "NO_GOAL",
+      message: `No goal in ${join(projectDir, "notes", "diarchy")}. Call kickoff first.`,
+    });
+  });
+
   it("posting and read results carry exactly the documented keys", async () => {
     const posting = documentedShape(/answers `(\{ ok: true[^`]*\})`/);
     const kickoffExtras = fields(/`kickoff` adds `([^`]+)`/.exec(SECTION_10)?.[1] ?? "", ",");

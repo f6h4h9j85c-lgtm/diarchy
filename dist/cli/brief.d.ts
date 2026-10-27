@@ -36,11 +36,12 @@ export interface ChangesRequested {
 /** PRs no other agent has approved whose latest review by another agent is request_changes (the fix and re-review loop). */
 export declare function changesRequested(state: GoalState, messages: Message[]): ChangesRequested[];
 /**
- * ACs the lead still owes an implement task in EXECUTE. A plan DECIDE that
- * carried `tasks` already mapped tasks to ACs, so its todo tasks drive the
- * brief and none is owed here. Otherwise (a human ruling, or a DECIDE with no
- * tasks, closed plan) every AC not yet passing is owed until an implement
- * ASSIGN cites it in `re`; one task may cover several ACs.
+ * ACs the lead still owes an implement task in EXECUTE. The lead's own plan
+ * DECIDE with `tasks` already mapped tasks to ACs, so its todo tasks drive the
+ * brief and none is owed here. Otherwise (a human ruling, whose `--task` list
+ * need not name every AC, or a DECIDE with no tasks, closed plan) every AC not
+ * yet passing is owed until an implement ASSIGN cites it in `re`; one task may
+ * cover several ACs.
  */
 export declare function uncoveredAcs(state: GoalState, messages: Message[]): string[];
 /**

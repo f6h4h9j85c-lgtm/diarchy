@@ -37,7 +37,7 @@ Finding what was decided: `samples/decisions.md` has one struck id (`~~D1~~`), a
 Violations found and fixed:
 
 - **Double-backtick example mangled by GFM.** The spec's own escaping example (`` `` a`b `` ``) parsed as two empty code spans when run through pandoc. Rewritten with a triple-backtick delimiter and re-parsed.
-- **Miscounted budgets in the spec's strip examples.** The BLOCKED example said 8 messages; a BLOCKED message is a PM message and counts, so it is 9. The EXECUTE example said 93 minutes and 12 messages; it is 109 and 14. Both corrected from the scenario, not by hand.
+- **Miscounted budgets in the spec's strip examples.** The BLOCKED example said 8 messages; a BLOCKED message is a PM message and counts, so it is 9. The EXECUTE example said 93 minutes and 12 messages; it is 109 and 16. Both corrected from the scenario, not by hand.
 - **Trailing-sentence navigation line.** The BLOCKED strip's last paragraph read as a sentence that ran into the decisions link. Replaced with a labelled list: `Question and how to answer: [goal] · [decisions (2)]`.
 - **Adjacent lists merging.** A `plan` DECIDE has an evidence list followed by a task list; in markdown two bullet lists separated by a blank line are one list. The `Tasks:` lead-in paragraph exists only to keep them apart; confirmed in the parsed HTML (`</ul><p>Tasks:</p><ul>`).
 

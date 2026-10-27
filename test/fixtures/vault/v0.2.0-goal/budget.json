@@ -1,0 +1,271 @@
+{
+  "protocol_version": 1,
+  "goal": "20261025-rate-limit",
+  "created": "2026-10-25T14:00:00Z",
+  "lead": "claude",
+  "challenger": "codex",
+  "agents": [
+    "claude",
+    "codex"
+  ],
+  "kickoff_id": "20261025T140000Z-0001-human-KICKOFF",
+  "phase": "EXECUTE",
+  "blocked_from": null,
+  "limits": {
+    "plan_messages": 12,
+    "messages_total": 80,
+    "challenges_per_decision": 1,
+    "rounds_per_decision": 2,
+    "talk_work_ratio": 3,
+    "wall_clock_minutes": 240,
+    "spend_usd": null
+  },
+  "used": {
+    "plan_messages": 3,
+    "messages_total": 12,
+    "talk_since_work": 1,
+    "wall_clock_minutes": 85,
+    "spend_usd": 0
+  },
+  "seq": {
+    "claude": 9,
+    "codex": 3,
+    "human": 2,
+    "system": 1
+  },
+  "last_ts": "2026-10-25T15:25:00Z",
+  "decisions": {
+    "plan": {
+      "status": "decided",
+      "proposer": "claude",
+      "messages": 2,
+      "challenges": 1,
+      "supersedes": null,
+      "superseded_by": null,
+      "evidence": [
+        "test:npm test -- rate-limit-restart"
+      ],
+      "challenge": null
+    },
+    "D1": {
+      "status": "decided",
+      "proposer": "human",
+      "messages": 0,
+      "challenges": 0,
+      "supersedes": null,
+      "superseded_by": null,
+      "evidence": [],
+      "challenge": null
+    }
+  },
+  "prs": {
+    "https://github.com/acme/api/pull/101": {
+      "author": "codex",
+      "reviews": [
+        {
+          "by": "claude",
+          "verdict": "approve"
+        }
+      ]
+    },
+    "https://github.com/acme/api/pull/102": {
+      "author": "claude",
+      "reviews": []
+    }
+  },
+  "deadlock_watch": null,
+  "acs": {
+    "AC1": {
+      "criterion": "Requests over the per-key limit get HTTP 429 with a Retry-After header",
+      "status": "passing"
+    },
+    "AC2": {
+      "criterion": "The README documents the per-key limit",
+      "status": "passing"
+    }
+  },
+  "tasks": {
+    "T1": {
+      "id": "T1",
+      "task": "Implement the per-key token bucket and the 429 response with Retry-After",
+      "kind": "implement",
+      "assignee": "codex",
+      "branch": "diarchy/20261025-rate-limit/codex",
+      "worktree": ".diarchy/worktrees/codex",
+      "pr": null,
+      "status": "done"
+    },
+    "T2": {
+      "id": "T2",
+      "task": "Document the per-key limit in the README",
+      "kind": "implement",
+      "assignee": "claude",
+      "branch": "diarchy/20261025-rate-limit/claude",
+      "worktree": ".diarchy/worktrees/claude",
+      "pr": null,
+      "status": "done"
+    },
+    "T3": {
+      "id": "T3",
+      "task": "Review https://github.com/acme/api/pull/101",
+      "kind": "review",
+      "assignee": "claude",
+      "branch": null,
+      "worktree": null,
+      "pr": "https://github.com/acme/api/pull/101",
+      "status": "done"
+    },
+    "T4": {
+      "id": "T4",
+      "task": "Review https://github.com/acme/api/pull/102",
+      "kind": "review",
+      "assignee": "codex",
+      "branch": null,
+      "worktree": null,
+      "pr": "https://github.com/acme/api/pull/102",
+      "status": "done"
+    }
+  },
+  "messages": [
+    {
+      "id": "20261025T140000Z-0001-human-KICKOFF",
+      "from": "human",
+      "type": "KICKOFF",
+      "decision_id": null,
+      "re": [
+        "AC1",
+        "AC2"
+      ]
+    },
+    {
+      "id": "20261025T140100Z-0001-claude-PROPOSE",
+      "from": "claude",
+      "type": "PROPOSE",
+      "decision_id": "plan",
+      "re": [
+        "AC1",
+        "AC2"
+      ]
+    },
+    {
+      "id": "20261025T140300Z-0001-codex-CHALLENGE",
+      "from": "codex",
+      "type": "CHALLENGE",
+      "decision_id": "plan",
+      "re": [
+        "AC1"
+      ]
+    },
+    {
+      "id": "20261025T140500Z-0002-claude-DECIDE",
+      "from": "claude",
+      "type": "DECIDE",
+      "decision_id": "plan",
+      "re": [
+        "AC1",
+        "AC2"
+      ]
+    },
+    {
+      "id": "20261025T140600Z-0003-claude-ASSIGN",
+      "from": "claude",
+      "type": "ASSIGN",
+      "decision_id": null,
+      "re": [
+        "AC1"
+      ]
+    },
+    {
+      "id": "20261025T140700Z-0004-claude-ASSIGN",
+      "from": "claude",
+      "type": "ASSIGN",
+      "decision_id": null,
+      "re": [
+        "AC2"
+      ]
+    },
+    {
+      "id": "20261025T143100Z-0002-codex-STATUS",
+      "from": "codex",
+      "type": "STATUS",
+      "decision_id": null,
+      "re": [
+        "AC1"
+      ]
+    },
+    {
+      "id": "20261025T143300Z-0005-claude-ASSIGN",
+      "from": "claude",
+      "type": "ASSIGN",
+      "decision_id": null,
+      "re": [
+        "AC1"
+      ]
+    },
+    {
+      "id": "20261025T144100Z-0006-claude-STATUS",
+      "from": "claude",
+      "type": "STATUS",
+      "decision_id": null,
+      "re": [
+        "AC1"
+      ]
+    },
+    {
+      "id": "20261025T145000Z-0007-claude-BLOCKED",
+      "from": "claude",
+      "type": "BLOCKED",
+      "decision_id": null,
+      "re": [
+        "AC2"
+      ]
+    },
+    {
+      "id": "20261025T145001Z-0001-system-ASK_HUMAN",
+      "from": "system",
+      "type": "ASK_HUMAN",
+      "decision_id": null,
+      "re": [
+        "AC2"
+      ]
+    },
+    {
+      "id": "20261025T150200Z-0002-human-DECIDE",
+      "from": "human",
+      "type": "DECIDE",
+      "decision_id": "D1",
+      "re": [
+        "AC2"
+      ]
+    },
+    {
+      "id": "20261025T151400Z-0008-claude-STATUS",
+      "from": "claude",
+      "type": "STATUS",
+      "decision_id": null,
+      "re": [
+        "AC2"
+      ]
+    },
+    {
+      "id": "20261025T151600Z-0009-claude-ASSIGN",
+      "from": "claude",
+      "type": "ASSIGN",
+      "decision_id": null,
+      "re": [
+        "AC2"
+      ]
+    },
+    {
+      "id": "20261025T152500Z-0003-codex-STATUS",
+      "from": "codex",
+      "type": "STATUS",
+      "decision_id": null,
+      "re": [
+        "AC2"
+      ]
+    }
+  ],
+  "review_required": true,
+  "updated": "2026-10-25T15:25:00Z"
+}

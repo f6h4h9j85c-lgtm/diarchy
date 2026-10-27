@@ -37,6 +37,7 @@ import {
   type Effect,
   type EvaluateOptions,
   type GoalState,
+  type Kickoff,
   type Message,
   type Phase,
   type Rejection,
@@ -551,6 +552,54 @@ describe("stored files written by v0.1.0", () => {
     expect(kickoff.acceptance_criteria).toEqual([state.acs.AC1.criterion, state.acs.AC2.criterion]);
     const lastSpans = parseKickoffFile(`${KICKOFF_MD}and the lint stays clean\n`);
     expect(lastSpans.acceptance_criteria[2]).toBe("Full test suite stays green\nand the lint stays clean");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// A goal written by v0.2.0 stays readable (PROTOCOL.md 12)
+// ---------------------------------------------------------------------------
+
+/** kickoff.md, budget.json, chat/, and inbox/ as the v0.2.0 (30abe42) store wrote them, stopped mid-EXECUTE. */
+const V020_GOAL = fileURLToPath(new URL("./fixtures/vault/v0.2.0-goal/", import.meta.url));
+
+describe("stored files written by v0.2.0", () => {
+  const chatDir = join(V020_GOAL, "chat");
+  const files = readdirSync(chatDir).sort();
+  const kickoff = (): Kickoff => parseKickoffFile(readFileSync(join(V020_GOAL, "kickoff.md"), "utf8"));
+  const budget = (): GoalState => parseGoalState(JSON.parse(readFileSync(join(V020_GOAL, "budget.json"), "utf8")));
+
+  it("parseMessageFile reads and round-trips every chat file, and each still meets the post rules", () => {
+    for (const file of files) {
+      const original = readFileSync(join(chatDir, file), "utf8");
+      const message = parseMessageFile(original);
+      expect(`${message.id}.md`).toBe(file);
+      expect(serializeMessageFile(message), file).toBe(original);
+      expect(checkMessageShape(message), file).toMatchObject({ ok: true });
+    }
+  });
+
+  it("parseKickoffFile reads kickoff.md as budget.json recorded it", () => {
+    expect(kickoff().goal_text).toBe("Add per-API-key rate limiting to the public API.");
+    expect(kickoff().acceptance_criteria).toEqual(Object.values(budget().acs).map((ac) => ac.criterion));
+  });
+
+  it("replayed as the store does, the chat lands on budget.json but for the review task a 0.2.0 STATUS marked done", () => {
+    let state = initialState(kickoff(), CONFIG, new Date(kickoff().created));
+    const workSeen: string[] = [];
+    for (const file of files) {
+      const message = parseMessageFile(readFileSync(join(chatDir, file), "utf8"));
+      // A human DECIDE that closes no open thread gets its decision_id from the store (VaultStore.reply).
+      if (message.from === "human" && state.decisions[message.decision_id ?? ""]?.status !== "open") delete message.decision_id;
+      // As the store does: the id first (seq, last_ts), then the engine.
+      const assigned = assignId(state, message.from, message.type, new Date(message.ts));
+      expect(assigned.id).toBe(message.id);
+      state = accept(message, assigned.state, workSeen);
+      workSeen.push(...workEvidenceKeys(message));
+    }
+    const stored = budget();
+    // Only review evidence closes a review task now (ANTI-SLOP.md BUSY_REVIEWING), so T4 stays assigned.
+    expect(stored.tasks.T4).toMatchObject({ kind: "review", assignee: "codex", status: "done" });
+    expect(state).toEqual({ ...stored, tasks: { ...stored.tasks, T4: { ...stored.tasks.T4, status: "assigned" } } });
   });
 });
 

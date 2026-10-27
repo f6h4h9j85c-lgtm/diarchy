@@ -11,8 +11,9 @@
 // print the goal id, run the Stop hook, and leave a resumable session id
 // behind. `live.<flavor>` picks a failure: "not-logged-in" exits 1 at once,
 // "drop-env" starts the server without DIARCHY_PROJECT (Codex from "/", so read answers NO_GOAL;
-// Claude from the project, so the server finds it by walking up), and
-// "no-hooks" runs neither hook. Anything else exits 1. No model is called.
+// Claude from the project, so the server finds it by walking up),
+// "no-hooks" runs neither hook, and "slow" pauses `live.slowMs` first.
+// Anything else exits 1. No model is called.
 import { spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -40,6 +41,7 @@ if (mode === "not-logged-in") {
   process.stdout.write("Not logged in · Please run /login\n");
   process.exit(1);
 }
+if (mode === "slow") await new Promise((resolve) => setTimeout(resolve, live.slowMs));
 
 const [diarchy, ...diarchyArgs] = live.diarchy;
 const hook = (sub, input) => {

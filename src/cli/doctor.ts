@@ -19,14 +19,16 @@
  * it warn instead of failing. Nothing prints an environment value or a token.
  *
  * The probes, the guard hooks included, run against throwaway projects in the
- * temp directory, deleted afterwards (also on SIGINT, SIGTERM, or SIGHUP):
- * `diarchy init`, a probe goal, and for `--live` a git repository, the
- * diagnostics marker (diag.ts), and a human BLOCKED, so `read` still returns
- * the goal, the SessionStart brief still prints, and the Stop gate lets the
- * turn end. `--live` spawns each CLI the way `diarchy start` does
- * (realPlan: same command, args, and env) with a prompt that only calls
- * `read`, and passes when the output names the probe goal and the trail shows
- * the MCP server found the project through DIARCHY_PROJECT and both hooks ran.
+ * temp directory, deleted afterwards (also on SIGINT, SIGTERM, or SIGHUP,
+ * which end the run before another live turn starts): `diarchy init`, a
+ * probe goal, and for `--live` a git repository, the diagnostics marker
+ * (diag.ts), and a human BLOCKED, so `read` still returns the goal, the
+ * SessionStart brief still prints, and the Stop gate lets the turn end.
+ * `--live` spawns each CLI the way `diarchy start` does (realPlan: same
+ * command, args, and env, less any other DIARCHY_* the caller set) with a
+ * prompt that only calls `read`, and passes when the output names the probe
+ * goal and the trail shows the MCP server found the project through
+ * DIARCHY_PROJECT and both hooks ran.
  */
 import { spawnSync } from "node:child_process";
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
@@ -232,6 +234,16 @@ function failure(command: string, result: RunResult): string {
   return `${command} exited ${result.code ?? "on a signal"}${said === "" ? "" : `: ${said}`}`;
 }
 
+/**
+ * Let the event loop poll, so a signal that arrived during a spawnSync reaches
+ * its handler: a handler runs only from a poll, and neither a spawnSync nor
+ * synchronous code polls. Two hops, since code resumed from an I/O callback
+ * runs its first setImmediate before the next poll.
+ */
+async function settleSignals(): Promise<void> {
+  for (let hop = 0; hop < 2; hop += 1) await new Promise((done) => setImmediate(done));
+}
+
 /** The fix for a command whose output a check could not read. */
 function readByHand(command: string, update: string): string {
   return `run ${command} by hand and read its output; ${update} if its format changed`;
@@ -258,10 +270,13 @@ export function helpFlags(help: string): Set<string> {
 
 const escapeRegExp = (text: string): string => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
+const DENY_FLAGS = new Set(["--disallowedTools", "--disallowed-tools"]);
+
 /**
  * Whether launch args let a headless Claude call a server's tools: a rule
  * naming the server (`<prefix>`) or its tools (`<prefix>__*`, `<prefix>__read`),
- * or permissions bypassed altogether.
+ * or permissions bypassed altogether. A rule among the values of
+ * --disallowedTools, which runs to the next flag, allows nothing.
  */
 export function allowsTools(args: readonly string[], prefix: string): boolean {
   const bypass =
@@ -269,7 +284,12 @@ export function allowsTools(args: readonly string[], prefix: string): boolean {
     args.includes("--permission-mode=bypassPermissions") ||
     args.some((arg, i) => arg === "--permission-mode" && args[i + 1] === "bypassPermissions");
   const rule = new RegExp(`${escapeRegExp(prefix)}(?:__|(?![A-Za-z0-9_-]))`);
-  return bypass || args.some((arg) => rule.test(arg));
+  let denying = false;
+  const allowing = args.filter((arg) => {
+    if (arg.startsWith("-")) denying = DENY_FLAGS.has(arg.split("=")[0]);
+    return !denying;
+  });
+  return bypass || allowing.some((arg) => rule.test(arg));
 }
 
 /** The long flags among launch args, without their `=value`. */
@@ -943,7 +963,11 @@ class Doctor {
       return;
     }
     if (out !== undefined) mkdirSync(out, { recursive: true });
-    for (const [agent, launch] of agents) this.liveTurn(probe, agent, launch, out);
+    for (const [agent, launch] of agents) {
+      // A signal during the checks or the last turn stops the doctor here, before another model call.
+      await settleSignals();
+      this.liveTurn(probe, agent, launch, out);
+    }
     if (out !== undefined && existsSync(join(probe.dir, DIAG_LOG))) copyFileSync(join(probe.dir, DIAG_LOG), join(out, "diag.log"));
   }
 
@@ -951,7 +975,7 @@ class Doctor {
   private liveTurn(probe: ProbeProject, agent: string, launch: AgentLaunch, out: string | undefined): void {
     const plan = realPlan({ projectDir: probe.dir, agent, goalId: probe.goalId, launch, cwd: probe.dir, worktree: null, session: null, inGitRepo: true });
     const args = liveArgs(plan.flavor, plan.args, this.claude?.flags ?? null);
-    const result = this.deps.run(plan.command, args, { cwd: plan.cwd, env: plan.env, timeoutMs: LIVE_TIMEOUT_MS });
+    const result = this.deps.run(plan.command, args, { cwd: plan.cwd, env: liveEnv(plan.env), timeoutMs: LIVE_TIMEOUT_MS });
     if (out !== undefined) {
       writeFileSync(join(out, `${agent}.stdout.txt`), result.stdout);
       writeFileSync(join(out, `${agent}.stderr.txt`), result.stderr);
@@ -1022,6 +1046,17 @@ export function codexTransport(raw: unknown): CodexTransport | null {
   };
 }
 
+/** The DIARCHY_* variables realPlan sets for a turn. */
+const PLAN_VARS = new Set(["DIARCHY_AGENT", "DIARCHY_PROJECT", "DIARCHY_GOAL", "DIARCHY_WORKTREE"]);
+
+/**
+ * realPlan's env without any other DIARCHY_* variable the caller exported: a
+ * DIARCHY_DIAG=0 would turn off the probe project's trail the checks read.
+ */
+export function liveEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  return Object.fromEntries(Object.entries(env).filter(([key]) => !key.startsWith("DIARCHY_") || PLAN_VARS.has(key)));
+}
+
 /** realPlan's args with the probe prompt in place of the PM prompt, and Claude's spend cap when its --help lists the flag. */
 export function liveArgs(flavor: string, planArgs: readonly string[], claudeFlags: Set<string> | null): string[] {
   const args = planArgs.slice(0, -1);
@@ -1087,8 +1122,11 @@ const SIGNALS: NodeJS.Signals[] = ["SIGINT", "SIGTERM", "SIGHUP"];
 
 export async function doctorReport(projectDir: string, options: DoctorOptions = {}, deps: DoctorDeps = defaultDeps()): Promise<DoctorReport> {
   const doctor = new Doctor(projectDir, deps);
-  // A signal's default action skips the finally below. The handler runs once a
-  // spawnSync in progress returns (a terminal's Ctrl-C stops that child too).
+  // A signal's default action skips the finally below, so a handler deletes the
+  // probe projects and exits. It runs only when the event loop polls, which a
+  // spawnSync in progress (a check, or a live turn of up to 180 s) does not
+  // let it do: hence settleSignals before each live turn and before the
+  // handlers come off, or a signal would be dropped and the run go on.
   const onSignal = (signal: NodeJS.Signals): void => {
     doctor.cleanup();
     process.exit(128 + constants.signals[signal]);
@@ -1098,6 +1136,7 @@ export async function doctorReport(projectDir: string, options: DoctorOptions = 
     await doctor.offline();
     if (options.live === true) await doctor.live(options.out === undefined ? undefined : resolve(options.out));
   } finally {
+    await settleSignals();
     for (const signal of SIGNALS) process.off(signal, onSignal);
     doctor.cleanup();
   }

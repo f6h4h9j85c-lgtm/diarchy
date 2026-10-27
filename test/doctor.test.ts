@@ -24,6 +24,7 @@ import {
   formatReport,
   helpFlags,
   liveArgs,
+  liveEnv,
   liveHint,
   parseVersion,
   runDoctor,
@@ -86,7 +87,7 @@ interface Variant {
   codexExecHelp?: string;
   codexTransport?: Record<string, unknown>;
   codexServer?: Record<string, unknown>;
-  live?: { claude?: string; codex?: string };
+  live?: { claude?: string; codex?: string; slowMs?: number };
 }
 
 let world = "";
@@ -502,6 +503,75 @@ describe("diarchy doctor --live", () => {
     },
     DOCTOR_TIMEOUT,
   );
+
+  it(
+    "runs the turns with the trail on whatever DIARCHY_* the caller exported, DIARCHY_DIAG=0 included",
+    async () => {
+      writeStub();
+      vi.stubEnv("DOCTOR_STUB", stubFile);
+      vi.stubEnv("PATH", env.PATH ?? "");
+      vi.stubEnv("DIARCHY_DIAG", "0");
+      vi.stubEnv("DIARCHY_FAKE_MODE", "slop");
+      const calls: Call[] = [];
+      const report = await doctorReport(good, { live: true }, { ...deps(), run: recording(calls) });
+      for (const id of ["L-claude", "L-codex"]) expect(byId(report, id), id).toMatchObject({ status: "ok" });
+      const turns = calls.filter((call) => call.args.at(-1) === PROBE_PROMPT);
+      expect(turns).toHaveLength(2);
+      for (const turn of turns) {
+        const diarchy = Object.keys(turn.env ?? {}).filter((key) => key.startsWith("DIARCHY_")).sort();
+        expect(diarchy).toEqual(["DIARCHY_AGENT", "DIARCHY_GOAL", "DIARCHY_PROJECT"]);
+      }
+      expect(liveEnv({ PATH: "/bin", DIARCHY_DIAG: "0", DIARCHY_PROJECT: "/p", DIARCHY_WORKTREE: "/w" })).toEqual({ PATH: "/bin", DIARCHY_PROJECT: "/p", DIARCHY_WORKTREE: "/w" });
+    },
+    DOCTOR_TIMEOUT,
+  );
+
+  it.each([
+    // kill <pid>: the doctor waits for the turn in progress to end, then stops.
+    { signal: "SIGTERM" as const, group: false, code: 143 },
+    // Ctrl-C in a terminal: the whole process group, the CLI too.
+    { signal: "SIGINT" as const, group: true, code: 130 },
+  ])(
+    "stops at a $signal during the claude turn (process group: $group): exit $code, no codex turn, no probe project left",
+    async ({ signal, group, code }) => {
+      const tmp = join(world, `tmp-live-${signal}`);
+      mkdirSync(tmp);
+      writeStub({ live: { claude: "slow", slowMs: group ? 120_000 : 3_000 } });
+      for (const flavor of ["claude", "codex"]) rmSync(join(record, `${flavor}.args.json`), { force: true });
+      const probes = (): string[] => readdirSync(tmp).filter((name) => name.startsWith("diarchy-doctor-"));
+      const child = spawn(process.execPath, ["--import", TSX, CLI, "doctor", "--json", "--live", "--project", good], {
+        cwd: world,
+        env: { ...env, TMPDIR: tmp },
+        stdio: "ignore",
+        detached: group,
+      });
+      const pid = child.pid ?? 0;
+      const closed = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolve, reject) => {
+        child.on("error", reject);
+        child.on("close", (exit, killed) => resolve({ code: exit, signal: killed }));
+      });
+      try {
+        await vi.waitFor(
+          () => {
+            if (!existsSync(join(record, "claude.args.json"))) throw new Error("the doctor has not started the claude turn yet");
+          },
+          { timeout: DOCTOR_TIMEOUT - 30_000, interval: 100 },
+        );
+        expect(probes()).toHaveLength(2);
+        process.kill(group ? -pid : pid, signal);
+        expect(await closed).toEqual({ code, signal: null });
+        expect(existsSync(join(record, "codex.args.json"))).toBe(false);
+        expect(probes()).toEqual([]);
+      } finally {
+        try {
+          process.kill(group ? -pid : pid, "SIGKILL");
+        } catch {
+          // already gone
+        }
+      }
+    },
+    DOCTOR_TIMEOUT,
+  );
 });
 
 describe("doctor helpers", () => {
@@ -533,6 +603,11 @@ describe("doctor helpers", () => {
     expect(allowsTools(["--permission-mode", "bypassPermissions"], plugin)).toBe(true);
     expect(allowsTools(["--permission-mode=bypassPermissions"], plugin)).toBe(true);
     expect(allowsTools(["--permission-mode", "acceptEdits", "--allowedTools", "Bash(git *)"], plugin)).toBe(false);
+    // A rule that --disallowedTools names allows nothing; its values run to the next flag.
+    expect(allowsTools(["--allowedTools", "Bash(git *)", "--disallowedTools", "mcp__plugin_diarchy_diarchy__*"], plugin)).toBe(false);
+    expect(allowsTools(["--disallowed-tools", "Bash(rm *)", "mcp__plugin_diarchy_diarchy"], plugin)).toBe(false);
+    expect(allowsTools(["--disallowedTools=mcp__plugin_diarchy_diarchy__*", "-p"], plugin)).toBe(false);
+    expect(allowsTools(["--disallowedTools", "Bash(rm *)", "--allowedTools", "mcp__plugin_diarchy_diarchy__*"], plugin)).toBe(true);
   });
 
   it("the setup docs and init's next steps point at diarchy doctor, with the spend cap the code passes", () => {

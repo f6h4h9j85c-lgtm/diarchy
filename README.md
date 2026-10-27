@@ -2,7 +2,7 @@
 
 diarchy installs into Claude Code and OpenAI Codex CLI and runs each as a product-manager agent on one goal. The two PMs are peers from different vendors: one leads, the other challenges, and each delegates to its own subagents in private. They talk only through a chat in an Obsidian vault, and every message passes through an MCP server that enforces the protocol in code, so the exchange cannot drift into acknowledgements, repetition, or open-ended debate. The human reads three rendered files and is called in only for a true deadlock, a missing credential, or a spent budget. Every PR is reviewed by the other model before it merges.
 
-Status: pre-alpha, v0.2.0. Requires Node 20.3 or later on Linux or macOS. Native Windows is untested and `diarchy start --driver real` refuses to run there; use WSL.
+Status: pre-alpha, v0.3.0. Requires Node 20.3 or later on Linux or macOS. Native Windows is untested and `diarchy start --driver real` refuses to run there; use WSL.
 
 ## How a run works
 
@@ -123,7 +123,7 @@ test/            vitest suites and fixtures
 
 ## Status and roadmap
 
-v0.2 ships the protocol engine, the vault store and renderers, the MCP server, both plugins, a launcher with a real driver and a scripted fake PM, `diarchy doctor` for the setup, and `diarchy smoke` for a live run. Not yet proven: CI runs lint, typecheck, build, and the tests, including end-to-end runs with the fake PM and `diarchy smoke --driver fake`, but no live two-model run has been recorded, and the Codex side has been checked against Codex 0.164.0 (sandbox, hook trust, plugin install) but not in a full run. `diarchy smoke` is the one command for that run: both PMs on a small goal in a throwaway repository, then a redacted diagnostics bundle to send back (`CONTRIBUTING.md`, Live smoke test). Next: Cursor and other MCP clients as a third agent (everything is already keyed by agent id), store-executed tests so `result: pass` is checked rather than trusted, and hardening of headless session resume.
+v0.2 ships the protocol engine, the vault store and renderers, the MCP server, both plugins, and a launcher with a real driver and a scripted fake PM. v0.3 ships with every open item from the audit closed, adds `diarchy doctor` for the setup and `diarchy smoke` for a live run, regenerates the samples for the default sandboxed flow, and adds the plugin icon. Not yet proven: CI runs lint, typecheck, build, and the tests, including end-to-end runs with the fake PM and `diarchy smoke --driver fake`, but no live two-model run has been recorded, and the Codex side has been checked against Codex 0.164.0 (sandbox, hook trust, plugin install) but not in a full run. `diarchy smoke` is the one command for that run: both PMs on a small goal in a throwaway repository, then a redacted diagnostics bundle to send back (`CONTRIBUTING.md`, Live smoke test). Next: Cursor and other MCP clients as a third agent (everything is already keyed by agent id), store-executed tests so `result: pass` is checked rather than trusted, and hardening of headless session resume.
 
 ## Development
 

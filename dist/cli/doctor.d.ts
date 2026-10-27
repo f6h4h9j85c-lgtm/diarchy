@@ -46,7 +46,8 @@ export interface McpProbe {
     rule: string | null;
     error: string | null;
 }
-export type McpProber = (target: McpTarget, timeoutMs: number) => Promise<McpProbe>;
+/** `onChild` is told the server's pid once it is spawned, and null once it is closed. */
+export type McpProber = (target: McpTarget, timeoutMs: number, onChild?: (pid: number | null) => void) => Promise<McpProbe>;
 /** Connect an MCP client over stdio, list the tools, and call `read` once. The SDK client loads only here. */
 export declare const sdkProber: McpProber;
 export interface DoctorDeps {
@@ -73,6 +74,13 @@ export declare const CLAUDE_SPEND_CAP_USD = "0.25";
 type Version = [number, number, number];
 export declare function parseVersion(text: string): Version | null;
 export declare function atLeast(version: Version, minimum: string): boolean;
+/**
+ * Let the event loop poll, so a signal that arrived during a spawnSync reaches
+ * its handler: a handler runs only from a poll, and neither a spawnSync nor
+ * synchronous code polls. Two hops, since code resumed from an I/O callback
+ * runs its first setImmediate before the next poll.
+ */
+export declare function settleSignals(): Promise<void>;
 /** Every `--flag` a help text names. */
 export declare function helpFlags(help: string): Set<string>;
 /**
@@ -104,6 +112,7 @@ export declare function codexTransport(raw: unknown): CodexTransport | null;
 /**
  * realPlan's env without any other DIARCHY_* variable the caller exported: a
  * DIARCHY_DIAG=0 would turn off the probe project's trail the checks read.
+ * C6 starts its server from the same, with DIARCHY_DIAG=0 of its own.
  */
 export declare function liveEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv;
 /** realPlan's args with the probe prompt in place of the PM prompt, and Claude's spend cap when its --help lists the flag. */

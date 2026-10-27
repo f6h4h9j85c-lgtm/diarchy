@@ -158,7 +158,7 @@ program
 program
   .command("smoke")
   .description(
-    "Run both PMs on a two-criterion goal in a throwaway git repository and write a diagnostics bundle (.tar.gz) to send back; exits 0 on DONE, 2 on BLOCKED once both PMs posted, 1 otherwise",
+    "Run both PMs on a two-criterion goal in a throwaway git repository and write a diagnostics bundle (.tar.gz) to send back; exits 0 on DONE, 2 on BLOCKED once both PMs posted, 128 plus the signal's number on a signal, 1 otherwise",
   )
   .option("--out <dir>", "where the bundle goes (default: the current directory)")
   .option("--minutes <n>", "wall clock budget of the goal; a watchdog stops the run 3 min after it", "20")

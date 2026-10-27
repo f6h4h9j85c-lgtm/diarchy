@@ -11,7 +11,7 @@ CI runs these on Node 20 and 22, plus the `dist/` check below. `npm test -- prot
 
 ## Diagnostics
 
-`diarchy doctor` checks a machine's setup without a model call, and `diarchy doctor --live` runs one short real turn per CLI; `test/doctor.test.ts` drives both against stub CLIs in `test/fixtures/doctor/`. To see what a real run does, create an empty `.diarchy/diag` in the project (or set `DIARCHY_DIAG=1`, which Codex does not pass to an MCP server): every MCP server start, hook run, and MCP tool result then appends a JSON line to `.diarchy/diag.log` saying which binary ran, how it found the project, and what it decided, never an environment value or the text of a command. `DIARCHY_DIAG=0` keeps the trail off despite the marker. `diarchy doctor` sets it for `claude mcp list`, whose health check starts the server in the project, and runs its own MCP and hook probes in a throwaway project, so its checks stay out of the trail. `diarchy doctor --live` drops any `DIARCHY_DIAG` you exported from its turns, whose checks read the probe project's trail.
+`diarchy doctor` checks a machine's setup without a model call, and `diarchy doctor --live` runs one short real turn per CLI; `test/doctor.test.ts` drives both against stub CLIs in `test/fixtures/doctor/`. To see what a real run does, create an empty `.diarchy/diag` in the project (or set `DIARCHY_DIAG=1`, which Codex does not pass to an MCP server): every MCP server start, hook run, and MCP tool result then appends a JSON line to `.diarchy/diag.log` saying which binary ran, how it found the project, and what it decided, never an environment value or the text of a command. `DIARCHY_DIAG=0` keeps the trail off despite the marker in every process it reaches; like `=1`, it never reaches a server Codex starts, so remove the marker to silence the Codex PM's server. `diarchy doctor` sets it for `claude mcp list`, whose health check starts the server in the project, and runs its own MCP and hook probes in a throwaway project, so its checks stay out of the trail. `diarchy doctor --live` drops any `DIARCHY_DIAG` you exported from its turns, whose checks read the probe project's trail.
 
 ## Live smoke test
 
@@ -29,7 +29,7 @@ Cost caps: `--minutes` (default 20) is the goal's wall clock; then the CLIs get 
 
 Review is off (`review.required: false`), so no GitHub repository is needed. `--github owner/repo` adds the PR leg: create a new empty repository first (`gh repo create <name> --private`) and have `gh` logged in. Smoke pushes `main` there and turns review on, so the Claude PM opens the PRs (the sandboxed Codex PM cannot push) and each PM reviews the other's. Use a new repository for each run.
 
-Exit codes: 0 when the goal is DONE, 2 when it is BLOCKED after both PMs posted, 1 otherwise (aborted, stalled, or blocked before both posted). The verdict is tiered: L1 both PMs posted, L2 the goal reached EXECUTE, L3 DONE.
+Exit codes: 0 when the goal is DONE, 2 when it is BLOCKED after both PMs posted, 128 plus the signal's number when a signal stopped the run (130 for Ctrl-C, 143 for SIGTERM; the step running gets the signal too, the bundle is still written, and no further step starts), 1 otherwise (aborted, stalled, or blocked before both posted). The verdict is tiered: L1 both PMs posted, L2 the goal reached EXECUTE, L3 DONE.
 
 The bundle is `diarchy-smoke-<stamp>/` and `diarchy-smoke-<stamp>.tar.gz` in the current directory (`--out <dir>` puts them elsewhere):
 

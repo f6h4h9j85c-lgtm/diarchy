@@ -8,6 +8,7 @@ import { describe, expect, it } from "vitest";
 import { parse as parseYaml } from "yaml";
 
 import { nextStep } from "../src/cli/brief.js";
+import { CODEX_ENV_ALLOWLIST } from "../src/cli/doctor.js";
 import { parseGoalState, type GoalState } from "../src/protocol/index.js";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
@@ -269,7 +270,15 @@ describe("docs: diarchy doctor and diarchy smoke", () => {
     const elsewhere = ["--live", "--max-budget-usd", "--private"];
     for (const flag of options) expect([...named], `${flag} is not in CONTRIBUTING.md`).toContain(flag);
     for (const flag of named) if (!elsewhere.includes(flag)) expect([...options], `${flag} is not a diarchy smoke option`).toContain(flag);
-    expect(text).toContain("0 when the goal is DONE, 2 when it is BLOCKED after both PMs posted, 1 otherwise");
+    expect(text).toContain("0 when the goal is DONE, 2 when it is BLOCKED after both PMs posted, 128 plus the signal's number when a signal stopped the run");
+    expect(text).toContain(", 1 otherwise (aborted, stalled, or blocked before both posted)");
+  });
+
+  it("CONTRIBUTING's Diagnostics says no DIARCHY_DIAG value reaches a server Codex starts (CF5)", () => {
+    expect(CODEX_ENV_ALLOWLIST).not.toContain("DIARCHY_DIAG");
+    const text = section(read("CONTRIBUTING.md"), "## Diagnostics").replace(/\s+/g, " ");
+    expect(text).toContain("(or set `DIARCHY_DIAG=1`, which Codex does not pass to an MCP server)");
+    expect(text).toContain("`DIARCHY_DIAG=0` keeps the trail off despite the marker in every process it reaches; like `=1`, it never reaches a server Codex starts");
   });
 
   it("the install steps check with diarchy doctor and point at diarchy smoke, and the README status names it", () => {

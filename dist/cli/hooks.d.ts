@@ -21,8 +21,10 @@ export interface GateDecision {
 /**
  * Whether `argv` is a launch wrapper a CLI may start its MCP server through:
  * a shell, env, npx or any npm command (`npm exec`, `npm x`, `npm run`,
- * `npm start`), pnpm, yarn or a `.yarn/releases` file, bunx, `bun run` or
- * `bun x`, or bin/diarchy.js handing `mcp` on to the diarchy on PATH.
+ * `npm start`), pnpm, yarn or a `.yarn/releases/yarn-*` file, bunx, `bun run`
+ * or `bun x` naming a script or package, or bin/diarchy.js handing `mcp` on
+ * to the diarchy on PATH. bun runs a file it is given, or anything under
+ * `--bun`, in its own process, so that is a program, not a wrapper.
  */
 export declare function isLaunchWrapper(argv: string[]): boolean;
 /** What the gate reads about processes; the defaults are this process's, and tests pass their own. */

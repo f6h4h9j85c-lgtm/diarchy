@@ -180,12 +180,16 @@ function argvOf(pid) {
     return ps.status === 0 ? (ps.stdout ?? "").trim().split(/\s+/) : null;
 }
 /** Programs that only start another one: shells, env, and the package runners. */
-const LAUNCHERS = new Set(["sh", "bash", "dash", "zsh", "ksh", "env", "npx", "npm", "pnpm", "yarn", "bunx"]);
+const LAUNCHERS = new Set(["sh", "bash", "dash", "zsh", "ksh", "env", "npx", "npm", "pnpm", "yarn"]);
+/** bun flags whose value is the next word. */
+const BUN_VALUE_FLAGS = new Set(["--cwd", "--env-file", "-c", "--config", "-r", "--preload", "-F", "--filter", "--shell"]);
 /**
  * Whether `argv` is a launch wrapper a CLI may start its MCP server through:
  * a shell, env, npx or any npm command (`npm exec`, `npm x`, `npm run`,
- * `npm start`), pnpm, yarn or a `.yarn/releases` file, bunx, `bun run` or
- * `bun x`, or bin/diarchy.js handing `mcp` on to the diarchy on PATH.
+ * `npm start`), pnpm, yarn or a `.yarn/releases/yarn-*` file, bunx, `bun run`
+ * or `bun x` naming a script or package, or bin/diarchy.js handing `mcp` on
+ * to the diarchy on PATH. bun runs a file it is given, or anything under
+ * `--bun`, in its own process, so that is a program, not a wrapper.
  */
 export function isLaunchWrapper(argv) {
     const name = (word) => (word ?? "").split("/").pop() ?? "";
@@ -193,10 +197,23 @@ export function isLaunchWrapper(argv) {
     const words = argv.length === 1 && /\s/.test(argv[0]) ? argv[0].trim().split(/\s+/) : argv;
     if (words.length === 0)
         return false;
-    if (name(words[0]) === "bun" && (words[1] === "run" || words[1] === "x"))
+    const bunArgs = name(words[0]) === "bunx" ? 1 : name(words[0]) === "bun" && (words[1] === "run" || words[1] === "x") ? 2 : 0;
+    if (bunArgs > 0) {
+        for (let i = bunArgs; i < words.length; i += 1) {
+            const word = words[i];
+            if (word === "--bun")
+                return false;
+            if (BUN_VALUE_FLAGS.has(word))
+                i += 1;
+            // The first operand: a file is a path or has a script's extension; `@scope/name` is a package.
+            if (!word.startsWith("-"))
+                return !(/^[^@].*\//.test(word) || /\.(?:[cm]?js|tsx?)$/.test(word));
+        }
         return true;
+    }
     // A runner started as `node /usr/bin/npx ...` before it sets its title; yarn as `node .yarn/releases/yarn-4.5.1.cjs`.
-    const runner = name(words[1]).replace(/(?:-cli)?\.[cm]?js$/, "").replace(/^yarn-\d[\w.-]*$/, "yarn");
+    const yarnRelease = /(?:^|\/)\.yarn\/releases\/yarn-[^/]+\.c?js$/.test(words[1] ?? "");
+    const runner = yarnRelease ? "yarn" : name(words[1]).replace(/(?:-cli)?\.[cm]?js$/, "").replace(/^yarn-\d[\w.-]*$/, "yarn");
     const program = name(words[0]) === "node" ? runner : name(words[0]);
     if (LAUNCHERS.has(program))
         return true;

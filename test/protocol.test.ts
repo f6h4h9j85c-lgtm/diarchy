@@ -439,6 +439,19 @@ describe("work evidence keys", () => {
 
 const SAMPLE_RUN = fileURLToPath(new URL("./fixtures/vault/sample-run/", import.meta.url));
 
+/** What VaultStore.stop does to the goal state (scripts/gen-samples.ts humanStop). */
+function humanStop(state: GoalState, message: Message): GoalState {
+  const next = structuredClone(state);
+  if (next.phase !== "BLOCKED") {
+    next.blocked_from = next.phase;
+    next.phase = "BLOCKED";
+  }
+  next.messages.push({ id: message.id, from: message.from, type: message.type, decision_id: null, re: [...message.re] });
+  next.used.wall_clock_minutes = Math.floor((Date.parse(message.ts) - Date.parse(next.created)) / 60_000);
+  next.updated = message.ts;
+  return next;
+}
+
 describe("sample run", () => {
   it("replayed through the engine lands on execute-ready just before its DONE, then on DONE", () => {
     const kickoff = parseKickoffFile(readFileSync(join(SAMPLE_RUN, "kickoff.md"), "utf8"));
@@ -448,13 +461,15 @@ describe("sample run", () => {
     const workSeen: string[] = [];
     for (const file of files) {
       const message = parseMessageFile(readFileSync(join(SAMPLE_RUN, file), "utf8"));
-      // Store-assigned decision ids: the engine assigns them itself (PROTOCOL.md section 3).
+      // Store-assigned decision ids: the engine assigns them itself (PROTOCOL.md section 3). A human DECIDE keeps its
+      // decision_id only when it closes an open thread (VaultStore.reply), as scripts/gen-samples.ts replays it.
+      const humanAssigned = message.from === "human" && (message.decision_id === undefined || state.decisions[message.decision_id]?.status !== "open");
       const storeAssigned =
-        (message.type === "PROPOSE" && message.decision_id !== "plan") ||
-        (message.type === "DECIDE" && (message.supersedes !== undefined || message.from === "human"));
+        (message.type === "PROPOSE" && message.decision_id !== "plan") || (message.type === "DECIDE" && (message.supersedes !== undefined || humanAssigned));
       if (storeAssigned) delete message.decision_id;
       if (message.type === "DONE") expect(state).toEqual(loadBase("execute-ready"));
-      state = accept(message, state, workSeen);
+      // `diarchy stop` goes in without the engine's gates (PROTOCOL.md 6): apply what VaultStore.stop does, as scripts/gen-samples.ts does.
+      state = message.type === "BLOCKED" && message.from === "human" ? humanStop(state, message) : accept(message, state, workSeen);
       workSeen.push(...workEvidenceKeys(message));
     }
     expect(state.phase).toBe("DONE");

@@ -7,7 +7,10 @@
 // any seq will do), then run this. It replays kickoff.md and the messages, in
 // ts order, through a real VaultStore on a fake clock, exactly as
 // test/vault.test.ts does, so every id comes from the store; reply_to is
-// remapped to the new ids. It then rewrites:
+// remapped to the new ids. The human posts through its own commands: a
+// DECIDE through reply (with its decision, tasks, budgets, and body) and a
+// BLOCKED through stop; a human field those cannot carry stops the run with an
+// error instead of being dropped. It then rewrites:
 //
 //   test/fixtures/vault/sample-run/*.md      one file per message, store-written
 //   docs/samples/chat.md, decisions.md, goal.md   the views at DONE
@@ -18,17 +21,30 @@
 // files must not change for one. The counts pinned in test/vault.test.ts and
 // the strips quoted in docs/RENDERING.md and docs/RENDERING-DESIGN-NOTES.md
 // are not rewritten: the failing tests name them.
+//
+// `tsx scripts/gen-samples.ts <dir>` reads and rewrites those paths under <dir>
+// instead of this checkout (test/vault.test.ts runs it on a copy).
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { isDeepStrictEqual } from "node:util";
 
 import { stringify } from "yaml";
 
-import { evaluate, initialState, parseConfig, parseKickoffFile, parseMessageFile, type GoalState, type Message } from "../src/protocol/index.js";
+import {
+  evaluate,
+  initialState,
+  parseConfig,
+  parseKickoffFile,
+  parseMessageFile,
+  workEvidenceKeys,
+  type GoalState,
+  type Message,
+} from "../src/protocol/index.js";
 import { VaultStore, resolveVaultPaths, type MessageDraft, type PostResult } from "../src/vault/index.js";
 
-const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
+const ROOT = process.argv[2] === undefined ? dirname(dirname(fileURLToPath(import.meta.url))) : resolve(process.argv[2]);
 const SAMPLE_RUN = join(ROOT, "test", "fixtures", "vault", "sample-run");
 const SAMPLES = join(ROOT, "docs", "samples");
 const EXECUTE_READY = join(ROOT, "test", "fixtures", "protocol", "bases", "execute-ready.yaml");
@@ -66,6 +82,33 @@ function toDraft(message: Message): MessageDraft {
     (message.type === "PROPOSE" && message.decision_id !== "plan") || (message.type === "DECIDE" && message.supersedes !== undefined);
   if (storeAssigned) delete draft.decision_id;
   return draft;
+}
+
+/**
+ * Post a human message through the human's own commands, as test/vault.test.ts
+ * replays it: BLOCKED is `diarchy stop`, DECIDE is `diarchy reply`. A decision_id
+ * the store assigns (no supersedes, no open thread of that id) is left to it.
+ */
+async function postHuman(store: VaultStore, message: Message): Promise<{ result: PostResult; storeAssigned: boolean }> {
+  if (message.type === "BLOCKED") return { result: await store.stop(message.body), storeAssigned: false };
+  if (message.type !== "DECIDE") throw new Error(`${message.id}: the human posts only DECIDE (reply) and BLOCKED (stop), not ${message.type}`);
+  const thread = message.decision_id !== undefined && store.state()?.decisions[message.decision_id]?.status === "open" ? message.decision_id : undefined;
+  const decision = message.supersedes ?? thread;
+  const options = { decision, tasks: message.tasks, budgets: message.budgets, body: message.body };
+  return { result: await store.reply(message.claim ?? "", options), storeAssigned: decision === undefined };
+}
+
+/** What VaultStore.stop does to the goal state: `diarchy stop` goes in without the engine's gates (PROTOCOL.md 6). */
+function humanStop(state: GoalState, message: Message): GoalState {
+  const next = structuredClone(state);
+  if (next.phase !== "BLOCKED") {
+    next.blocked_from = next.phase;
+    next.phase = "BLOCKED";
+  }
+  next.messages.push({ id: message.id, from: message.from, type: message.type, decision_id: null, re: [...message.re] });
+  next.used.wall_clock_minutes = Math.floor((Date.parse(message.ts) - Date.parse(next.created)) / 60_000);
+  next.updated = message.ts;
+  return next;
 }
 
 function ok(result: PostResult, label: string): string {
@@ -130,9 +173,25 @@ try {
     }
     const writer = stores[message.from];
     if (writer === undefined) throw new Error(`${message.id}: no store posts as ${message.from}`);
-    // The human answers through reply, as test/vault.test.ts replays it.
-    const result = message.from === "human" ? await writer.reply(message.claim ?? "", { body: message.body }) : await writer.post(draft);
-    ids.set(message.id, ok(result, message.id));
+    if (message.from === "human") {
+      const { result, storeAssigned } = await postHuman(writer, message);
+      const id = ok(result, message.id);
+      // reply and stop set some fields themselves (re, reply_to, to, kind): a scenario value they did not write is an error, not a silent drop.
+      const posted = writer.listMessages().find((entry) => entry.id === id);
+      if (posted === undefined) throw new Error(`${message.id}: the store did not write ${id}`);
+      const written: MessageDraft = toDraft(posted);
+      const expected: MessageDraft = { ...draft };
+      if (storeAssigned) {
+        delete written.decision_id;
+        delete expected.decision_id;
+      }
+      if (!isDeepStrictEqual(written, expected)) {
+        throw new Error(`${message.id}: the human's reply or stop cannot post this message as written; it posted ${JSON.stringify(written)}`);
+      }
+      ids.set(message.id, id);
+    } else {
+      ids.set(message.id, ok(await writer.post(draft), message.id));
+    }
     if (message.type === "BLOCKED" && goalBlocked === null) goalBlocked = readFileSync(join(goalDir, "goal.md"), "utf8");
   }
   const state = stores.human.state();
@@ -147,22 +206,30 @@ try {
   for (const name of ["chat.md", "decisions.md", "goal.md"]) writeFileSync(join(SAMPLES, name), readFileSync(join(goalDir, name), "utf8"));
   writeFileSync(join(SAMPLES, "goal-blocked.md"), goalBlocked);
 
-  // execute-ready.yaml: the engine replays the written files up to the DONE, as test/protocol.test.ts does.
+  // execute-ready.yaml: the engine replays the written files up to the DONE, as test/protocol.test.ts does,
+  // each STATUS evaluated against the work evidence the earlier ones carried, as the store does.
   let engine: GoalState = initialState(kickoff, CONFIG, new Date(kickoff.created));
   let beforeDone: GoalState | null = null;
+  const workSeen: string[] = [];
   for (const name of written) {
     const message = parseMessageFile(readFileSync(join(SAMPLE_RUN, name), "utf8"));
+    // A human DECIDE keeps its decision_id only when it closes an open thread (VaultStore.reply).
+    const humanAssigned = message.from === "human" && (message.decision_id === undefined || engine.decisions[message.decision_id]?.status !== "open");
     const storeAssigned =
-      (message.type === "PROPOSE" && message.decision_id !== "plan") ||
-      (message.type === "DECIDE" && (message.supersedes !== undefined || message.from === "human"));
+      (message.type === "PROPOSE" && message.decision_id !== "plan") || (message.type === "DECIDE" && (message.supersedes !== undefined || humanAssigned));
     if (storeAssigned) delete message.decision_id;
     if (message.type === "DONE") {
       beforeDone = engine;
       break;
     }
-    const result = evaluate(message, engine, { now: new Date(message.ts), callerAgent: message.from });
+    if (message.type === "BLOCKED" && message.from === "human") {
+      engine = humanStop(engine, message);
+      continue;
+    }
+    const result = evaluate(message, engine, { now: new Date(message.ts), callerAgent: message.from, workSeen });
     if (!result.ok) throw new Error(`engine: ${message.id}: ${result.rule} ${result.message}`);
     engine = result.state;
+    workSeen.push(...workEvidenceKeys(message));
   }
   if (beforeDone === null) throw new Error("the run has no DONE for execute-ready.yaml");
   const header = readFileSync(EXECUTE_READY, "utf8")

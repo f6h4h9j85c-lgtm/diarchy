@@ -3,9 +3,10 @@ import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, 
 import { createRequire, syncBuiltinESMExports } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { afterEach, describe, expect, expectTypeOf, it, vi } from "vitest";
+import { parse as parseYaml } from "yaml";
 
 import { nextStep } from "../src/cli/brief.js";
 import { runGate, runInboxSkim } from "../src/cli/hooks.js";
@@ -205,6 +206,18 @@ function toDraft(message: Message): MessageDraft {
 
 type Writer = "human" | "claude" | "codex";
 
+/**
+ * A human message goes through the human's own commands, as scripts/gen-samples.ts
+ * replays it: BLOCKED is `diarchy stop`, DECIDE is `diarchy reply`. A decision_id
+ * the store assigns (no supersedes, no open thread of that id) is left to it.
+ */
+function postHuman(store: VaultStore, message: Message): Promise<PostResult> {
+  if (message.type === "BLOCKED") return store.stop(message.body);
+  expect(message.type, message.id).toBe("DECIDE");
+  const thread = message.decision_id !== undefined && store.state()?.decisions[message.decision_id]?.status === "open" ? message.decision_id : undefined;
+  return store.reply(message.claim ?? "", { decision: message.supersedes ?? thread, tasks: message.tasks, budgets: message.budgets, body: message.body });
+}
+
 /** Kick off and replay the first `count` run messages; KICKOFF and the system ASK_HUMAN come from the store itself. */
 async function replay(h: Harness, count = RUN.length, onStep?: (message: Message) => void): Promise<void> {
   h.clock.set(RUN_KICKOFF.created);
@@ -219,12 +232,11 @@ async function replay(h: Harness, count = RUN.length, onStep?: (message: Message
   for (const message of RUN.slice(0, count)) {
     if (message.type === "KICKOFF" || message.type === "ASK_HUMAN") continue;
     h.clock.set(message.ts);
-    const result =
-      message.from === "human"
-        ? await h.human.reply(message.claim ?? "", { body: message.body })
-        : await h[message.from as Writer].post(toDraft(message));
+    const result = message.from === "human" ? await postHuman(h.human, message) : await h[message.from as Writer].post(toDraft(message));
     ok(result);
     expect(result.id).toBe(message.id);
+    // reply and stop set re, reply_to, to, and kind themselves: the human's message must read back as the run has it.
+    if (message.from === "human") expect(h.human.listMessages().find((entry) => entry.id === result.id)).toEqual(message);
     onStep?.(message);
   }
 }
@@ -2380,6 +2392,143 @@ describe("docs that quote the sample run", () => {
     const quoted = /All three ACs read `([^`]+)`/.exec(notes)?.[1];
     expect(new Set(statuses)).toEqual(new Set([quoted]));
   });
+});
+
+// ---------------------------------------------------------------------------
+// npm run gen-samples, on a copy of the scenario
+// ---------------------------------------------------------------------------
+
+describe("gen-samples", () => {
+  const GEN = join(ROOT, "scripts", "gen-samples.ts");
+  const TSX = pathToFileURL(join(ROOT, "node_modules", "tsx", "dist", "loader.mjs")).href;
+  const RUN_DIR = join("test", "fixtures", "vault", "sample-run");
+  const EXECUTE_READY = join("test", "fixtures", "protocol", "bases", "execute-ready.yaml");
+  /** Everything gen-samples reads or rewrites. */
+  const OWNED = [RUN_DIR, join("docs", "samples"), EXECUTE_READY];
+  const files = (dir: string): string[] => readdirSync(dir).sort();
+  /** Copy what gen-samples owns, let `edit` change the scenario, and run it on the copy. */
+  function generate(edit: (run: string) => void): { status: number | null; stderr: string; read: (path: string) => string; files: (dir: string) => string[] } {
+    const root = mkdtempSync(join(tmpdir(), "diarchy-gen-samples-"));
+    temps.push(root);
+    for (const path of OWNED) cpSync(join(ROOT, path), join(root, path), { recursive: true });
+    edit(join(root, RUN_DIR));
+    const child = spawnSync(process.execPath, ["--import", TSX, GEN, root], { encoding: "utf8" });
+    return { status: child.status, stderr: child.stderr, read: (path) => readFileSync(join(root, path), "utf8"), files: (dir) => files(join(root, dir)) };
+  }
+  /** A message file of the scenario, by the end of its name. */
+  const named = (run: string, suffix: string): string => join(run, files(run).find((name) => name.endsWith(suffix)) ?? suffix);
+  const executeReady = (read: (path: string) => string): GoalState => parseYaml(read(EXECUTE_READY)) as GoalState;
+
+  it("is a byte-for-byte no-op on the committed scenario", () => {
+    const run = generate(() => undefined);
+    expect(run.stderr).toBe("");
+    expect(run.status).toBe(0);
+    for (const dir of [RUN_DIR, join("docs", "samples")]) {
+      expect(run.files(dir)).toEqual(files(join(ROOT, dir)));
+      for (const name of files(join(ROOT, dir))) expect(run.read(join(dir, name)), name).toBe(readFileSync(join(ROOT, dir, name), "utf8"));
+    }
+    expect(run.read(EXECUTE_READY)).toBe(readFileSync(join(ROOT, EXECUTE_READY), "utf8"));
+  }, 60_000);
+
+  it("counts only new work evidence toward talk_since_work in execute-ready.yaml, as the store and test/protocol.test.ts do", () => {
+    // An ASSIGN, then a STATUS whose only work evidence (npm test passing) the 16:12 STATUS already carried.
+    const run = generate((dir) => {
+      const assign = [
+        "---",
+        "protocol_version: 1",
+        "id: 20261025T162500Z-0099-claude-ASSIGN",
+        "goal: 20261025-rate-limit",
+        "from: claude",
+        "to: codex",
+        "type: ASSIGN",
+        "re: [AC3]",
+        "task: T3",
+        "kind: implement",
+        "worktree: .diarchy/worktrees/codex",
+        "branch: diarchy/20261025-rate-limit/codex",
+        "reason: continuity",
+        "phase: EXECUTE",
+        "ts: 2026-10-25T16:25:00Z",
+        "---",
+        "Rerun the suite on the merged branch.",
+        "",
+      ].join("\n");
+      writeFileSync(join(dir, "20261025T162500Z-0099-claude-ASSIGN.md"), assign);
+      const status = [
+        "---",
+        "protocol_version: 1",
+        "id: 20261025T162600Z-0099-codex-STATUS",
+        "goal: 20261025-rate-limit",
+        "from: codex",
+        "to: all",
+        "type: STATUS",
+        "re: [AC3]",
+        "task: T3",
+        "task_status: done",
+        "phase: EXECUTE",
+        "evidence:",
+        "  - kind: test",
+        "    test: npm test",
+        "    result: pass",
+        "ts: 2026-10-25T16:26:00Z",
+        "---",
+        "Suite still green on the 412 branch.",
+        "",
+      ].join("\n");
+      writeFileSync(join(dir, "20261025T162600Z-0099-codex-STATUS.md"), status);
+    });
+    expect(run.stderr).toBe("");
+    expect(run.status).toBe(0);
+    expect(executeReady(run.read).used.talk_since_work).toBe(1);
+  }, 60_000);
+
+  it("replays a human DECIDE with every field and a human BLOCKED through stop", () => {
+    const run = generate((dir) => {
+      const decide = named(dir, "-human-DECIDE.md");
+      writeFileSync(decide, readFileSync(decide, "utf8").replace(/^basis: human$/m, "basis: human\nbudgets:\n  messages_total: 160"));
+      const stop = [
+        "---",
+        "protocol_version: 1",
+        "id: 20261025T144000Z-0099-human-BLOCKED",
+        "goal: 20261025-rate-limit",
+        "from: human",
+        "to: all",
+        "type: BLOCKED",
+        "re: [AC1, AC2, AC3]",
+        "kind: external",
+        "phase: BLOCKED",
+        "ts: 2026-10-25T14:40:00Z",
+        "---",
+        "Hold until the staging credential is in the vault.",
+        "",
+      ].join("\n");
+      writeFileSync(join(dir, "20261025T144000Z-0099-human-BLOCKED.md"), stop);
+    });
+    expect(run.stderr).toBe("");
+    expect(run.status).toBe(0);
+    const human = run.files(RUN_DIR).filter((name) => name.includes("-human-") && !name.endsWith("-KICKOFF.md"));
+    expect(human.map((name) => name.replace(/-\d{4}-/, "-<seq>-"))).toEqual([
+      "20261025T144000Z-<seq>-human-BLOCKED.md",
+      "20261025T145210Z-<seq>-human-DECIDE.md",
+    ]);
+    const [blocked, decide] = human.map((name) => parseMessageFile(run.read(join(RUN_DIR, name))));
+    expect(blocked).toMatchObject({ type: "BLOCKED", kind: "external", body: "Hold until the staging credential is in the vault.\n" });
+    expect(decide.budgets).toEqual({ messages_total: 160 });
+    expect(executeReady(run.read).limits.messages_total).toBe(160);
+  }, 60_000);
+
+  it("stops with an error on a human field reply and stop cannot post, and leaves the files as they were", () => {
+    let before = "";
+    const run = generate((dir) => {
+      const decide = named(dir, "-human-DECIDE.md");
+      writeFileSync(decide, readFileSync(decide, "utf8").replace(/^re: \[AC1\]$/m, "re: [AC1, AC2]"));
+      before = readFileSync(decide, "utf8");
+    });
+    expect(run.status).not.toBe(0);
+    expect(run.stderr).toContain("20261025T145210Z-0002-human-DECIDE: the human's reply or stop cannot post this message as written");
+    expect(run.read(join(RUN_DIR, "20261025T145210Z-0002-human-DECIDE.md"))).toBe(before);
+    expect(run.read(EXECUTE_READY)).toBe(readFileSync(join(ROOT, EXECUTE_READY), "utf8"));
+  }, 60_000);
 });
 
 describe("config", () => {

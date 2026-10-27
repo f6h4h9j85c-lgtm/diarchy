@@ -48,6 +48,10 @@ const FIXTURES = fileURLToPath(new URL("./fixtures/", import.meta.url));
 const SAMPLE_RUN = join(FIXTURES, "vault", "sample-run");
 /** A goal directory as v0.1.0 (b210468) wrote it, holding values a post may no longer carry. */
 const V010_GOAL = join(FIXTURES, "vault", "v0.1.0-goal");
+/** A goal directory the v0.2.0 (30abe42) store wrote and left mid-EXECUTE; its README.md says how. */
+const V020_GOAL = join(FIXTURES, "vault", "v0.2.0-goal");
+/** dist/protocol/schema.js and its two imports as v0.2.0 shipped them: what a 0.2.0 install reads a goal with. */
+const V020_SCHEMA = join(FIXTURES, "vault", "v0.2.0-schema", "schema.js");
 const EXAMPLES = join(FIXTURES, "protocol", "examples");
 const WRITER = join(FIXTURES, "vault", "concurrent-writer.ts");
 const SAMPLES = fileURLToPath(new URL("../docs/samples/", import.meta.url));
@@ -2344,6 +2348,128 @@ describe("a goal written by v0.1.0", () => {
     expect(chat).toContain("implement T1 on `feature/rate limit`");
     expect(chat).toContain("new task: Document the limit in the README");
     expect(h.file("goal.md")).toContain("| AC1 | Requests over the per\\-key limit get HTTP 429 with a Retry\\-After header |");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// A goal written by v0.2.0 (PROTOCOL.md 12)
+// ---------------------------------------------------------------------------
+
+describe("a goal written by v0.2.0", () => {
+  const PR_102 = "https://github.com/acme/api/pull/102";
+  const STORED = readdirSync(join(V020_GOAL, "chat")).map((file) => `chat/${file}`).sort();
+  const stored = (name: string): string => readFileSync(join(V020_GOAL, name), "utf8");
+  /** codex re-posts T1's stored commit and test: no new work evidence. */
+  const REPEAT: MessageDraft = {
+    type: "STATUS",
+    to: "claude",
+    re: ["AC1"],
+    evidence: [{ kind: "commit", sha: "3f9a2c1" }, { kind: "test", test: "npm test -- rate-limit", result: "pass" }],
+    body: "T1 still passes on main after the merge.",
+  };
+  const REVIEW: MessageDraft = {
+    type: "STATUS",
+    to: "claude",
+    re: ["AC2"],
+    evidence: [{ kind: "review", url: PR_102, verdict: "approve" }],
+    body: "Approved pull 102: the README gives the ruled limit of 100 requests per minute per key.",
+  };
+  const DONE: MessageDraft = {
+    type: "DONE",
+    to: "all",
+    re: ["AC1", "AC2"],
+    evidence: [{ kind: "commit", sha: "8b41d07" }, { kind: "test", test: "npm test", result: "pass" }],
+    body: "Both PRs carry the other agent's approval and both criteria have passing tests.",
+  };
+
+  /** The stored goal files in a fresh vault, as the 0.2.0 store left them. */
+  function load(): Harness {
+    const h = harness("2026-10-25T15:30:00Z");
+    cpSync(V020_GOAL, h.goalDir(), { recursive: true, filter: (source) => source !== join(V020_GOAL, "README.md") });
+    return h;
+  }
+
+  it("loads without rewriting a stored file, and each PM reads from its 0.2.0 inbox cursor", () => {
+    const h = load();
+    expect(h.human.listMessages().map((message) => `chat/${message.id}.md`)).toEqual(STORED);
+    expect(h.human.readKickoff()?.acceptance_criteria).toEqual(["Requests over the per-key limit get HTTP 429 with a Retry-After header", "The README documents the per-key limit"]);
+    expect(h.human.state()).toEqual(JSON.parse(stored("budget.json")));
+    // claude's cursor is the human ruling, so only codex's last STATUS is news; codex's is claude's last ASSIGN.
+    expect(h.claude.read()?.messages.map((message) => message.id)).toEqual(["20261025T152500Z-0003-codex-STATUS"]);
+    expect(h.codex.read()?.messages).toEqual([]);
+    for (const name of ["kickoff.md", "budget.json", ...STORED]) expect(h.file(name), name).toBe(stored(name));
+  });
+
+  it("continues to DONE: the review task a 0.2.0 STATUS marked done still owes its review, and stored work evidence is not new", async () => {
+    const h = load();
+    const talk = (): number | undefined => h.claude.state()?.used.talk_since_work;
+    expect(talk()).toBe(1);
+    const implement: MessageDraft = {
+      type: "ASSIGN",
+      to: "codex",
+      re: ["AC1"],
+      new_task: "Add a restart test for the token bucket",
+      kind: "implement",
+      worktree: ".diarchy/worktrees/codex",
+      branch: "diarchy/20261025-rate-limit/codex",
+      reason: "availability",
+    };
+    expect(await h.claude.post(implement)).toMatchObject({ ok: false, rule: "BUSY_REVIEWING", message: expect.stringContaining(`codex is reviewing ${PR_102}.`) });
+    expect(await h.claude.post(DONE)).toMatchObject({ ok: false, rule: "DONE_PRECONDITION", message: expect.stringContaining(PR_102) });
+    // The seen set is read from the stored chat/ files, so T1's commit and test posted again do not reset the talk count.
+    h.clock.set("2026-10-25T15:40:00Z");
+    ok(await h.codex.post(REPEAT));
+    expect(talk()).toBe(1);
+    // The first write renders the 0.2.0 messages too: the human's ruling, and T4 as the STATUS marked it.
+    expect(h.file("chat.md")).toContain("\n*Document 100 requests per minute per key\\.*\n");
+    expect(h.file("chat.md")).toContain("◇ **codex → claude · STATUS · re AC2 · 15:25:00**\n\nT4 done\n");
+    h.clock.set("2026-10-25T15:45:00Z");
+    ok(await h.codex.post(REVIEW));
+    expect(talk()).toBe(0);
+    const waited = await h.claude.waitForReply({ timeoutMs: 5_000 });
+    expect(waited).toMatchObject({ messages: [{ task: "T4", task_status: "done" }, { from: "codex", type: "STATUS" }, { evidence: [{ kind: "review", url: PR_102 }] }] });
+    h.clock.set("2026-10-25T15:50:00Z");
+    ok(await h.claude.post(DONE));
+    expect(h.claude.state()?.phase).toBe("DONE");
+    expect(h.file("chat.md")).toContain("> **DONE** · no action needed · lead claude · challenger codex\n");
+    const goal = h.file("goal.md");
+    expect(goal).toContain("| DONE | claude | codex | 2026-10-25 15:50:00 UTC |");
+    expect(goal).toContain("| AC2 | The README documents the per\\-key limit | passing |");
+    expect(h.file("decisions.md")).toContain("| D1 | [15:02:00](chat/20261025T150200Z-0002-human-DECIDE.md) | human | Document 100 requests per minute per key\\. | human | | |");
+  });
+
+  it("what 0.3.0 wrote while continuing still parses under 0.2.0's schema", async () => {
+    const h = load();
+    const before = h.human.listMessages().length;
+    for (const [writer, draft, ts] of [
+      [h.codex, REPEAT, "2026-10-25T15:40:00Z"],
+      [h.codex, REVIEW, "2026-10-25T15:45:00Z"],
+      [h.claude, DONE, "2026-10-25T15:50:00Z"],
+    ] as const) {
+      h.clock.set(ts);
+      ok(await writer.post(draft));
+    }
+    h.claude.read();
+    h.codex.read();
+    const v020 = (await import(pathToFileURL(V020_SCHEMA).href)) as {
+      parseMessageFile(text: string): unknown;
+      parseKickoffFile(text: string): unknown;
+      parseGoalState(input: unknown): unknown;
+      MESSAGE_ID_PATTERN: RegExp;
+    };
+    const files = readdirSync(join(h.goalDir(), "chat")).map((file) => `chat/${file}`);
+    expect(files).toHaveLength(before + 3);
+    for (const name of files) expect(v020.parseMessageFile(h.file(name)), name).toEqual(parseMessageFile(h.file(name)));
+    expect(v020.parseKickoffFile(h.file("kickoff.md"))).toEqual(parseKickoffFile(h.file("kickoff.md")));
+    const budget: unknown = JSON.parse(h.file("budget.json"));
+    expect(v020.parseGoalState(budget)).toEqual(parseGoalState(budget));
+    expect(parseGoalState(budget).phase).toBe("DONE");
+    // Each inbox keeps 0.2.0's four keys, with a cursor its readInbox accepts.
+    for (const agent of ["claude", "codex"]) {
+      const inbox = JSON.parse(h.file(`inbox/${agent}.json`)) as Record<string, unknown>;
+      expect(Object.keys(inbox).sort()).toEqual(["agent", "cursor", "protocol_version", "updated"]);
+      expect(inbox).toMatchObject({ protocol_version: 1, agent, cursor: expect.stringMatching(v020.MESSAGE_ID_PATTERN) });
+    }
   });
 });
 

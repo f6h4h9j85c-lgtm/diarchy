@@ -57,14 +57,18 @@ describe("docs: talk gate and DONE summaries match ANTI-SLOP.md and PROTOCOL.md 
   const skill = read("skills", "diarchy-pm", "SKILL.md");
   const line = (doc: string, start: string): string => doc.split("\n").find((entry) => entry.startsWith(start)) ?? "";
 
-  it("only a STATUS carrying work evidence clears the talk gate, wherever the gate is described", () => {
-    const work = /without a STATUS carrying work evidence \(a commit, pr, review, or a passing or failing test\)/i;
+  it("only a STATUS carrying new work evidence clears the talk gate, wherever the gate is described", () => {
+    // PROTOCOL.md 3.1: work evidence an earlier STATUS already carried leaves talk_since_work as it was.
+    expect(rule("TALK_WORK_RATIO")).toContain("without a STATUS carrying new work evidence (");
+    expect(rule("TALK_WORK_RATIO")).toContain("that no earlier STATUS on the goal carried;");
+    const work = /without a STATUS carrying new work evidence \(a commit, pr, review, or a passing or failing test that no earlier STATUS carried\)/i;
     const step5 = line(readme, "5. EXECUTE.");
     expect(step5).toMatch(work);
     expect(acceptedTypes(step5)).toEqual(acceptedTypes(rule("TALK_WORK_RATIO")));
+    expect(line(readme, "| Budgets:")).toMatch(work);
     expect(section(skill, "## EXECUTE phase")).toMatch(work);
     const prose = ["README.md", "docs/QUICKSTART.md", "docs/ARCHITECTURE.md", "skills/diarchy-pm/SKILL.md", "skills/diarchy-review/SKILL.md", "src/cli/brief.ts"];
-    for (const file of prose) expect(read(file), file).not.toMatch(/without a STATUS(?! carrying work evidence)|\bper STATUS\b/);
+    for (const file of prose) expect(read(file), file).not.toMatch(/without a STATUS(?! carrying new work evidence)|\bper STATUS\b/);
   });
 
   it("every DONE summary names each 9.2 precondition, the PR from every implementer and the unanswered CHALLENGE included", () => {
@@ -190,7 +194,7 @@ describe("docs: the sandboxed Codex PM's PR stays its own (PROTOCOL.md 9.1, 9.2(
     expect(execute).toContain("Post your own PR's `pr` evidence (first citer = author); a PM committing or opening a PR for a sandboxed PM cites only `commit`, url in body.");
   });
 
-  it("diarchy-review, AGENTS.md, INSTALL-CODEX.md 5, QUICKSTART.md, and ARCHITECTURE.md say the same", () => {
+  it("diarchy-review, diarchy-pm, AGENTS.md, INSTALL-CODEX.md 5, QUICKSTART.md, and ARCHITECTURE.md say the same", () => {
     expect(flat("skills", "diarchy-review", "SKILL.md")).toContain(
       "a PM that commits or opens the PR for a sandboxed implementer cites only `commit` and passes the url in its STATUS body",
     );
@@ -213,6 +217,12 @@ describe("docs: the sandboxed Codex PM's PR stays its own (PROTOCOL.md 9.1, 9.2(
     // Who merges: the sample run shows the Claude PM merging the sandboxed Codex PM's PR.
     expect(flat("skills", "diarchy-review", "SKILL.md")).toContain("(for a sandboxed author, the PM that opened the PR merges it)");
     expect(section(read("docs", "PROTOCOL.md"), "### 9.1 Worktrees, branches, PRs")).toContain("(a sandboxed author's PR is merged by the PM that opened it)");
+    // diarchy-pm, the doctrine both PMs load, says the same: the opener commits the fixes and merges.
+    const execute = section(read("skills", "diarchy-pm", "SKILL.md"), "## EXECUTE phase").replace(/\s+/g, " ");
+    expect(execute).toContain(
+      "The PR's opener (author, or the PM committing for a sandboxed author) commits fixes and, after `approve`, merges and posts STATUS with the merge `commit`.",
+    );
+    expect(execute).not.toMatch(/the author merges/);
   });
 
   it("the review skill and INSTALL-CODEX.md 5 give a sandboxed reviewer a read-only way to test the PR head", () => {

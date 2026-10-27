@@ -20,8 +20,11 @@
  * fake work (a commit in their worktree, else a fabricated sha) and post
  * STATUS with commit, test, and pr evidence, lead ASSIGNs cross reviews,
  * reviewers approve, lead posts DONE. 13 messages for two ACs. After a human
- * ruling on plan without --task (`diarchy reply --decision plan`) EXECUTE has
- * no tasks, and the lead ASSIGNs one new_task per AC instead.
+ * ruling on plan (`diarchy reply --decision plan`) the lead ASSIGNs the tasks
+ * its `--task` list gave, whatever their number: each cites the ACs its text
+ * names, else the AC at its index, else every AC not yet passing, and each
+ * STATUS cites what its ASSIGN did. Then it ASSIGNs one new_task per AC that
+ * no ASSIGN cites; without --task that is every AC.
  *
  * slop: challenger posts an ack-only PROPOSE (NO_ACK), a CHALLENGE without a
  * test (CHALLENGE_NEEDS_TEST), then a valid CHALLENGE; the lead never DECIDEs
@@ -32,7 +35,9 @@
  * silent: as good, except the challenger posts nothing in PLAN. The lead counts
  * its `waitForReply` timeouts and, after two in a row with no CHALLENGE on its
  * plan PROPOSE, DECIDEs plan by authority (PROPOSE -> DECIDE, PROTOCOL.md
- * section 7), as diarchy-pm and the wait_for_reply description tell it to.
+ * section 7), as diarchy-pm and the wait_for_reply description tell it to. It
+ * logs each counted timeout (`plan wait timeout 1/2`, then
+ * `plan wait timeout 2/2; deciding by authority`) before that DECIDE.
  */
 import { spawnSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
@@ -128,8 +133,35 @@ function fakePrUrl(state: GoalState, who: AgentId): string {
   return `${FAKE_PR_BASE}/${state.agents.indexOf(who) + 1}`;
 }
 
-function acOfTask(task: TaskState): string {
-  return `AC${task.id.slice(1)}`;
+/**
+ * The ACs a todo task's ASSIGN cites, only ids in state.acs: those the task
+ * text names (`AC1: ...`), else the AC at the task's index while no implement
+ * ASSIGN cites it yet, else every AC not yet passing. A human's `--task` list
+ * need not have one task per AC in AC order.
+ */
+function acsOfTodo(ctx: Ctx, task: TaskState): string[] {
+  const { state, messages, acs } = ctx;
+  const named = [...new Set(task.task.match(/\bAC\d+\b/g) ?? [])].filter((ac) => Object.hasOwn(state.acs, ac));
+  if (named.length > 0) return named;
+  const cited = new Set(messages.filter((message) => message.type === "ASSIGN" && message.kind === "implement").flatMap((message) => message.re));
+  const atIndex = acs[Number(task.id.slice(1)) - 1];
+  if (atIndex !== undefined && !cited.has(atIndex)) return [atIndex];
+  const open = acs.filter((ac) => state.acs[ac].status !== "passing");
+  return open.length > 0 ? open : acs;
+}
+
+/** The `re` of the ASSIGN that handed `task` to its assignee: the ACs its STATUS reports on. */
+function acsOfAssign(ctx: Ctx, task: TaskState): string[] {
+  const assign = [...ctx.messages]
+    .reverse()
+    .find(
+      (message) =>
+        message.type === "ASSIGN" &&
+        message.kind === "implement" &&
+        message.to === task.assignee &&
+        (message.task === task.id || (message.task === undefined && message.new_task === task.task)),
+    );
+  return assign?.re ?? ctx.acs;
 }
 
 function proposePlan(ctx: Ctx): MessageDraft {
@@ -194,13 +226,14 @@ function goodAction(ctx: Ctx): Action | null {
   const mine = tasks.filter((task) => task.assignee === agent);
   const implement = mine.find((task) => task.kind === "implement" && (task.status === "assigned" || task.status === "in_progress"));
   if (implement !== undefined) {
+    const re = acsOfAssign(ctx, implement);
     return async () => {
       const work = fakeWork(implement);
       log(`${implement.id} ${work.note}`);
       await post(store, {
         type: "STATUS",
         to: "all",
-        re: [acOfTask(implement)],
+        re,
         task: implement.id,
         task_status: "done",
         evidence: [
@@ -208,7 +241,7 @@ function goodAction(ctx: Ctx): Action | null {
           { kind: "pr", url: fakePrUrl(state, agent) },
           { kind: "test", test: `npm test -- ${implement.id}`, result: "pass" },
         ],
-        body: `${implement.id} landed on ${implement.branch ?? "its branch"}; the ${acOfTask(implement)} test runs green and the PR is open for review.`,
+        body: `${implement.id} landed on ${implement.branch ?? "its branch"}; the ${re.join(" and ")} test runs green and the PR is open for review.`,
       });
     };
   }
@@ -235,7 +268,7 @@ function goodAction(ctx: Ctx): Action | null {
       void (await post(store, {
         type: "ASSIGN",
         to: assignee,
-        re: [acOfTask(todo)],
+        re: acsOfTodo(ctx, todo),
         task: todo.id,
         kind: "implement",
         worktree: posix.join(config.worktrees.root, assignee),
@@ -243,8 +276,8 @@ function goodAction(ctx: Ctx): Action | null {
         reason: "availability",
       }));
   }
-  // EXECUTE opened by a human ruling without --task carries no tasks: one new_task per AC the brief counts as uncovered,
-  // in AC order and ahead of any review, so T<n> is AC<n>'s task.
+  // EXECUTE opened by a human ruling carries only the tasks its --task list named, if any: one new_task per AC the brief
+  // still counts as uncovered, in AC order and ahead of any review.
   const ac = uncoveredAcs(state, messages)[0];
   if (ac !== undefined) {
     const assignee = acs.indexOf(ac) % 2 === 0 ? other : agent;
@@ -311,7 +344,12 @@ function silentAction(ctx: Ctx): Action | null {
   if (!lead) return null;
   const plan = state.decisions.plan;
   if (plan === undefined || plan.status !== "open" || plan.messages !== 1 || plan.challenge !== null) return goodAction(ctx);
-  if (timeouts < SILENT_TIMEOUTS) return null;
+  // Each call with timeouts > 0 follows one more timeout in a row: log it, so a run shows the bound was waited out.
+  if (timeouts < SILENT_TIMEOUTS) {
+    if (timeouts > 0) log(`plan wait timeout ${timeouts}/${SILENT_TIMEOUTS}`);
+    return null;
+  }
+  log(`plan wait timeout ${timeouts}/${SILENT_TIMEOUTS}; deciding by authority`);
   return async () =>
     void (await post(store, {
       type: "DECIDE",
@@ -321,7 +359,7 @@ function silentAction(ctx: Ctx): Action | null {
       basis: "authority",
       claim: "One task per criterion stands as proposed.",
       tasks: acs.map((ac) => `${ac}: ${state.acs[ac].criterion}`),
-      body: "No CHALLENGE came after two wait_for_reply timeouts, so there is no test to run.",
+      body: `No CHALLENGE came after ${timeouts} wait_for_reply timeouts, so there is no test to run.`,
     }));
 }
 

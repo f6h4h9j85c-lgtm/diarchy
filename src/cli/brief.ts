@@ -109,16 +109,17 @@ function isFixOf(message: Message, author: AgentId, url: string, task: string | 
 }
 
 /**
- * ACs the lead still owes an implement task in EXECUTE. A plan DECIDE that
- * carried `tasks` already mapped tasks to ACs, so its todo tasks drive the
- * brief and none is owed here. Otherwise (a human ruling, or a DECIDE with no
- * tasks, closed plan) every AC not yet passing is owed until an implement
- * ASSIGN cites it in `re`; one task may cover several ACs.
+ * ACs the lead still owes an implement task in EXECUTE. The lead's own plan
+ * DECIDE with `tasks` already mapped tasks to ACs, so its todo tasks drive the
+ * brief and none is owed here. Otherwise (a human ruling, whose `--task` list
+ * need not name every AC, or a DECIDE with no tasks, closed plan) every AC not
+ * yet passing is owed until an implement ASSIGN cites it in `re`; one task may
+ * cover several ACs.
  */
 export function uncoveredAcs(state: GoalState, messages: Message[]): string[] {
   const ordered = sortMessages(messages);
   const plan = ordered.find((message) => message.type === "DECIDE" && message.decision_id === "plan");
-  if ((plan?.tasks ?? []).length > 0) return [];
+  if (plan !== undefined && plan.from !== "human" && (plan.tasks ?? []).length > 0) return [];
   const covered = new Set(ordered.filter((message) => message.type === "ASSIGN" && message.kind === "implement").flatMap((message) => message.re));
   return Object.entries(state.acs)
     .filter(([id, ac]) => ac.status !== "passing" && !covered.has(id))

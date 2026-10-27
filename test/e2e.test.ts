@@ -864,9 +864,17 @@ describe("start --driver fake (silent)", () => {
         .listMessages()
         .find((message) => message.type === "DECIDE" && message.decision_id === "plan");
       expect(decide).toMatchObject({ from: "claude", basis: "authority" });
-      expect(decide?.body.trim()).toBe("No CHALLENGE came after two wait_for_reply timeouts, so there is no test to run.");
+      expect(decide?.body.trim()).toBe("No CHALLENGE came after 2 wait_for_reply timeouts, so there is no test to run.");
       expect(decide?.reply_to).toBeUndefined();
       expect(run.stderr).not.toContain("rejected");
+      // The bound itself: two counted timeouts, logged in order, before the DECIDE is posted.
+      const at = (line: string): number => run.stdout.split("\n").indexOf(`[claude] claude: ${line}`);
+      const first = at("plan wait timeout 1/2");
+      const second = at("plan wait timeout 2/2; deciding by authority");
+      const decided = at(`posted ${decide?.id ?? "?"} (plan) · phase EXECUTE`);
+      expect([first, second, decided].every((index) => index >= 0), run.stdout).toBe(true);
+      expect(first).toBeLessThan(second);
+      expect(second).toBeLessThan(decided);
     },
     2 * RUN_TIMEOUT,
   );
@@ -2153,8 +2161,8 @@ describe("brief and Stop gate guidance", () => {
     expect(step(dir, "claude").owes).toBe(false);
   }, RUN_TIMEOUT);
 
-  /** kickoff with two ACs, a plan CHALLENGE left to deadlock, then `reply --decision plan`: EXECUTE with no tasks, the lead caught up. */
-  async function ruledPlan(name: string): Promise<{ dir: string; claude: VaultStore; codex: VaultStore }> {
+  /** kickoff with two ACs, a plan CHALLENGE left to deadlock, then `reply --decision plan` with one `--task` per entry of `tasks`: EXECUTE with those tasks (none by default), the lead caught up. */
+  async function ruledPlan(name: string, tasks: string[] = []): Promise<{ dir: string; claude: VaultStore; codex: VaultStore }> {
     const dir = await initProject(name, false);
     const { claude, codex } = agents(dir);
     expect(
@@ -2177,11 +2185,21 @@ describe("brief and Stop gate guidance", () => {
     posted(await claude.post(status));
     expect(goalState(dir)).toMatchObject({ phase: "BLOCKED", blocked_from: "PLAN" });
 
-    const reply = await cli(["reply", "Use the Redis bucket.", "--decision", "plan", "--project", dir]);
+    const reply = await cli(["reply", "Use the Redis bucket.", "--decision", "plan", ...tasks.flatMap((task) => ["--task", task]), "--project", dir]);
     expect(reply.code, reply.stderr).toBe(0);
-    expect(goalState(dir)).toMatchObject({ phase: "EXECUTE", tasks: {} });
+    const state = goalState(dir);
+    expect(state.phase).toBe("EXECUTE");
+    expect(Object.values(state.tasks).map((task) => [task.task, task.status])).toEqual(tasks.map((task) => [task, "todo"]));
     claude.read();
     return { dir, claude, codex };
+  }
+
+  /** The `re` of each implement ASSIGN, keyed by the task it names or the new_task text. */
+  function implementCites(dir: string): Record<string, string[]> {
+    const assigns = human(dir)
+      .listMessages()
+      .filter((message) => message.type === "ASSIGN" && message.kind === "implement");
+    return Object.fromEntries(assigns.map((message) => [message.task ?? message.new_task ?? "", message.re]));
   }
 
   /** An implement ASSIGN to codex of a new task citing `re`. */
@@ -2207,6 +2225,16 @@ describe("brief and Stop gate guidance", () => {
     expect(step(both.dir, "claude").owes).toBe(false);
     both.claude.read();
     expect(await gateReason(both.dir, "claude")).toBe("");
+
+    // A human --task list need not name every AC: once its tasks are assigned, an AC no ASSIGN cites is still owed.
+    const listed = await ruledPlan("cover-listed", ["Build the Redis bucket."]);
+    expect(step(listed.dir, "claude")).toEqual({ text: "assign T1 (Build the Redis bucket.): call assign", owes: true });
+    const assignT1: MessageDraft = { type: "ASSIGN", to: "codex", re: ["AC1"], task: "T1", kind: "implement", worktree: ".diarchy/worktrees/codex", branch: "diarchy/rl/codex" };
+    posted(await listed.claude.post(assignT1));
+    expect(step(listed.dir, "claude")).toEqual({ text: "AC2 has no task: ASSIGN a new_task citing it in re (call assign)", owes: true });
+    const listedBoth = await ruledPlan("cover-listed-both", ["Build the Redis bucket."]);
+    posted(await listedBoth.claude.post({ ...assignT1, re: ["AC1", "AC2"] }));
+    expect(step(listedBoth.dir, "claude")).toEqual({ text: "nothing owed; call wait_for_reply for the other PM's STATUS", owes: false });
   }, 2 * RUN_TIMEOUT);
 
   it("after a plan DECIDE with tasks the plan maps tasks to ACs, so an ASSIGN citing fewer ACs owes nothing more", async () => {
@@ -2284,6 +2312,44 @@ describe("brief and Stop gate guidance", () => {
         "AC2: The limit is configurable.",
       ]);
       expect(run.stderr).not.toContain("rejected");
+    },
+    2 * RUN_TIMEOUT,
+  );
+
+  it(
+    "reply --decision plan with more --task entries than ACs: the fake lead cites only ACs that exist, and the run reaches DONE",
+    async () => {
+      const tasks = ["Build the bucket.", "Wire the env limit.", "Write the docs."];
+      const { dir } = await ruledPlan("more-tasks", tasks);
+      const run = await cli(["start", "--driver", "fake", "--fake-mode", "good", "--no-worktrees", "--project", dir]);
+      expect(run.code, run.stdout + run.stderr).toBe(0);
+      expect(run.stderr).not.toContain("rejected");
+      const done = goalState(dir);
+      expect(done.phase).toBe("DONE");
+      expect(Object.values(done.tasks).filter((task) => task.kind === "implement").map((task) => task.task)).toEqual(tasks);
+      const cites = implementCites(dir);
+      expect(Object.keys(cites)).toEqual(["T1", "T2", "T3"]);
+      expect(cites).toMatchObject({ T1: ["AC1"], T2: ["AC2"] });
+      expect(cites.T3.length).toBeGreaterThan(0);
+      expect(cites.T3.every((ac) => ac === "AC1" || ac === "AC2"), cites.T3.join(", ")).toBe(true);
+    },
+    2 * RUN_TIMEOUT,
+  );
+
+  it(
+    "reply --decision plan with fewer --task entries than ACs: the fake lead assigns the listed task, then a new_task for the AC it left uncovered, and the run reaches DONE",
+    async () => {
+      const { dir } = await ruledPlan("fewer-tasks", ["Build the Redis bucket."]);
+      const run = await cli(["start", "--driver", "fake", "--fake-mode", "good", "--no-worktrees", "--project", dir]);
+      expect(run.code, run.stdout + run.stderr).toBe(0);
+      expect(run.stderr).not.toContain("rejected");
+      const done = goalState(dir);
+      expect(done.phase).toBe("DONE");
+      expect(Object.values(done.tasks).filter((task) => task.kind === "implement").map((task) => task.task)).toEqual([
+        "Build the Redis bucket.",
+        "AC2: The limit is configurable.",
+      ]);
+      expect(implementCites(dir)).toEqual({ T1: ["AC1"], "AC2: The limit is configurable.": ["AC2"] });
     },
     2 * RUN_TIMEOUT,
   );

@@ -20,11 +20,13 @@ Multiplayer AI for coding: Claude Code and Codex CLI run as peer product manager
 - 2026-10-25 One file per message, store-rendered views; worktree per PM; cross-model PR review required.
 
 ## Active threads
+- Push the v0.3.0 tag on 3229d6b (the build session could not push tags; steps in `Projects/diarchy handoff.md`).
 - First live two-model run, now via `diarchy smoke` on a machine with both CLIs.
 - Node >= 22.12 upgrade.
 - Third agent adapter.
 
 ## Key notes
+- START HERE: Projects/diarchy handoff.md (what the app is, how to run it, current state, next steps, code map, repo rules)
 - Sessions/2026-10-27 diarchy.md (v0.3.0 round), Sessions/2026-10-26 diarchy.md (audit and fix), Sessions/2026-10-25 diarchy.md (v0.1.0 build)
 - docs/audit/2026-10-27-v0.3.0-addendum.md, docs/audit/2026-10-25-audit.md
 - docs/PROTOCOL.md, docs/ANTI-SLOP.md, docs/RENDERING.md, docs/ARCHITECTURE.md

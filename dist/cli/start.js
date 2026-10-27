@@ -12,16 +12,21 @@
  *
  * A PM that ends its turn cleanly (code 0) while it owes nothing, as the Stop
  * gate judges it, and the other PM is running is parked: no restart is used
- * and it starts again when a message lands, or once no PM is left running.
- * Any other exit is restarted with backoff and counted against max_restarts.
+ * and it starts again when a message lands, once no PM is left running (a PM
+ * waiting on another session is not running), or once if no message lands
+ * within PARK_RELAUNCH_MS of its parking. A duty no message brings never
+ * parks a PM: the lead's DECIDE once the plan CHALLENGE window times out, or
+ * a DONE that would pass 9.2. Any other exit is restarted with backoff and
+ * counted against max_restarts.
  */
 import { spawn } from "node:child_process";
 import { createInterface } from "node:readline";
-import { AGENT_HUMAN } from "../protocol/index.js";
-import { CONFIG_FILENAME, VaultStore, leaseHolder, loadConfig } from "../vault/index.js";
-import { blockReason, blockSummary, nextStep, replyHint, unreadFor } from "./brief.js";
+import { AGENT_HUMAN, doneMissing } from "../protocol/index.js";
+import { CONFIG_FILENAME, MAX_WAIT_MS, VaultStore, leaseHolder, loadConfig } from "../vault/index.js";
+import { blockReason, blockSummary, replyHint } from "./brief.js";
 import { CliError, EXIT_BLOCKED, EXIT_ERROR, EXIT_OK, nowHms, onBrokenPipe, requireConfig, sleep } from "./common.js";
 import { clearSession, defaultFakeScript, detectSessionId, fakePlan, flavorOf, loadSession, realPlan, saveSession, sandboxNotice, } from "./drivers.js";
+import { gateStep } from "./hooks.js";
 import { kickoffInput } from "./kickoff.js";
 import { loadLauncherConfig } from "./launcher-config.js";
 import { missingCommands, platformProblem } from "./preflight.js";
@@ -31,6 +36,19 @@ import { branchPrefixClash, ensureWorktrees, hasCommits, isGitRepo, missingFromW
 const FAST_FAIL_MS = 5_000;
 /** How long after a PM exits its own MCP server may still hold the agent's lease; only a holder seen after this is another session. */
 const OWN_SERVER_EXIT_MS = 2_000;
+/** A parked PM starts once, using no restart, when no message lands this long after its parking: twice the wait_for_reply cap, which bounds the plan CHALLENGE window. */
+const PARK_RELAUNCH_MS = 2 * MAX_WAIT_MS;
+/** Test hook, read by this process only: PARK_RELAUNCH_MS in ms. */
+const PARK_RELAUNCH_ENV = "DIARCHY_PARK_RELAUNCH_MS";
+function parkRelaunchMs() {
+    const override = Number(process.env[PARK_RELAUNCH_ENV]);
+    return Number.isInteger(override) && override > 0 ? override : PARK_RELAUNCH_MS;
+}
+/** Whether a DONE from `agent` would pass 9.2 now, by the engine's own check; no message brings that duty. */
+function doneDue(state, agent) {
+    const draft = { protocol_version: 1, id: "", goal: state.goal, from: agent, to: "all", type: "DONE", re: Object.keys(state.acs), phase: state.phase, ts: "", body: "" };
+    return doneMissing(draft, state).length === 0;
+}
 /** How a lease holder is named in the log; a fresh lease whose owner file cannot be read yet has no pid. */
 function pidLabel(pid) {
     return pid > 0 ? `pid ${pid}` : "pid unknown";
@@ -193,6 +211,7 @@ class Supervisor {
     /** Resolves on the first stop request (a signal or closed output), which cuts the wall-clock grace short. */
     stopRequested;
     requestStop = () => undefined;
+    parkRelaunchMs = parkRelaunchMs();
     constructor(input) {
         this.input = input;
         this.stopRequested = new Promise((resolve) => {
@@ -239,7 +258,7 @@ class Supervisor {
             const exited = new Promise((resolve) => {
                 markExited = resolve;
             });
-            child = { agent, proc: null, plan: null, spawnedAt: 0, exitedAt: 0, restarts: 0, timer: null, dead: false, parked: false, waitingOn: null, exited, markExited };
+            child = { agent, proc: null, plan: null, spawnedAt: 0, exitedAt: 0, restarts: 0, timer: null, dead: false, parked: false, relaunched: false, waitingOn: null, exited, markExited };
             this.children.set(agent, child);
         }
         return child;
@@ -298,6 +317,8 @@ class Supervisor {
             return;
         child.waitingOn = holder.pid;
         this.log(`${child.agent} waiting: another session (${pidLabel(holder.pid)}) acts as ${child.agent} on this goal; ${child.agent} starts once it exits`);
+        if (![...this.children.values()].some((entry) => this.running(entry)))
+            this.wakeParked();
     }
     spawnChild(child) {
         child.waitingOn = null;
@@ -391,26 +412,14 @@ class Supervisor {
         }
         if (this.stopping)
             return;
-        const others = [...this.children.values()].filter((entry) => entry !== child);
-        const othersActive = others.some((entry) => entry.proc !== null || entry.waitingOn !== null || (entry.timer !== null && !entry.dead));
-        if (code === 0 && signal === null && othersActive && !this.owes(child.agent)) {
-            child.parked = true;
-            child.dead = true;
-            this.log(`${child.agent} idle: ended its turn with nothing owed; starts again when a message lands (no restart used)`);
+        const othersRunning = [...this.children.values()].some((entry) => entry !== child && this.running(entry));
+        if (code === 0 && signal === null && othersRunning && this.idle(child.agent)) {
+            this.park(child);
             return;
         }
-        if (!othersActive) {
-            // Nobody is left to post the message a parked PM waits for (a lead waiting out a silent CHALLENGE window, say).
-            // Bounded: each wake follows an exit that is restarted and counted below.
-            for (const entry of others) {
-                if (!entry.parked)
-                    continue;
-                entry.parked = false;
-                entry.dead = false;
-                this.log(`${entry.agent} starting again: no PM is running`);
-                this.launch(entry);
-            }
-        }
+        // Bounded: each wake follows an exit that is restarted and counted below.
+        if (!othersRunning)
+            this.wakeParked();
         const { max_restarts, restart_backoff_ms } = this.input.launcher.launcher;
         if (child.restarts >= max_restarts) {
             child.dead = true;
@@ -449,18 +458,59 @@ class Supervisor {
             child.restarts = Math.max(0, child.restarts - 1);
         this.waitFor(child, holder);
     }
-    /** Whether `agent` owes the goal something now, as the Stop gate judges it; true when the state cannot be read. */
-    owes(agent) {
+    /** Running, or about to be spawned again; a PM waiting on another session is not running. */
+    running(child) {
+        return child.proc !== null || (child.timer !== null && !child.dead);
+    }
+    /**
+     * Whether `agent` may be parked: the Stop gate lets its turn end, and its
+     * next duty is not one no message brings (the lead's DECIDE once the plan
+     * CHALLENGE window times out, or a DONE that would pass 9.2). False when
+     * the state cannot be read.
+     */
+    idle(agent) {
         try {
             const { human, goal } = this.input;
             const state = human.state();
             if (state === null || state.goal !== goal.goalId)
-                return true;
-            const messages = human.listMessages(() => undefined);
-            return nextStep(state, messages, agent, unreadFor(goal, messages, agent)).owes;
+                return false;
+            const { step } = gateStep(human, goal, state, agent);
+            return !step.owes && step.dueOnTimeout !== true && !doneDue(state, agent);
         }
         catch {
-            return true;
+            return false;
+        }
+    }
+    /** Leave `child` dead, using no restart, until a message lands or no PM is left running; once between two messages, start it again after the park deadline. */
+    park(child) {
+        child.parked = true;
+        child.dead = true;
+        this.log(`${child.agent} idle: ended its turn with nothing owed; starts again when a message lands (no restart used)`);
+        if (child.relaunched)
+            return;
+        child.timer = setTimeout(() => {
+            child.timer = null;
+            if (this.stopping || !child.parked)
+                return;
+            child.parked = false;
+            child.dead = false;
+            child.relaunched = true;
+            this.log(`${child.agent} starting again: no message in ${this.parkRelaunchMs / 1000} s since it was parked (no restart used)`);
+            this.launch(child);
+        }, this.parkRelaunchMs);
+    }
+    /** Start every parked PM again: no PM is left running to post the message it waits for. */
+    wakeParked() {
+        for (const entry of this.children.values()) {
+            if (!entry.parked)
+                continue;
+            entry.parked = false;
+            entry.dead = false;
+            if (entry.timer !== null)
+                clearTimeout(entry.timer);
+            entry.timer = null;
+            this.log(`${entry.agent} starting again: no PM is running`);
+            this.launch(entry);
         }
     }
     /** Leave `child` dead until a message lands, and end the run once no agent is left. */
@@ -527,9 +577,12 @@ class Supervisor {
         const count = state.messages.length;
         const landed = count !== this.lastCount;
         if (state.phase !== this.lastPhase || landed) {
-            if (count !== this.lastCount)
-                for (const child of this.children.values())
+            if (count !== this.lastCount) {
+                for (const child of this.children.values()) {
                     child.restarts = 0;
+                    child.relaunched = false;
+                }
+            }
             const last = state.messages[state.messages.length - 1];
             const tail = last === undefined ? "" : ` · last ${last.from} ${last.type}${last.decision_id === null ? "" : ` ${last.decision_id}`}`;
             this.log(`${state.phase} · ${count} message${count === 1 ? "" : "s"}${tail}`);

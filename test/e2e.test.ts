@@ -14,7 +14,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
-import { nextStep } from "../src/cli/brief.js";
+import { nextStep, type NextStep } from "../src/cli/brief.js";
 import { resolveProjectDir } from "../src/cli/common.js";
 import { heldByAnotherSession, humanCommand, isLaunchWrapper, type ProcessProbe } from "../src/cli/hooks.js";
 import { branchPrefixClash, missingFromWorktrees } from "../src/cli/worktrees.js";
@@ -1905,7 +1905,7 @@ describe("brief and Stop gate guidance", () => {
   }
 
   /** The step `agent` reads in its brief with nothing unread. */
-  function step(dir: string, agent: string): { text: string; owes: boolean } {
+  function step(dir: string, agent: string): NextStep {
     const store = human(dir);
     const state = store.state();
     if (state === null) throw new Error("no goal");
@@ -2092,11 +2092,11 @@ describe("brief and Stop gate guidance", () => {
     expect(await gateReason(dir, "claude")).toContain("decide D1 first (call decide with decision_id D1), then plan");
     const decide: MessageDraft = { type: "DECIDE", to: "all", re: ["AC2"], basis: "authority", body: "No CHALLENGE came." };
     posted(await claude.post({ ...decide, decision_id: "D1", claim: "The default limit is 100 per minute." }));
-    expect(step(dir, "claude")).toEqual({ text: `${window} call decide with decision_id plan (basis authority, body: no CHALLENGE came)`, owes: false });
+    expect(step(dir, "claude")).toEqual({ text: `${window} call decide with decision_id plan (basis authority, body: no CHALLENGE came)`, owes: false, dueOnTimeout: true });
 
     // The lead's own PROPOSE: the challenger may still CHALLENGE it, so the lead waits instead of deciding at once.
     posted(await claude.post({ type: "PROPOSE", to: "all", re: ["AC2"], claim: "RATE_LIMIT_PER_MIN is read once at startup.", body: "No hot reload." }));
-    expect(step(dir, "claude")).toEqual({ text: `${window} decide D2 first (call decide with decision_id D2), then plan`, owes: false });
+    expect(step(dir, "claude")).toEqual({ text: `${window} decide D2 first (call decide with decision_id D2), then plan`, owes: false, dueOnTimeout: true });
     claude.read();
     expect(await gateReason(dir, "claude")).toBe("");
     posted(await codex.post({ type: "STATUS", to: "all", re: ["AC2"], evidence: [{ kind: "file", path: "notes/config.md" }], body: "Config notes in notes/config.md." }));

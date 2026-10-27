@@ -1,5 +1,16 @@
-import { type LockOwner } from "../vault/index.js";
+import { type GoalState, type Message } from "../protocol/index.js";
+import { type GoalRef, type LockOwner, type VaultStore } from "../vault/index.js";
+import { type NextStep } from "./brief.js";
 export declare const GATE_CAP = 12;
+/**
+ * The step the Stop gate acts on for `agent`, with the messages it read: in
+ * PLAN/EXECUTE a chat file that will not parse makes it the BLOCKED that
+ * brings the human, else it is `nextStep`. The supervisor parks a PM by it.
+ */
+export declare function gateStep(store: VaultStore, goal: GoalRef, state: GoalState, agent: string): {
+    step: NextStep;
+    messages: Message[];
+};
 export declare function runInboxSkim(projectDir: string, agent: string): string[];
 /** One record per session, so blocks of one session never use up another's GATE_CAP. */
 export declare function gateRecordPath(projectDir: string, agent: string, session?: string | null): string;

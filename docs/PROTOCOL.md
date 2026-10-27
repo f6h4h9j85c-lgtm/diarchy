@@ -409,7 +409,7 @@ This is the file `diarchy init` writes, with `<project>` standing for the projec
 `launcher` tunes the `diarchy start` supervisor; a missing key takes the default shown above.
 
 - `poll_ms`: how often the supervisor re-reads `budget.json`, in ms, at most 1000.
-- `max_restarts`: restarts per agent between two messages. Past it the agent stays dead until the next message lands, which respawns it with a fresh count. A PM that exits with code 0 while it owes nothing (as the Stop gate judges it) and the other PM is running uses no restart and is not relaunched; it starts again when a message lands, or once no PM is left running.
+- `max_restarts`: restarts per agent between two messages. Past it the agent stays dead until the next message lands, which respawns it with a fresh count. A PM that exits with code 0 while it owes nothing (as the Stop gate judges it) and the other PM is running is parked: it uses no restart and starts again when a message lands, once no PM is left running (a PM waiting on another session's lease is not running), or, once between two messages, when none lands within 220 s (twice the `wait_for_reply` cap) of its parking. The lead is never parked while its next duty is one no message brings, its DECIDE once the plan CHALLENGE window times out or a DONE that would pass 9.2: that exit is restarted and counted like any other.
 - `restart_backoff_ms`: the wait before each restart.
 - `stop_grace_ms`: after DONE or a block other than WALL_CLOCK, how long the PMs get to exit on their own before SIGTERM, and again before SIGKILL.
 - `wall_clock_grace_ms`: after a WALL_CLOCK block, how long the CLIs may run on before SIGKILL.

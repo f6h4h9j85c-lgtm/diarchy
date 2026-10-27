@@ -63,6 +63,8 @@ export interface NextStep {
     text: string;
     /** True when the agent owes the goal something now (the Stop gate blocks on this). */
     owes: boolean;
+    /** True when the step falls due once wait_for_reply times out with no message (the lead in the plan CHALLENGE window), so no message brings it. */
+    dueOnTimeout?: boolean;
 }
 /** The imperative next step for `agent`, in priority order. */
 export declare function nextStep(state: GoalState, messages: Message[], agent: AgentId, unread: Message[]): NextStep;

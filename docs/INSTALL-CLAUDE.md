@@ -80,10 +80,11 @@ after editing `src/`, run `npm run build` (see CONTRIBUTING.md).
    `node <plugin root>/bin/diarchy.js doctor` without a global install). Its
    `claude` checks confirm the version, every launch flag in
    `agents.claude.args`, the login, that `diarchy@diarchy` is enabled, that
-   `claude mcp list` shows `plugin:diarchy:diarchy` connected, that the
-   plugin's server answers `read` for a throwaway goal, that its guard hook
-   denies `diarchy reply`, and that `disableAllHooks` is off, with no model
-   call; each problem gets a `fix:` line. `diarchy doctor --live` adds one real
+   `claude mcp list` shows `plugin:diarchy:diarchy` connected and the
+   `--allowedTools` list allows its tools, that the plugin's server answers
+   `read` for a throwaway goal, that its guard hook denies `diarchy reply`,
+   and that `disableAllHooks` is off, with no model call; each problem gets a
+   `fix:` line. `diarchy doctor --live` adds one real
    `claude -p` turn that only calls `read`, capped with `--max-budget-usd 0.25`
    when the installed `claude` lists that flag. With Codex set up too,
    `diarchy smoke` then runs both PMs on a small goal in a throwaway

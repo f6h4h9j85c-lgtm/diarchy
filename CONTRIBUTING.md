@@ -11,7 +11,7 @@ CI runs these on Node 20 and 22, plus the `dist/` check below. `npm test -- prot
 
 ## Diagnostics
 
-`diarchy doctor` checks a machine's setup without a model call, and `diarchy doctor --live` runs one short real turn per CLI; `test/doctor.test.ts` drives both against stub CLIs in `test/fixtures/doctor/`. To see what a real run does, create an empty `.diarchy/diag` in the project (or set `DIARCHY_DIAG=1`, which Codex does not pass to an MCP server): every MCP server start, hook run, and MCP tool result then appends a JSON line to `.diarchy/diag.log` saying which binary ran, how it found the project, and what it decided, never an environment value or the text of a command.
+`diarchy doctor` checks a machine's setup without a model call, and `diarchy doctor --live` runs one short real turn per CLI; `test/doctor.test.ts` drives both against stub CLIs in `test/fixtures/doctor/`. To see what a real run does, create an empty `.diarchy/diag` in the project (or set `DIARCHY_DIAG=1`, which Codex does not pass to an MCP server): every MCP server start, hook run, and MCP tool result then appends a JSON line to `.diarchy/diag.log` saying which binary ran, how it found the project, and what it decided, never an environment value or the text of a command. `DIARCHY_DIAG=0` keeps the trail off despite the marker. `diarchy doctor` sets it for `claude mcp list`, whose health check starts the server in the project, and runs its own MCP and hook probes in a throwaway project, so its checks stay out of the trail. `diarchy doctor --live` drops any `DIARCHY_DIAG` you exported from its turns, whose checks read the probe project's trail.
 
 ## Live smoke test
 
@@ -43,7 +43,7 @@ The bundle is `diarchy-smoke-<stamp>/` and `diarchy-smoke-<stamp>.tar.gz` in the
 
 Every file is redacted: the home directory becomes `~`, emails `[email]`, and tokens (`sk-`, `ghp_`, `xox`, `AKIA`, `Bearer`) keep only their prefix. A transcript can still quote your global CLAUDE.md or AGENTS.md; `--no-transcripts` leaves the transcripts out. Send back the `.tar.gz`.
 
-The throwaway project stays in the temp directory for a look (`--clean` deletes it), and each CLI keeps its own transcript of it as usual. `--no-ping` skips the live doctor turn. Codex has not been told to trust the temp project, so the subagents in `.codex/agents` may not load there. `--driver fake` runs the same pipeline with the scripted PM and no model calls; `test/smoke-runner.test.ts` runs it that way.
+The throwaway project stays in the temp directory for a look (`--clean` deletes it), and each CLI keeps its own transcript of it as usual. `--no-ping` skips the live doctor turn. Codex has not been told to trust the temp project, so the subagents in `.codex/agents` may not load there. `--driver fake` runs the same pipeline with the scripted PM and no model calls; `test/smoke-runner.test.ts` runs it that way, and runs `--driver real` only against `claude` and `codex` stubs that exit 127, with a temp `HOME`, so the doctor stops it before a goal exists.
 
 ## Built output
 

@@ -75,6 +75,13 @@ export declare function parseVersion(text: string): Version | null;
 export declare function atLeast(version: Version, minimum: string): boolean;
 /** Every `--flag` a help text names. */
 export declare function helpFlags(help: string): Set<string>;
+/**
+ * Whether launch args let a headless Claude call a server's tools: a rule
+ * naming the server (`<prefix>`) or its tools (`<prefix>__*`, `<prefix>__read`),
+ * or permissions bypassed altogether. A rule among the values of
+ * --disallowedTools, which runs to the next flag, allows nothing.
+ */
+export declare function allowsTools(args: readonly string[], prefix: string): boolean;
 export interface DoctorReport {
     version: string;
     platform: NodeJS.Platform;
@@ -94,6 +101,11 @@ export interface CodexTransport {
 }
 /** The fields of `codex mcp get <name> --json` the checks need; null when the shape is not recognised. */
 export declare function codexTransport(raw: unknown): CodexTransport | null;
+/**
+ * realPlan's env without any other DIARCHY_* variable the caller exported: a
+ * DIARCHY_DIAG=0 would turn off the probe project's trail the checks read.
+ */
+export declare function liveEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv;
 /** realPlan's args with the probe prompt in place of the PM prompt, and Claude's spend cap when its --help lists the flag. */
 export declare function liveArgs(flavor: string, planArgs: readonly string[], claudeFlags: Set<string> | null): string[];
 /** The fix for a failed live turn, from what the CLI printed. */

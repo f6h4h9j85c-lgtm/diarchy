@@ -1,8 +1,8 @@
 /**
  * The opt-in diagnostics trail (src/cli/diag.ts): `.diarchy/diag` or
- * DIARCHY_DIAG=1 turns it on, each hook run, MCP server start, and tool
- * result appends one JSON line to `.diarchy/diag.log`, and nothing is
- * written without the switch. The CLI runs from source, as in e2e.test.ts.
+ * DIARCHY_DIAG=1 turns it on, DIARCHY_DIAG=0 keeps it off despite the marker,
+ * each hook run, MCP server start, and tool result appends one JSON line to
+ * `.diarchy/diag.log`, and nothing is written without the switch. The CLI runs from source, as in e2e.test.ts.
  */
 import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
@@ -118,6 +118,16 @@ describe("diag(): the switch, the size cap, never throwing", () => {
     const [line] = trail(dir);
     expect(line).toMatchObject({ event: "hook.stop", agent: "codex", project: dir, project_source: "option", version: VERSION, decision: "allow", pid: process.pid });
     expect(typeof line.node).toBe("string");
+  });
+
+  it("DIARCHY_DIAG=0 keeps the trail off even with the marker", async () => {
+    vi.stubEnv("DIARCHY_DIAG", "0");
+    const dir = await project(true);
+    diag({ dir, source: "cwd" }, "claude", "mcp.start");
+    expect(existsSync(join(dir, DIAG_LOG))).toBe(false);
+    vi.stubEnv("DIARCHY_DIAG", "");
+    diag({ dir, source: "cwd" }, "claude", "mcp.start");
+    expect(trail(dir)).toHaveLength(1);
   });
 
   it("cuts a line over 2 KB down to who and what, and never throws on an unwritable project", async () => {

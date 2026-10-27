@@ -6,6 +6,9 @@
  * marker is the switch that always works: every process resolves the project
  * anyway, and Codex starts an MCP server without the caller's environment
  * (only a fixed allowlist plus `env_vars`), so a variable would never reach it.
+ * `DIARCHY_DIAG=0` keeps it off despite the marker: doctor sets it for
+ * `claude mcp list`, whose health check starts the server in the project,
+ * and drops it from its live turns, which need the probe project's trail.
  *
  * A line names the process (pid, parent, the bin it ran, Node), the agent, the
  * project and how it was found, and whether DIARCHY_PROJECT and DIARCHY_AGENT
@@ -35,7 +38,8 @@ export interface DiagWhere {
 
 export function diagEnabled(projectDir: string): boolean {
   try {
-    return process.env.DIARCHY_DIAG === "1" || existsSync(join(projectDir, DIAG_MARKER));
+    const flag = process.env.DIARCHY_DIAG;
+    return flag !== "0" && (flag === "1" || existsSync(join(projectDir, DIAG_MARKER)));
   } catch {
     return false;
   }

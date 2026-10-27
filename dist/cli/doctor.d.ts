@@ -75,6 +75,12 @@ export declare function parseVersion(text: string): Version | null;
 export declare function atLeast(version: Version, minimum: string): boolean;
 /** Every `--flag` a help text names. */
 export declare function helpFlags(help: string): Set<string>;
+/**
+ * Whether launch args let a headless Claude call a server's tools: a rule
+ * naming the server (`<prefix>`) or its tools (`<prefix>__*`, `<prefix>__read`),
+ * or permissions bypassed altogether.
+ */
+export declare function allowsTools(args: readonly string[], prefix: string): boolean;
 export interface DoctorReport {
     version: string;
     platform: NodeJS.Platform;

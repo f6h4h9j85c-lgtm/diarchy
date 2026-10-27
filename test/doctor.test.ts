@@ -13,10 +13,11 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
-import { DIAG_LOG } from "../src/cli/diag.js";
+import { DIAG_LOG, DIAG_MARKER } from "../src/cli/diag.js";
 import {
   CLAUDE_SPEND_CAP_USD,
   PROBE_PROMPT,
+  allowsTools,
   atLeast,
   codexTransport,
   doctorReport,
@@ -31,6 +32,9 @@ import {
   type Check,
   type DoctorDeps,
   type DoctorReport,
+  type McpProber,
+  type RunResult,
+  type Runner,
 } from "../src/cli/doctor.js";
 import { realPlan } from "../src/cli/drivers.js";
 import { runInit } from "../src/cli/init.js";
@@ -69,9 +73,15 @@ interface Answer {
   stdout?: string;
   stderr?: string;
   code?: number;
+  /** A file the stub creates before answering, and a pause before it answers. */
+  touch?: string;
+  sleepMs?: number;
 }
 
 interface Variant {
+  /** Answers that replace the default ones, by the args joined with a space. */
+  claude?: Record<string, Answer>;
+  codex?: Record<string, Answer>;
   claudePlugin?: Record<string, unknown>;
   codexExecHelp?: string;
   codexTransport?: Record<string, unknown>;
@@ -128,6 +138,7 @@ function writeStub(variant: Variant = {}): void {
       "auth status --json": answer(JSON.stringify({ loggedIn: true, authMethod: "oauth_token", projectsDirectory })),
       "plugin list --json": answer(JSON.stringify([{ id: "diarchy@diarchy", version: VERSION, scope: "user", enabled: true, installPath: ROOT, ...variant.claudePlugin }])),
       "mcp list": answer(`Checking MCP server health…\n\nplugin:diarchy:diarchy: node ${ROOT}bin/diarchy.js mcp --agent claude - ✓ Connected\n`),
+      ...variant.claude,
     },
     codex: {
       "--version": answer("codex-cli 0.170.0\n"),
@@ -145,6 +156,7 @@ function writeStub(variant: Variant = {}): void {
           ...variant.codexServer,
         }),
       ),
+      ...variant.codex,
     },
     live: { prompt: PROBE_PROMPT, record, projectsDirectory, diarchy: [process.execPath, "--import", TSX, CLI], ...variant.live },
   };
@@ -153,6 +165,34 @@ function writeStub(variant: Variant = {}): void {
 
 function deps(): DoctorDeps {
   return { run: spawnRunner, probeMcp: sdkProber, env, platform: "linux", nodeVersion: process.versions.node, home: world };
+}
+
+/** For checks that do not need the MCP probes: answers at once, without starting a server. */
+const noProbe: McpProber = () => Promise.resolve({ connected: false, version: null, tools: [], goal: null, rule: null, error: "not probed in this test" });
+
+interface Call {
+  command: string;
+  args: string[];
+  cwd: string | undefined;
+  env: NodeJS.ProcessEnv | undefined;
+}
+
+/** spawnRunner, recording each call in `calls`; `answer` may stand in for a call by returning a result. */
+function recording(calls: Call[], answer: (command: string, args: readonly string[]) => RunResult | null = () => null): Runner {
+  return (command, args, options) => {
+    calls.push({ command, args: [...args], cwd: options?.cwd, env: options?.env });
+    return answer(command, args) ?? spawnRunner(command, args, options);
+  };
+}
+
+/** Replace the `--allowedTools` value of a project's Claude launch. */
+function setAllowedTools(dir: string, rule: string): void {
+  const path = join(dir, "diarchy.config.json");
+  const config = JSON.parse(readFileSync(path, "utf8")) as { agents: Record<string, { args: string[] }> };
+  const args = DEFAULT_AGENT_LAUNCH.claude.args;
+  const at = args.indexOf("--allowedTools") + 1;
+  config.agents.claude.args = args.map((arg, i) => (i === at ? rule : arg));
+  writeFileSync(path, `${JSON.stringify(config, null, 2)}\n`);
 }
 
 const byId = (report: DoctorReport, id: string): Check => {
@@ -199,9 +239,12 @@ beforeAll(() => {
 
 describe("diarchy doctor (offline)", () => {
   it(
-    "all good: exits 0 with every check ok, and both MCP probes read the probe goal",
+    "all good: exits 0 with every check ok, both MCP probes read the probe goal, and the project's diagnostics trail gets no line",
     async () => {
       writeStub();
+      // The trail is on in the project: every probe, the guard hooks included, must run in the probe project instead.
+      mkdirSync(join(good, ".diarchy"), { recursive: true });
+      writeFileSync(join(good, DIAG_MARKER), "");
       const run = await new Promise<{ code: number; stdout: string; stderr: string }>((resolve, reject) => {
         const child = spawn(process.execPath, ["--import", TSX, CLI, "doctor", "--json", "--project", good], { cwd: world, env, stdio: ["ignore", "pipe", "pipe"] });
         let stdout = "";
@@ -211,6 +254,8 @@ describe("diarchy doctor (offline)", () => {
         child.on("error", reject);
         child.on("close", (code) => resolve({ code: code ?? -1, stdout, stderr }));
       });
+      const trailed = existsSync(join(good, DIAG_LOG));
+      for (const file of [DIAG_MARKER, DIAG_LOG]) rmSync(join(good, file), { force: true });
       const report = JSON.parse(run.stdout) as DoctorReport;
       const problems = report.checks.filter((check) => check.status !== "ok");
       expect(problems, run.stderr).toEqual([]);
@@ -220,6 +265,7 @@ describe("diarchy doctor (offline)", () => {
       for (const id of ["C6", "X6"]) expect(byId(report, id).summary.split(" ").at(-1)).toMatch(PROBE_GOAL);
       expect(byId(report, "C7").summary).toContain("denies diarchy reply");
       expect(byId(report, "X7").summary).toContain(join("plugins", "cache"));
+      expect(trailed).toBe(false);
     },
     DOCTOR_TIMEOUT,
   );
@@ -269,6 +315,111 @@ describe("diarchy doctor (offline)", () => {
       const text = formatReport(report);
       expect(text).toMatch(/^ {2}fail {2}X5 {8}env_vars does not name DIARCHY_PROJECT/m);
       expect(text).toMatch(/^ {18}fix: add env_vars = \["DIARCHY_PROJECT"\]/m);
+    },
+    DOCTOR_TIMEOUT,
+  );
+
+  it(
+    "C5 fails a connected plugin server whose tools the launch flags do not allow, and keeps claude mcp list out of the project's trail",
+    async () => {
+      writeStub();
+      const dir = makeProject("allowed-tools", true);
+      const calls: Call[] = [];
+      const c5 = async (): Promise<Check> => byId(await doctorReport(dir, {}, { ...deps(), run: recording(calls), probeMcp: noProbe }), "C5");
+      const fix = "add mcp__plugin_diarchy_diarchy__* to --allowedTools in agents.claude.args";
+      setAllowedTools(dir, "Bash(git *),Bash(make *)");
+      expect(await c5()).toMatchObject({ status: "fail", fix });
+      // The rule INSTALL-CLAUDE.md gives for a server added with claude mcp add does not cover the plugin's.
+      setAllowedTools(dir, "mcp__diarchy__*,Bash(git *)");
+      expect(await c5()).toMatchObject({ status: "fail", fix });
+      // Two servers: following the fix must not leave a list without the plugin's rule.
+      writeStub({ claude: { "mcp list": { stdout: `plugin:diarchy:diarchy: node ${ROOT}bin/diarchy.js mcp --agent claude - ✓ Connected\ndiarchy: diarchy mcp --agent claude - ✓ Connected\n` } } });
+      expect(await c5()).toMatchObject({ status: "warn", fix: `claude mcp remove diarchy (keep the plugin's), then ${fix}` });
+      // The health check starts the server in the project, so the doctor turns the trail off for it.
+      const listed = calls.filter((call) => call.args.join(" ") === "mcp list");
+      expect(listed.map((call) => call.env?.DIARCHY_DIAG)).toEqual(["0", "0", "0"]);
+    },
+    DOCTOR_TIMEOUT,
+  );
+
+  it(
+    "fails a --project that does not exist and runs no git for it in this process's cwd",
+    async () => {
+      writeStub();
+      const missing = join(world, "no-such-project");
+      const calls: Call[] = [];
+      const report = await doctorReport(missing, {}, { ...deps(), run: recording(calls), probeMcp: noProbe });
+      expect(byId(report, "P0")).toMatchObject({ group: "project", status: "fail", summary: `${missing} does not exist`, fix: "pass --project <existing dir>" });
+      for (const id of ["P2", "P4", "P5"]) expect(byId(report, id).status, id).toBe("skip");
+      expect(calls.filter((call) => call.command === "git" && call.args[0] !== "--version")).toEqual([]);
+    },
+    DOCTOR_TIMEOUT,
+  );
+
+  it(
+    "puts a fix line under every warn and fail, for unreadable CLI output and a temp directory it cannot use too",
+    async () => {
+      writeStub({
+        claude: {
+          "--version": { stdout: "Claude Code\n" },
+          "--help": { code: 2, stderr: "no help here" },
+          "auth status --json": { stdout: "not json" },
+          "plugin list --json": { stdout: "not json" },
+          "mcp list": { code: 3 },
+        },
+        codex: {
+          "exec --help": { code: 2, stderr: "no help here" },
+          "plugin list --json": { stdout: "not json" },
+          "mcp get diarchy --json": { stdout: JSON.stringify({ transport: { type: "streamable_http", url: "http://localhost:1" } }) },
+        },
+      });
+      const lsTreeFails = recording([], (command, args) => (command === "git" && args.includes("ls-tree") ? { code: 128, stdout: "", stderr: "fatal: stub", error: null } : null));
+      const unreadable = await doctorReport(good, {}, { ...deps(), run: lsTreeFails, probeMcp: noProbe });
+      writeStub();
+      vi.stubEnv("TMPDIR", join(world, "no-such-tmp"));
+      const noTemp = await doctorReport(good, {}, { ...deps(), probeMcp: noProbe });
+      vi.unstubAllEnvs();
+
+      const warned = (report: DoctorReport): string[] => report.checks.filter((check) => check.status === "warn").map((check) => check.id);
+      expect(warned(unreadable)).toEqual(expect.arrayContaining(["P4", "C1", "C2", "C3", "C4", "C5", "X2", "X4", "X5"]));
+      expect(warned(noTemp)).toEqual(expect.arrayContaining(["C6", "C7", "X6", "X7"]));
+      const unfixed = [...unreadable.checks, ...noTemp.checks].filter((check) => (check.status === "warn" || check.status === "fail") && (check.fix ?? "").trim() === "");
+      expect(unfixed).toEqual([]);
+      expect(byId(unreadable, "C5").fix).toBe(`run ${join(bin, "claude")} mcp list by hand and read its output; claude update if its format changed`);
+      expect(byId(noTemp, "X7").fix).toContain("temp directory");
+      expect(formatReport(unreadable)).toMatch(/^ {2}warn {2}C3 .*\n {18}fix: run .* auth status --json by hand/m);
+    },
+    DOCTOR_TIMEOUT,
+  );
+
+  it(
+    "deletes its probe project when a signal stops it mid-run",
+    async () => {
+      const tmp = join(world, "tmp-signal");
+      mkdirSync(tmp);
+      const sleeping = join(world, "codex-version-sleeping");
+      // codex --version runs after the claude probes made the probe project; it pauses there.
+      writeStub({ codex: { "--version": { stdout: "codex-cli 0.170.0\n", touch: sleeping, sleepMs: 3_000 } } });
+      const probes = (): string[] => readdirSync(tmp).filter((name) => name.startsWith("diarchy-doctor-"));
+      const child = spawn(process.execPath, ["--import", TSX, CLI, "doctor", "--json", "--project", good], { cwd: world, env: { ...env, TMPDIR: tmp }, stdio: "ignore" });
+      const closed = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolve, reject) => {
+        child.on("error", reject);
+        child.on("close", (code, signal) => resolve({ code, signal }));
+      });
+      try {
+        await vi.waitFor(
+          () => {
+            if (!existsSync(sleeping)) throw new Error("the doctor has not reached codex --version yet");
+          },
+          { timeout: DOCTOR_TIMEOUT - 30_000, interval: 100 },
+        );
+        expect(probes()).toHaveLength(1);
+        child.kill("SIGTERM");
+        expect(await closed).toEqual({ code: 143, signal: null });
+        expect(probes()).toEqual([]);
+      } finally {
+        child.kill("SIGKILL");
+      }
     },
     DOCTOR_TIMEOUT,
   );
@@ -366,6 +517,22 @@ describe("doctor helpers", () => {
     expect(flat).toMatchObject({ enabled: true, type: "stdio", envVars: ["DIARCHY_PROJECT"], toolTimeoutSec: 1800, startupTimeoutSec: null, cwd: null });
     expect(codexTransport({ transport: { type: "streamable_http", url: "x" } })).toBeNull();
     expect(codexTransport("not json")).toBeNull();
+  });
+
+  it("allowsTools: an --allowedTools rule for the server or its tools, or permissions bypassed", () => {
+    const plugin = "mcp__plugin_diarchy_diarchy";
+    // What diarchy init writes passes.
+    expect(allowsTools(DEFAULT_AGENT_LAUNCH.claude.args, plugin)).toBe(true);
+    expect(allowsTools(DEFAULT_AGENT_LAUNCH.claude.args, "mcp__diarchy")).toBe(false);
+    expect(allowsTools(["--allowedTools", "Bash(git *),mcp__plugin_diarchy_diarchy"], plugin)).toBe(true);
+    expect(allowsTools(["--allowedTools", "mcp__plugin_diarchy_diarchy__read"], plugin)).toBe(true);
+    expect(allowsTools(["--allowedTools", "mcp__diarchy__*,Bash(git *)"], plugin)).toBe(false);
+    expect(allowsTools(["--allowedTools", "mcp__diarchy__*,Bash(git *)"], "mcp__diarchy")).toBe(true);
+    expect(allowsTools(["--allowedTools", "mcp__plugin_diarchy_diarchy_extra"], plugin)).toBe(false);
+    expect(allowsTools(["-p", "--dangerously-skip-permissions"], plugin)).toBe(true);
+    expect(allowsTools(["--permission-mode", "bypassPermissions"], plugin)).toBe(true);
+    expect(allowsTools(["--permission-mode=bypassPermissions"], plugin)).toBe(true);
+    expect(allowsTools(["--permission-mode", "acceptEdits", "--allowedTools", "Bash(git *)"], plugin)).toBe(false);
   });
 
   it("the setup docs and init's next steps point at diarchy doctor, with the spend cap the code passes", () => {

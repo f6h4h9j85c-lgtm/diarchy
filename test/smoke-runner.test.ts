@@ -1,9 +1,13 @@
 /**
  * `diarchy smoke` end to end with `--driver fake` (no model calls), run from
- * source as a subprocess with a PATH that holds node, git, and tar but no
- * claude or codex, plus a stub `gh` and a local bare repository for --github.
- * The helpers (redaction, transcript discovery, the verdict) are tested
- * directly.
+ * source as a subprocess with a PATH that holds node, git, and tar, `claude`
+ * and `codex` stubs that exit 127 ahead of any installed CLI (stand-ins for
+ * one sit further down PATH and must never run), a stub `gh`, and
+ * a local bare repository for --github. HOME, CLAUDE_CONFIG_DIR, and
+ * CODEX_HOME point at an empty temp home, so no run reads the caller's CLI
+ * config. `--driver real` runs only against the failing stubs, so the doctor
+ * stops it before a goal exists and no model is ever called. The helpers
+ * (redaction, transcript discovery, the verdict) are tested directly.
  */
 import { spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
@@ -13,6 +17,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
+import { DIAG_MARKER } from "../src/cli/diag.js";
 import { runInit } from "../src/cli/init.js";
 import { findTranscripts, redact, supervisorEvents, verdictOf, type SmokeSummary } from "../src/cli/smoke.js";
 
@@ -30,6 +35,8 @@ interface Run {
 let world = "";
 let bin = "";
 let path = "";
+let home = "";
+let ran = "";
 const temps: string[] = [];
 
 beforeAll(() => {
@@ -54,19 +61,28 @@ beforeAll(() => {
     ].join("\n"),
     { mode: 0o755 },
   );
-  // No claude, no codex: node from the symlink, git and tar from the system.
-  path = [bin, "/usr/bin", "/bin"].join(":");
+  // claude and codex fail whatever the machine has installed: bin comes first on PATH, so --driver real can never reach a model.
+  for (const cli of ["claude", "codex"]) writeFileSync(join(bin, cli), '#!/bin/sh\necho "not installed (smoke-runner test stub)" >&2\nexit 127\n', { mode: 0o755 });
+  // Stand-ins for CLIs installed further down PATH (say in /usr/bin): each run leaves a file in `ran`, and none may run.
+  const installed = join(world, "installed");
+  ran = join(world, "installed-ran");
+  for (const dir of [installed, ran]) mkdirSync(dir);
+  for (const cli of ["claude", "codex"]) writeFileSync(join(installed, cli), `#!/bin/sh\n: > "${join(ran, cli)}"\necho "9.9.9"\n`, { mode: 0o755 });
+  // node from the symlink, git and tar from the system.
+  path = [bin, installed, "/usr/bin", "/bin"].join(":");
+  home = join(world, "home");
+  mkdirSync(home);
 });
 
 afterAll(() => {
   for (const dir of temps.splice(0)) rmSync(dir, { recursive: true, force: true });
 });
 
-/** `diarchy smoke <args>` from source with no DIARCHY_* variable but those in `env`. */
+/** `diarchy smoke <args>` from source with no DIARCHY_* variable but those in `env`, and the temp home. */
 function smoke(args: string[], env: Record<string, string> = {}): Promise<Run> {
   return new Promise((resolve, reject) => {
     const full: NodeJS.ProcessEnv = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith("DIARCHY_")));
-    Object.assign(full, { PATH: path }, env);
+    Object.assign(full, { PATH: path, HOME: home, CLAUDE_CONFIG_DIR: join(home, ".claude"), CODEX_HOME: join(home, ".codex") }, env);
     const child = spawn(process.execPath, ["--import", TSX, CLI, "smoke", ...args], { cwd: world, env: full, stdio: ["ignore", "pipe", "pipe"] });
     let stdout = "";
     let stderr = "";
@@ -115,6 +131,10 @@ describe("diarchy smoke --driver fake", () => {
       const bundle = bundleIn(out);
       expect(existsSync(`${bundle}.tar.gz`)).toBe(true);
       const summary = summaryOf(bundle);
+      // The trail was on for the run, and the fake PMs start no MCP server and run no hook, so no line may be there: one would predate the first start spawn.
+      expect(existsSync(join(summary.project, DIAG_MARKER))).toBe(true);
+      expect(existsSync(join(bundle, "runtime", "diag.log"))).toBe(false);
+      for (const agent of ["claude", "codex"]) expect(summary.agents[agent].trail).toMatchObject({ mcp_start: 0, guard_denies: 0, session_start: 0, stop: 0 });
       cleanUp(summary);
       expect(summary).toMatchObject({ verdict: "DONE", exit_code: 0, phase: "DONE", mode: "local", levels: { L1: true, L2: true, L3: true }, transcripts: null });
       for (const agent of ["claude", "codex"]) expect(summary.agents[agent].posted).toBeGreaterThanOrEqual(1);
@@ -209,10 +229,16 @@ describe("diarchy smoke --driver real", () => {
       expect(run.code).toBe(1);
       const bundle = bundleIn(out);
       const summary = summaryOf(bundle);
+      // The diagnostics marker comes just before kickoff, after the doctor, so its checks never reach the trail.
+      expect(existsSync(join(summary.project, "diarchy.config.json"))).toBe(true);
+      expect(existsSync(join(summary.project, DIAG_MARKER))).toBe(false);
       cleanUp(summary);
       expect(summary).toMatchObject({ verdict: "aborted", aborted: { step: "doctor" }, goal: null, doctor: { gated: true } });
       expect(summary.doctor.fail).toEqual(expect.arrayContaining(["C1", "X1"]));
-      expect(json<{ checks: unknown[] }>(bundle, "doctor.json").checks.length).toBeGreaterThan(0);
+      const checks = json<{ checks: { id: string; summary: string }[] }>(bundle, "doctor.json").checks;
+      // The failing stubs ran, not a missing CLI and not an installed one: they win on PATH.
+      for (const id of ["C1", "X1"]) expect(checks.find((check) => check.id === id)?.summary, id).toMatch(/^(claude|codex) exited 127: not installed \(smoke-runner test stub\)$/);
+      expect(readdirSync(ran)).toEqual([]);
       expect(existsSync(join(bundle, "kickoff.json"))).toBe(false);
       expect(json<{ goal: string | null }>(bundle, "status.json").goal).toBeNull();
     },

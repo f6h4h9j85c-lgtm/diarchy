@@ -4,30 +4,33 @@
  *
  * Each check is ok, warn, fail, or skip, with a fix line under a warn or a
  * fail; any fail exits 1. Groups: env (platform, Node, git, a global
- * `diarchy`), project (config, commits, launch commands, the Codex files at
- * HEAD, `.diarchy/` ignored, the active goal), claude (version, launch flags,
- * login, plugin, MCP server, an MCP probe, hook probes, disableAllHooks), and
- * codex (version, launch flags, login, plugin, the `[mcp_servers.diarchy]`
- * entry, an MCP probe under Codex's environment allowlist, the guard hook of
- * the plugin copy, hook trust, project trust).
+ * `diarchy`), project (the directory exists, config, commits, launch
+ * commands, the Codex files at HEAD, `.diarchy/` ignored, the active goal),
+ * claude (version, launch flags, login, plugin, MCP server and an
+ * --allowedTools rule for its tools, an MCP probe, hook probes,
+ * disableAllHooks), and codex (version, launch flags,
+ * login, plugin, the `[mcp_servers.diarchy]` entry, an MCP probe under
+ * Codex's environment allowlist, the guard hook of the plugin copy, hook
+ * trust, project trust).
  *
  * Every external command goes through one injectable Runner (argv arrays, no
  * shell, a timeout), and the MCP probes through an injectable McpProber, so
  * tests stub claude, codex, and git. Parsers of CLI output that cannot read
  * it warn instead of failing. Nothing prints an environment value or a token.
  *
- * The probes run against throwaway projects in the temp directory, deleted
- * afterwards: `diarchy init`, a probe goal, and for `--live` a git repository,
- * the diagnostics marker (diag.ts), and a human BLOCKED, so `read` still
- * returns the goal, the SessionStart brief still prints, and the Stop gate
- * lets the turn end. `--live` spawns each CLI the way `diarchy start` does
+ * The probes, the guard hooks included, run against throwaway projects in the
+ * temp directory, deleted afterwards (also on SIGINT, SIGTERM, or SIGHUP):
+ * `diarchy init`, a probe goal, and for `--live` a git repository, the
+ * diagnostics marker (diag.ts), and a human BLOCKED, so `read` still returns
+ * the goal, the SessionStart brief still prints, and the Stop gate lets the
+ * turn end. `--live` spawns each CLI the way `diarchy start` does
  * (realPlan: same command, args, and env) with a prompt that only calls
  * `read`, and passes when the output names the probe goal and the trail shows
  * the MCP server found the project through DIARCHY_PROJECT and both hooks ran.
  */
 import { spawnSync } from "node:child_process";
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { homedir, tmpdir } from "node:os";
+import { constants, homedir, tmpdir } from "node:os";
 import { isAbsolute, join, resolve, sep } from "node:path";
 import { VERSION } from "../index.js";
 import { CONFIG_FILENAME, MAX_WAIT_MS, loadConfig } from "../vault/index.js";
@@ -112,6 +115,11 @@ export const PROBE_PROMPT = "Call the diarchy read tool once and reply with only
 export const CLAUDE_SPEND_CAP_USD = "0.25";
 const GUARD_DENY_EVENT = JSON.stringify({ hook_event_name: "PreToolUse", tool_name: "Bash", tool_input: { command: "diarchy reply x" } });
 const GUARD_ALLOW_EVENT = JSON.stringify({ hook_event_name: "PreToolUse", tool_name: "Bash", tool_input: { command: "ls" } });
+/** The tool prefix of the plugin's server, and of one registered with `claude mcp add diarchy`. */
+const PLUGIN_TOOLS = "mcp__plugin_diarchy_diarchy";
+const BARE_TOOLS = "mcp__diarchy";
+const CLAUDE_UPDATE = "claude update";
+const CODEX_UPDATE = "update Codex (npm install -g @openai/codex)";
 export function parseVersion(text) {
     const match = /(\d+)\.(\d+)(?:\.(\d+))?/.exec(text);
     return match === null ? null : [Number(match[1]), Number(match[2]), Number(match[3] ?? 0)];
@@ -138,6 +146,13 @@ function failure(command, result) {
     const said = firstLine(result.stderr) || firstLine(result.stdout);
     return `${command} exited ${result.code ?? "on a signal"}${said === "" ? "" : `: ${said}`}`;
 }
+/** The fix for a command whose output a check could not read. */
+function readByHand(command, update) {
+    return `run ${command} by hand and read its output; ${update} if its format changed`;
+}
+function probeFix() {
+    return `check that the temp directory (${tmpdir()}) exists and is writable`;
+}
 function parseJson(text) {
     try {
         return JSON.parse(text);
@@ -150,6 +165,19 @@ const isRecord = (value) => typeof value === "object" && value !== null && !Arra
 /** Every `--flag` a help text names. */
 export function helpFlags(help) {
     return new Set(help.match(/--[A-Za-z][A-Za-z0-9-]*/g) ?? []);
+}
+const escapeRegExp = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+/**
+ * Whether launch args let a headless Claude call a server's tools: a rule
+ * naming the server (`<prefix>`) or its tools (`<prefix>__*`, `<prefix>__read`),
+ * or permissions bypassed altogether.
+ */
+export function allowsTools(args, prefix) {
+    const bypass = args.includes("--dangerously-skip-permissions") ||
+        args.includes("--permission-mode=bypassPermissions") ||
+        args.some((arg, i) => arg === "--permission-mode" && args[i + 1] === "bypassPermissions");
+    const rule = new RegExp(`${escapeRegExp(prefix)}(?:__|(?![A-Za-z0-9_-]))`);
+    return bypass || args.some((arg) => rule.test(arg));
 }
 /** The long flags among launch args, without their `=value`. */
 function longFlags(args) {
@@ -173,7 +201,6 @@ function tomlTable(toml, header) {
     const end = rest.findIndex((line) => /^\s*\[/.test(line));
     return (end === -1 ? rest : rest.slice(0, end)).join("\n");
 }
-const escapeRegExp = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 /** `[a."b"]` or `[a.'b']` for a literal key `b`. */
 function quotedHeader(prefix, key) {
     return new RegExp(`^\\[${escapeRegExp(prefix)}\\.(?:"${escapeRegExp(key)}"|'${escapeRegExp(key)}')\\]$`);
@@ -193,10 +220,12 @@ const PROBE_GIT = ["-c", "user.name=diarchy doctor", "-c", "user.email=doctor@di
 /**
  * A temp project with `diarchy init` run and a probe goal kicked off. `live`
  * adds a git repository with one commit, the diagnostics marker, and a human
- * BLOCKED on the goal.
+ * BLOCKED on the goal. `made` gets the directory as soon as it exists, so a
+ * signal handler can delete it before this returns.
  */
-async function probeProject(agents, live, deps) {
+async function probeProject(agents, live, deps, made) {
     const dir = realOrSame(mkdtempSync(join(tmpdir(), "diarchy-doctor-")));
+    made(dir);
     try {
         const git = (...args) => {
             const result = deps.run("git", [...PROBE_GIT, ...args], { cwd: dir, env: deps.env });
@@ -249,13 +278,20 @@ class Doctor {
         const cwd = existsSync(this.projectDir) ? this.projectDir : process.cwd();
         return this.deps.run(command, args, { env: this.deps.env, cwd, ...options });
     }
-    /** The offline probe project, made once and shared by the claude and codex MCP probes. */
+    /** The offline probe project, made once and shared by the MCP and hook probes of both CLIs. */
     probeOnce() {
-        this.probe ??= probeProject(Object.keys(this.agents), false, this.deps).then((made) => {
-            this.temps.push(made.dir);
-            return made;
-        });
+        this.probe ??= probeProject(Object.keys(this.agents), false, this.deps, (dir) => this.temps.push(dir));
         return this.probe;
+    }
+    /** The offline probe project, or null after a warn on `id` saying why it could not be made. */
+    async probeOrWarn(group, id) {
+        try {
+            return await this.probeOnce();
+        }
+        catch (error) {
+            this.add(group, id, "warn", `could not make a probe project: ${error instanceof Error ? error.message : String(error)}`, probeFix());
+            return null;
+        }
     }
     cleanup() {
         for (const dir of this.temps.splice(0))
@@ -276,6 +312,8 @@ class Doctor {
     }
     // -- project config first: it names the agents every other group checks ---
     project() {
+        if (!existsSync(this.projectDir))
+            this.add("project", "P0", "fail", `${this.projectDir} does not exist`, "pass --project <existing dir>");
         const configPath = join(this.projectDir, CONFIG_FILENAME);
         try {
             const config = loadConfig(this.projectDir);
@@ -335,10 +373,14 @@ class Doctor {
     }
     // -- project: git, commands, Codex files, ignore, goal ---------------------
     projectGit() {
-        const inside = this.run("git", ["rev-parse", "--is-inside-work-tree"]);
-        const isRepo = inside.code === 0 && inside.stdout.trim() === "true";
+        // A missing project runs no git: from this process's cwd it would check some other repository.
+        const exists = existsSync(this.projectDir);
+        const inside = exists ? this.run("git", ["rev-parse", "--is-inside-work-tree"]) : null;
+        const isRepo = inside !== null && inside.code === 0 && inside.stdout.trim() === "true";
         const hasCommits = isRepo && this.run("git", ["rev-parse", "--verify", "-q", "HEAD"]).code === 0;
-        if (!isRepo)
+        if (!exists)
+            this.add("project", "P2", "skip", "no project directory");
+        else if (!isRepo)
             this.add("project", "P2", "fail", `${this.projectDir} is not a git repository`, 'git init && git add -A && git commit -m "Initial commit": each PM works in a git worktree cut from HEAD');
         else if (!hasCommits)
             this.add("project", "P2", "fail", "the repository has no commits", 'commit once (git add -A && git commit -m "Initial commit"): each PM works in a git worktree cut from HEAD');
@@ -348,6 +390,8 @@ class Doctor {
         this.add("project", "P3", missing.length === 0 ? "ok" : "fail", missing.length === 0 ? "every agent command is executable" : missing.join("; "), "install the CLI, or fix agents.<id>.command in diarchy.config.json");
         if (this.codex === null)
             this.add("project", "P4", "skip", "no agent launches codex, so AGENTS.md and .codex/agents are not needed");
+        else if (!exists)
+            this.add("project", "P4", "skip", "no project directory");
         else if (!hasCommits)
             this.add("project", "P4", "skip", "no commits to check AGENTS.md and .codex/agents against");
         else {
@@ -358,13 +402,15 @@ class Doctor {
                 ...(files.some((file) => file.startsWith(".codex/agents/") && file.endsWith(".toml")) ? [] : [".codex/agents/*.toml"]),
             ];
             if (tree.code !== 0)
-                this.add("project", "P4", "warn", `could not list HEAD (${failure("git ls-tree", tree)})`);
+                this.add("project", "P4", "warn", `could not list HEAD (${failure("git ls-tree", tree)})`, "run git ls-tree HEAD by hand in the project and read the error");
             else if (absent.length === 0)
                 this.add("project", "P4", "ok", "AGENTS.md and .codex/agents are committed");
             else
                 this.add("project", "P4", "warn", `${absent.join(" and ")} not committed at HEAD; Codex reads AGENTS.md and .codex/agents only from its worktree`, 'diarchy init, then git add AGENTS.md .codex && git commit -m "Add the diarchy Codex files"');
         }
-        if (!isRepo)
+        if (!exists)
+            this.add("project", "P5", "skip", "no project directory");
+        else if (!isRepo)
             this.add("project", "P5", "skip", "not a git repository");
         else {
             const ignored = this.run("git", ["check-ignore", "-q", ".diarchy/"]);
@@ -396,14 +442,14 @@ class Doctor {
             return;
         }
         if (parsed === null)
-            this.add("claude", "C1", "warn", `could not read ${cmd} --version output`);
+            this.add("claude", "C1", "warn", `could not read ${cmd} --version output`, readByHand(`${cmd} --version`, CLAUDE_UPDATE));
         else if (!atLeast(parsed, CLAUDE_MIN))
             this.add("claude", "C1", "fail", `Claude Code ${show(parsed)} is older than ${CLAUDE_MIN}`, "claude update");
         else
             this.add("claude", "C1", "ok", `Claude Code ${show(parsed)}`);
         const help = this.run(cmd, ["--help"]);
         if (help.code !== 0)
-            this.add("claude", "C2", "warn", `could not read ${cmd} --help output (${failure(cmd, help)})`);
+            this.add("claude", "C2", "warn", `could not read ${cmd} --help output (${failure(cmd, help)})`, readByHand(`${cmd} --help`, CLAUDE_UPDATE));
         else {
             claude.flags = helpFlags(help.stdout);
             const flags = claude.flags;
@@ -416,7 +462,7 @@ class Doctor {
         }
         const auth = parseJson(this.run(cmd, ["auth", "status", "--json"]).stdout);
         if (!isRecord(auth) || typeof auth.loggedIn !== "boolean")
-            this.add("claude", "C3", "warn", `could not read ${cmd} auth status --json output`);
+            this.add("claude", "C3", "warn", `could not read ${cmd} auth status --json output`, readByHand(`${cmd} auth status --json`, CLAUDE_UPDATE));
         else if (auth.loggedIn)
             this.add("claude", "C3", "ok", "logged in (local state only; --live proves model access)");
         else
@@ -440,7 +486,7 @@ class Doctor {
         const listed = this.run(cmd, ["plugin", "list", "--json"]);
         const plugins = parseJson(listed.stdout);
         if (listed.code !== 0 || !Array.isArray(plugins)) {
-            this.add("claude", "C4", "warn", `could not read ${cmd} plugin list --json output`);
+            this.add("claude", "C4", "warn", `could not read ${cmd} plugin list --json output`, readByHand(`${cmd} plugin list --json`, CLAUDE_UPDATE));
             return null;
         }
         const ours = plugins.filter((plugin) => isRecord(plugin) && plugin.id === PLUGIN_ID);
@@ -472,9 +518,10 @@ class Doctor {
     }
     /** C5: the MCP server Claude Code would start, by name, and whether the launch flags allow its tools. */
     claudeMcpList(cmd, claude) {
-        const listed = this.run(cmd, ["mcp", "list"], { timeoutMs: MCP_LIST_TIMEOUT_MS });
+        // The health check starts the server from the project; DIARCHY_DIAG=0 keeps it out of the project's diagnostics trail.
+        const listed = this.run(cmd, ["mcp", "list"], { timeoutMs: MCP_LIST_TIMEOUT_MS, env: { ...this.deps.env, DIARCHY_DIAG: "0" } });
         if (listed.code !== 0) {
-            this.add("claude", "C5", "warn", `could not read ${cmd} mcp list output (${failure(cmd, listed)})`);
+            this.add("claude", "C5", "warn", `could not read ${cmd} mcp list output (${failure(cmd, listed)})`, readByHand(`${cmd} mcp list`, CLAUDE_UPDATE));
             return;
         }
         const servers = new Map();
@@ -486,24 +533,30 @@ class Doctor {
         const plugin = servers.get("plugin:diarchy:diarchy");
         const bare = servers.get("diarchy");
         const connected = (status) => status !== undefined && /connected/i.test(status) && !/fail|not connected/i.test(status);
-        const allowsBare = claude.launch.args.some((arg) => arg.includes("mcp__diarchy__"));
+        const args = `agents.${claude.agent}.args`;
+        const allowsPlugin = allowsTools(claude.launch.args, PLUGIN_TOOLS);
+        const allowsBare = allowsTools(claude.launch.args, BARE_TOOLS);
+        const pluginFix = `add ${PLUGIN_TOOLS}__* to --allowedTools in ${args}`;
         if (plugin === undefined && bare === undefined) {
             this.add("claude", "C5", "fail", "claude mcp list shows no diarchy server", `claude plugin install diarchy --marketplace ${MARKETPLACE}`);
         }
         else if (plugin !== undefined && bare !== undefined) {
-            this.add("claude", "C5", "warn", "two diarchy servers: the plugin's plugin:diarchy:diarchy and a bare diarchy, so the PM sees each tool twice", "claude mcp remove diarchy (keep the plugin's)");
+            const rule = allowsPlugin ? "" : `, and ${args} does not allow the plugin's ${PLUGIN_TOOLS}__*`;
+            this.add("claude", "C5", "warn", `two diarchy servers: the plugin's plugin:diarchy:diarchy and a bare diarchy, so the PM sees each tool twice${rule}`, `claude mcp remove diarchy (keep the plugin's)${allowsPlugin ? "" : `, then ${pluginFix}`}`);
         }
         else if (plugin !== undefined) {
-            if (connected(plugin))
-                this.add("claude", "C5", "ok", "plugin:diarchy:diarchy connected");
-            else
+            if (!connected(plugin))
                 this.add("claude", "C5", "fail", `plugin:diarchy:diarchy is ${plugin}`, "run node <plugin root>/bin/diarchy.js mcp --agent claude by hand and read the error");
+            else if (!allowsPlugin)
+                this.add("claude", "C5", "fail", `plugin:diarchy:diarchy connected, but ${args} does not allow its tools (${PLUGIN_TOOLS}__*), so a headless run is denied every diarchy tool`, pluginFix);
+            else
+                this.add("claude", "C5", "ok", `plugin:diarchy:diarchy connected, and the launch flags allow ${PLUGIN_TOOLS}__*`);
         }
         else if (!allowsBare) {
-            this.add("claude", "C5", "fail", `only a bare diarchy server (claude mcp add), whose tools are mcp__diarchy__*, and agents.${claude.agent}.args does not allow them`, `add mcp__diarchy__* to --allowedTools in agents.${claude.agent}.args, or install the plugin`);
+            this.add("claude", "C5", "fail", `only a bare diarchy server (claude mcp add), whose tools are ${BARE_TOOLS}__*, and ${args} does not allow them`, `add ${BARE_TOOLS}__* to --allowedTools in ${args}, or install the plugin`);
         }
         else if (connected(bare)) {
-            this.add("claude", "C5", "ok", "diarchy connected (claude mcp add), and the launch flags allow mcp__diarchy__*");
+            this.add("claude", "C5", "ok", `diarchy connected (claude mcp add), and the launch flags allow ${BARE_TOOLS}__*`);
         }
         else {
             this.add("claude", "C5", "fail", `diarchy is ${String(bare)}`, "run the server command from claude mcp get diarchy by hand and read the error");
@@ -528,14 +581,9 @@ class Doctor {
     /** C7: the plugin's guard denies a human command and lets `ls` through; the SessionStart script exits 0. */
     async claudeHooks(installPath) {
         const hooks = join(installPath, "hooks");
-        let probe;
-        try {
-            probe = await this.probeOnce();
-        }
-        catch (error) {
-            this.add("claude", "C7", "warn", `could not make a probe project: ${error instanceof Error ? error.message : String(error)}`);
+        const probe = await this.probeOrWarn("claude", "C7");
+        if (probe === null)
             return;
-        }
         const env = { ...this.deps.env, DIARCHY_PROJECT: probe.dir };
         const problems = this.guardProbe(hooks, "claude", env, probe.dir, true);
         const start = this.run("bash", [join(hooks, "session-start.sh"), "claude"], { env, cwd: probe.dir });
@@ -591,7 +639,7 @@ class Doctor {
         const help = this.run(cmd, ["exec", "--help"]);
         const resume = this.run(cmd, ["exec", "resume", "--help"]);
         if (help.code !== 0)
-            this.add("codex", "X2", "warn", `could not read ${cmd} exec --help output (${failure(cmd, help)})`);
+            this.add("codex", "X2", "warn", `could not read ${cmd} exec --help output (${failure(cmd, help)})`, readByHand(`${cmd} exec --help`, CODEX_UPDATE));
         else {
             const flags = helpFlags(help.stdout);
             const unknown = [...new Set(longFlags(execArgs))].filter((flag) => !flags.has(flag));
@@ -612,7 +660,7 @@ class Doctor {
             this.add("codex", "X6", "skip", "no [mcp_servers.diarchy] entry to probe");
         else
             await this.codexProbe(transport, codex.agent);
-        this.codexGuard(pluginVersion);
+        await this.codexGuard(pluginVersion);
         this.codexTrust(codex);
     }
     codexHome() {
@@ -625,7 +673,7 @@ class Doctor {
         const parsed = parseJson(listed.stdout);
         const installed = isRecord(parsed) && Array.isArray(parsed.installed) ? parsed.installed : Array.isArray(parsed) ? parsed : null;
         if (listed.code !== 0 || installed === null) {
-            this.add("codex", "X4", "warn", `could not read ${cmd} plugin list --json output`);
+            this.add("codex", "X4", "warn", `could not read ${cmd} plugin list --json output`, readByHand(`${cmd} plugin list --json`, CODEX_UPDATE));
             return null;
         }
         const ours = installed.find((plugin) => isRecord(plugin) && (plugin.pluginId === PLUGIN_ID || plugin.id === PLUGIN_ID));
@@ -651,7 +699,7 @@ class Doctor {
         }
         const transport = codexTransport(parseJson(got.stdout));
         if (transport === null) {
-            this.add("codex", "X5", "warn", `could not read ${cmd} mcp get diarchy --json output`);
+            this.add("codex", "X5", "warn", `could not read ${cmd} mcp get diarchy --json output`, readByHand(`${cmd} mcp get diarchy --json`, CODEX_UPDATE));
             return null;
         }
         const fails = [];
@@ -706,14 +754,9 @@ class Doctor {
     }
     /** C6 and X6: start the server, list its tools, call read, and expect the probe goal. */
     async mcpProbe(group, id, target) {
-        let probe;
-        try {
-            probe = await this.probeOnce();
-        }
-        catch (error) {
-            this.add(group, id, "warn", `could not make a probe project: ${error instanceof Error ? error.message : String(error)}`);
+        const probe = await this.probeOrWarn(group, id);
+        if (probe === null)
             return;
-        }
         const spec = target(probe);
         const result = await this.deps.probeMcp(spec, PROBE_TIMEOUT_MS);
         const { TOOL_NAMES } = await import("../mcp/index.js");
@@ -742,8 +785,12 @@ class Doctor {
             this.add(group, id, "ok", `serves ${result.tools.length} tools (version ${result.version}); read returned ${result.goal}`);
         }
     }
-    /** X7: the guard hook in Codex's plugin copy, which has no node_modules and so hands the call to the diarchy on PATH. */
-    codexGuard(pluginVersion) {
+    /**
+     * X7: the guard hook in Codex's plugin copy, which has no node_modules and so
+     * hands the call to the diarchy on PATH. Run in the probe project, as C7 is,
+     * so it never writes the real project's diagnostics trail.
+     */
+    async codexGuard(pluginVersion) {
         const base = join(this.codexHome(), "plugins", "cache", "diarchy", "diarchy");
         let version = pluginVersion;
         if (version === null || !existsSync(join(base, version))) {
@@ -755,7 +802,10 @@ class Doctor {
             return;
         }
         const hooks = join(base, version, "hooks");
-        const problems = this.guardProbe(hooks, "codex", this.deps.env, this.projectDir, false);
+        const probe = await this.probeOrWarn("codex", "X7");
+        if (probe === null)
+            return;
+        const problems = this.guardProbe(hooks, "codex", { ...this.deps.env, DIARCHY_PROJECT: probe.dir }, probe.dir, false);
         if (problems.length === 0)
             this.add("codex", "X7", "ok", `the plugin copy's guard denies diarchy reply (${hooks})`);
         else
@@ -799,13 +849,12 @@ class Doctor {
         }
         let probe;
         try {
-            probe = await probeProject(Object.keys(this.agents), true, this.deps);
+            probe = await probeProject(Object.keys(this.agents), true, this.deps, (dir) => this.temps.push(dir));
         }
         catch (error) {
             this.add("live", "L0", "fail", `could not make the live probe project: ${error instanceof Error ? error.message : String(error)}`, "check that the temp directory is writable and git works");
             return;
         }
-        this.temps.push(probe.dir);
         if (out !== undefined)
             mkdirSync(out, { recursive: true });
         for (const [agent, launch] of agents)
@@ -936,14 +985,25 @@ function stringEnv(env) {
 // Entry points
 // ---------------------------------------------------------------------------
 const GROUPS = ["env", "project", "claude", "codex", "live"];
+const SIGNALS = ["SIGINT", "SIGTERM", "SIGHUP"];
 export async function doctorReport(projectDir, options = {}, deps = defaultDeps()) {
     const doctor = new Doctor(projectDir, deps);
+    // A signal's default action skips the finally below. The handler runs once a
+    // spawnSync in progress returns (a terminal's Ctrl-C stops that child too).
+    const onSignal = (signal) => {
+        doctor.cleanup();
+        process.exit(128 + constants.signals[signal]);
+    };
+    for (const signal of SIGNALS)
+        process.on(signal, onSignal);
     try {
         await doctor.offline();
         if (options.live === true)
             await doctor.live(options.out === undefined ? undefined : resolve(options.out));
     }
     finally {
+        for (const signal of SIGNALS)
+            process.off(signal, onSignal);
         doctor.cleanup();
     }
     // The config is read first because it names the agents, but env leads the report.

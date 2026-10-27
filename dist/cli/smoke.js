@@ -6,17 +6,19 @@
  * in its path; `git init` on main with a local identity; a package.json whose
  * `npm test` runs `node --test`; `diarchy init`; a config patch (review off,
  * or on with --github; one restart per agent; a 60 s wall-clock grace;
- * `--max-budget-usd` for Claude when its --help lists it); a commit; and the
- * diagnostics marker (diag.ts). Then `diarchy doctor --json`, with `--live`
- * unless --no-ping: any fail ends the run before a goal exists, so a broken
- * setup costs cents, not minutes. `--github owner/repo` first checks that gh is
- * logged in and the repository is empty and writable, and once the doctor
- * passes pushes main to it, so the PMs open and cross-review real PRs.
+ * `--max-budget-usd` for Claude when its --help lists it); and a commit. Then
+ * `diarchy doctor --json`, with `--live` unless --no-ping: any fail ends the
+ * run before a goal exists, so a broken setup costs cents, not minutes.
+ * `--github owner/repo` first checks that gh is logged in and the repository
+ * is empty and writable, and once the doctor passes pushes main to it, so the
+ * PMs open and cross-review real PRs.
  *
- * Run: `diarchy kickoff` (lead claude, slug smoke), then `diarchy watch` and
- * `diarchy start`, each line teed to the terminal and to its log, prefixed with
- * the seconds since the run began. A watchdog sends start SIGTERM 3 min after the
- * wall clock and SIGKILL after it has had time to stop both PMs.
+ * Run: the diagnostics marker (diag.ts), only now, so the trail holds the PMs'
+ * evidence and nothing from the doctor's checks; `diarchy kickoff` (lead
+ * claude, slug smoke); then `diarchy watch` and `diarchy start`, each line
+ * teed to the terminal and to its log, prefixed with the seconds since the run
+ * began. A watchdog sends start SIGTERM 3 min after the wall clock and SIGKILL
+ * after it has had time to stop both PMs.
  *
  * Every child runs with every DIARCHY_* variable removed from its environment
  * and an explicit --project, so nothing reaches a real project. `--driver fake`
@@ -437,9 +439,13 @@ class SmokeRun {
         this.patchConfig(remote !== null);
         this.git("setup", ["add", "-A"]);
         this.git("setup", ["commit", "-q", "-m", "Add diarchy"]);
-        mkdirSync(join(this.project, ".diarchy"), { recursive: true });
-        writeFileSync(join(this.project, DIAG_MARKER), "");
         this.checkInterrupted("setup");
+    }
+    /** Turn the diagnostics trail on just before kickoff, so every line in it is the run's, none the doctor's. */
+    trace() {
+        mkdirSync(join(this.project, ".diarchy"), { recursive: true });
+        rmSync(join(this.project, DIAG_LOG), { force: true });
+        writeFileSync(join(this.project, DIAG_MARKER), "");
     }
     /** After the doctor passed, so a failed setup leaves the repository empty for the next try. */
     push() {
@@ -800,6 +806,7 @@ export async function runSmoke(options) {
             smoke.doctor();
             if (remote !== null)
                 smoke.push();
+            smoke.trace();
             smoke.kickoff();
             await smoke.runGoal();
         }

@@ -3,13 +3,14 @@
 //
 // $DOCTOR_STUB names a JSON file. Its `claude` and `codex` maps answer the
 // offline queries `diarchy doctor` makes, keyed by the args joined with a
-// space: { stdout, stderr, code }. A call ending in `live.prompt` is a live turn, acted out
-// the way the real CLI would run one: record the args, run the SessionStart
-// hook, start the diarchy MCP server (Codex: only its environment allowlist
-// plus env_vars, from outside the project), call read, print the goal id, run
-// the Stop hook, and leave a resumable session id behind. `live.<flavor>`
-// picks a failure: "not-logged-in" exits 1 at once, "drop-env" starts the
-// server without DIARCHY_PROJECT (Codex from "/", so read answers NO_GOAL;
+// space: { stdout, stderr, code }, plus `touch` (a file to create first) and
+// `sleepMs` (a pause before answering). A call ending in `live.prompt` is a
+// live turn, acted out the way the real CLI would run one: record the args,
+// run the SessionStart hook, start the diarchy MCP server (Codex: only its
+// environment allowlist plus env_vars, from outside the project), call read,
+// print the goal id, run the Stop hook, and leave a resumable session id
+// behind. `live.<flavor>` picks a failure: "not-logged-in" exits 1 at once,
+// "drop-env" starts the server without DIARCHY_PROJECT (Codex from "/", so read answers NO_GOAL;
 // Claude from the project, so the server finds it by walking up), and
 // "no-hooks" runs neither hook. Anything else exits 1. No model is called.
 import { spawnSync } from "node:child_process";
@@ -21,6 +22,8 @@ const [flavor, ...args] = process.argv.slice(2);
 const stub = JSON.parse(readFileSync(process.env.DOCTOR_STUB, "utf8"));
 const answer = stub[flavor]?.[args.join(" ")];
 if (answer !== undefined) {
+  if (answer.touch !== undefined) writeFileSync(answer.touch, "");
+  if (answer.sleepMs !== undefined) await new Promise((resolve) => setTimeout(resolve, answer.sleepMs));
   if (answer.stdout !== undefined) process.stdout.write(answer.stdout);
   if (answer.stderr !== undefined) process.stderr.write(answer.stderr);
   process.exit(answer.code ?? 0);

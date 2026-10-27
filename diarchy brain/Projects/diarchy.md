@@ -30,4 +30,4 @@ Multiplayer AI for coding: Claude Code and Codex CLI run as peer product manager
 - docs/PROTOCOL.md, docs/ANTI-SLOP.md, docs/RENDERING.md, docs/ARCHITECTURE.md
 
 ## Layout
-src/protocol (engine) · src/vault (store, locks, lease, renderers) · src/mcp (server) · src/cli (launcher, run record, preflight, fake PM, hooks, guard) · skills/ agents/ hooks/ .claude-plugin/ .mcp.json (Claude plugin) · .codex-plugin/ .agents/ .codex/agents/ mcp.json hooks/codex-hooks.json (Codex plugin) · dist/ (committed build) · test/ (535 tests, fixtures)
+src/protocol (engine) · src/vault (store, locks, lease, renderers) · src/mcp (server) · src/cli (launcher, run record, preflight, fake PM, hooks, guard) · skills/ agents/ hooks/ .claude-plugin/ .mcp.json (Claude plugin) · .codex-plugin/ .agents/ .codex/agents/ mcp.json hooks/codex-hooks.json (Codex plugin) · dist/ (committed build) · test/ (538 tests, fixtures)

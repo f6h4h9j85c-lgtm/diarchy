@@ -119,6 +119,11 @@ describe("docs: README status", () => {
     expect(roadmap).toContain("checked against Codex 0.164.0");
   });
 
+  it("does not claim cross-review gates every merge: the store checks it at DONE, and review.required can waive it", () => {
+    expect(readme).not.toContain("Every PR is reviewed by the other model before it merges.");
+    expect(readme).toContain("the store refuses DONE without it (PROTOCOL.md 9.2(c)) unless `review.required` is off");
+  });
+
   it("the project layout names every document under docs/", () => {
     const layout = readme.split("\n").find((line) => line.startsWith("docs/ ")) ?? "";
     for (const entry of readdirSync(join(ROOT, "docs"), { withFileTypes: true })) {

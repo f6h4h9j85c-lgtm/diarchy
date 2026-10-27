@@ -249,7 +249,9 @@ instead.
    (`<project> brain/diarchy` unless `vault` in diarchy.config.json says
    otherwise). Another path, or a message saying no diarchy.config.json was
    found, means the server started outside the project: check section 2 and
-   section 4.
+   section 4. The server reads diarchy.config.json only when it starts, so
+   restart any session that was open before `diarchy init` (its message says
+   the config was written after the server started).
    Once a goal exists it returns the goal text (`goal_text`), every acceptance
    criterion with its status (`acs`), the phase, your role, and unread messages.
 5. With a goal active, the session starts with the inbox brief from

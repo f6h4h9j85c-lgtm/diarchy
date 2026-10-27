@@ -68,9 +68,11 @@ after editing `src/`, run `npm run build` (see CONTRIBUTING.md).
    otherwise); a vault under another directory means the server started
    outside the project. Until `diarchy init` has run (Project configuration,
    below), the message also says the project has no diarchy.config.json, so
-   the default vault was checked. Once a goal exists it returns the goal text
-   (`goal_text`), every acceptance criterion with its status (`acs`), the
-   phase, your role, and unread messages.
+   the default vault was checked. The server reads diarchy.config.json only
+   when it starts: restart any session that was open before `diarchy init`
+   (its message says the config was written after the server started). Once a
+   goal exists it returns the goal text (`goal_text`), every acceptance
+   criterion with its status (`acs`), the phase, your role, and unread messages.
 4. On the next session start, with a goal active, the first lines of context are
    the inbox brief from `diarchy inbox-skim`. With no goal active nothing is
    printed; that is expected.

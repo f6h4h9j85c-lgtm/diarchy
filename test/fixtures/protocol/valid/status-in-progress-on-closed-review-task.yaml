@@ -1,0 +1,47 @@
+description: "After claude's approve review closed T4, codex (the PR author) posts a STATUS with task T4 and task_status in_progress; task_status never reopens a review task, so T4 stays done and claude, no longer BUSY_REVIEWING, can be assigned implementation."
+state:
+  base: execute-reviewed
+prior:
+  - message:
+      protocol_version: 1
+      id: 20261025T152100Z-0004-codex-STATUS
+      goal: 20261025-rate-limit
+      from: codex
+      to: all
+      type: STATUS
+      re:
+        - AC1
+      task: T4
+      task_status: in_progress
+      evidence:
+        - kind: file
+          path: notes/review-412.md
+      phase: EXECUTE
+      ts: 2026-10-25T15:21:00Z
+      body: Picking up the review notes on 412.
+message:
+  protocol_version: 1
+  id: 20261025T152200Z-0006-claude-ASSIGN
+  goal: 20261025-rate-limit
+  from: claude
+  to: claude
+  type: ASSIGN
+  re:
+    - AC2
+  task: T2
+  kind: implement
+  worktree: .diarchy/worktrees/claude
+  branch: diarchy/20261025-rate-limit/claude
+  phase: EXECUTE
+  ts: 2026-10-25T15:22:00Z
+  body: ""
+expect:
+  ok: true
+  phase_after: EXECUTE
+  state:
+    tasks:
+      T2:
+        assignee: claude
+        status: assigned
+      T4:
+        status: done

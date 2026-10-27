@@ -1,0 +1,48 @@
+description: "With every DONE precondition met, claude posts a STATUS naming its closed review task T4 with task_status in_progress and only file evidence; task_status never reopens a review task, so T4 stays done and DONE 9.2 (e) holds: EXECUTE -> DONE."
+state:
+  base: execute-ready
+prior:
+  - message:
+      protocol_version: 1
+      id: 20261025T162500Z-0014-claude-STATUS
+      goal: 20261025-rate-limit
+      from: claude
+      to: all
+      type: STATUS
+      re:
+        - AC1
+      task: T4
+      task_status: in_progress
+      evidence:
+        - kind: file
+          path: notes/review-412.md
+      phase: EXECUTE
+      ts: 2026-10-25T16:25:00Z
+      body: Reopening the review notes on 412.
+message:
+  protocol_version: 1
+  id: 20261025T163000Z-0015-claude-DONE
+  goal: 20261025-rate-limit
+  from: claude
+  to: all
+  type: DONE
+  re:
+    - AC1
+    - AC2
+    - AC3
+  evidence:
+    - kind: commit
+      sha: 1c0ffee42
+    - kind: test
+      test: npm test
+      result: pass
+  phase: EXECUTE
+  ts: 2026-10-25T16:30:00Z
+  body: PRs 412 and 413 merged to main.
+expect:
+  ok: true
+  phase_after: DONE
+  state:
+    tasks:
+      T4:
+        status: done
